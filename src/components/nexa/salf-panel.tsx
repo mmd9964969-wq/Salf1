@@ -388,9 +388,9 @@ export function SalfPanelView() {
       </header>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {section.items.map(item=>(
-          <button key={item.id} onClick={()=>setCapability(item)} className="group rounded-2xl border border-line bg-surface/75 p-4 text-right shadow-[var(--shadow-border)] backdrop-blur-xl transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-2">
+          <button key={item.id} onClick={()=>setCapability(item)} className="salf-panel-button group rounded-2xl border border-line bg-surface/75 p-4 text-right shadow-[var(--shadow-border)] backdrop-blur-xl transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-2">
             <div className="flex items-center gap-3">
-              <span className="flex size-10 items-center justify-center rounded-xl bg-surface-2 text-muted group-hover:text-fg"><item.icon className="size-4"/></span>
+              <span className="salf-icon flex size-10 items-center justify-center rounded-xl bg-surface-2 text-muted group-hover:text-fg"><item.icon className="size-4"/></span>
               <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{item.title}</span><span className="mt-1 block text-xs leading-5 text-muted">{item.desc}</span></span>
               <ChevronLeft className="size-4 text-subtle transition group-hover:-translate-x-0.5"/>
             </div>
@@ -419,9 +419,9 @@ export function SalfPanelView() {
       </section>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map(section=>(
-          <button key={section.id} onClick={()=>setSectionId(section.id)} className="group rounded-2xl border border-line bg-surface/70 p-4 text-right shadow-[var(--shadow-border)] backdrop-blur-xl transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-2">
+          <button key={section.id} onClick={()=>setSectionId(section.id)} className="salf-panel-button group rounded-2xl border border-line bg-surface/70 p-4 text-right shadow-[var(--shadow-border)] backdrop-blur-xl transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-2">
             <div className="flex items-center gap-3">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-surface-2 text-muted group-hover:text-fg"><section.icon className="size-5"/></span>
+              <span className="salf-icon flex size-11 items-center justify-center rounded-xl bg-surface-2 text-muted group-hover:text-fg"><section.icon className="size-5"/></span>
               <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">{section.title}</span><span className="mt-1 block text-xs text-muted">{section.desc}</span><span className="mt-2 block text-[11px] text-subtle">{faNum(section.items.length)} قابلیت</span></span>
               <ChevronLeft className="size-4 text-subtle"/>
             </div>
