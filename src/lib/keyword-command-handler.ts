@@ -3,7 +3,7 @@ import {
   deleteKeywordRule,
   getKeywordRule,
   listKeywordRules,
-  markKeywordRuleExecuted,
+  matchesKeywordRule,
   setKeywordRuleEnabled,
   type KeywordTriggerType,
 } from "./keyword-engine";
@@ -188,17 +188,47 @@ export const keywordCommandHandler: CommandHandler = async (command, context) =>
     if (!id) return fail(command.key, command.args, "شناسه قانون را وارد کنید؛ مثال: keyword test 7");
     const rule = await getKeywordRule(ownerId, id);
     if (!rule) return fail(command.key, command.args, "قانون موردنظر پیدا نشد.");
-    await markKeywordRuleExecuted(ownerId, id);
+
+    const testText = rest.slice(1).join(" ").trim();
+    if (!testText) {
+      return ok(
+        command.key,
+        command.args,
+        [
+          `◈ تست قانون #${id}`,
+          "",
+          `⛂ - محرک : ${rule.triggerType} «${rule.triggerValue}»`,
+          `⛂ - وضعیت قانون : ${rule.enabled ? "● فعال" : "○ متوقف"}`,
+          "",
+          "⛂ - برای شبیه‌سازی پیام، متن را بعد از شناسه وارد کنید.",
+          `⛂ - مثال : keyword test ${id} قیمت لطفاً`,
+          "",
+          "⛂ - این تست هیچ اجرای واقعی را ثبت نمی‌کند.",
+        ].join("\n"),
+      );
+    }
+
+    const matched = matchesKeywordRule(rule, testText);
     return ok(
       command.key,
       command.args,
-      `◈ تست قانون #${id}\n\n⛂ - وضعیت : ● موفق\n⛂ - قانون قابل اجراست.\n⛂ - تست به‌عنوان یک اجرای آزمایشی ثبت شد.`,
+      [
+        `◈ نتیجه تست قانون #${id}`,
+        "",
+        `⛂ - متن آزمایشی : «${testText}»`,
+        `⛂ - نتیجه محرک : ${matched ? "● Match شد" : "○ Match نشد"}`,
+        `⛂ - وضعیت قانون : ${rule.enabled ? "● فعال" : "○ متوقف"}`,
+        "⛂ - اجرا : بدون ثبت در آمار واقعی",
+        matched
+          ? "⛂ - موتور Keyword این متن را واجد شرایط تشخیص داد."
+          : "⛂ - موتور Keyword این متن را مطابق محرک فعلی تشخیص نداد.",
+      ].join("\n"),
     );
   }
 
   return fail(
     command.key,
     command.args,
-    "دستور اقدامات کلمه‌ای شناخته نشد.\n\nراهنما: keyword list | keyword add | keyword info 7 | keyword test 7 | keyword pause 7 | keyword resume 7 | keyword del 7 | keyword status",
+    "دستور اقدامات کلمه‌ای شناخته نشد.\n\nراهنما: keyword list | keyword add | keyword info 7 | keyword test 7 [text] | keyword pause 7 | keyword resume 7 | keyword del 7 | keyword status",
   );
 };
