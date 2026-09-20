@@ -49,7 +49,7 @@ const sections: Section[] = [
     { id:"autoread", title:"خواندن خودکار", icon:Eye, desc:"خواندن خودکار پیوی، گروه و کانال", commands:["/autoread pm on","/autoread group on","/autoread delay 5-15","/autoread status"] },
     { id:"autoreact", title:"واکنش خودکار", icon:Zap, desc:"واکنش شرطی، تصادفی و زمان‌دار", commands:["/autoreact add سلام 👋","/autoreact chance 40","/autoreact list","/autoreact status"] },
     { id:"autoreply", title:"پاسخ خودکار", icon:MessageCircle, desc:"پاسخ بر اساس کلمه، کاربر، چت و زمان", commands:["/autoreply add سلام","/autoreply exact \"سلام خوبی?\"","/autoreply delay 2-5","/autoreply status"] },
-    { id:"afk", title:"عدم دسترسی", icon:Moon, desc:"پاسخ هوشمند هنگام عدم دسترسی", commands:["/afk on","/afk off","/afk status"] },
+    { id:"afk", title:"عدم دسترسی", icon:Moon, desc:"مدیریت وضعیت عدم دسترسی با پاسخ، زمان و استثنا", commands:["/afk on","/afk off","/afk status","/afk set","/afk delay 2-5","/afk except add @username","/afk mode first","/afk log on"] },
     { id:"keywords", title:"اقدامات کلمه‌ای", icon:Target, desc:"اجرای اقدام بر اساس متن پیام", commands:["/keyword add"] },
     { id:"custom", title:"دستورات سفارشی", icon:Bot, desc:"ساخت فرمان‌های اختصاصی", commands:["/command add"] },
     { id:"conditional", title:"قوانین شرطی", icon:Brain, desc:"ترکیب چند شرط برای اجرای اقدام", commands:["/rule add","/rule list"] },
