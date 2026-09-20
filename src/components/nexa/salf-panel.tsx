@@ -165,117 +165,50 @@ function KeywordGuide() {
   );
 }
 
-function KeywordConditionsPanel() {
+function KeywordActionsPanel() {
+  type Action = { type: "reply" | "notify" | "log"; text?: string };
   const [ruleId, setRuleId] = useState("7");
-  const [userId, setUserId] = useState("");
-  const [chatId, setChatId] = useState("");
-  const [chatType, setChatType] = useState("group");
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("18:00");
-  const [max, setMax] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "saved" | "error">("idle");
-  const [statusText, setStatusText] = useState("");
-
-  const load = async () => {
-    const id = Number(ruleId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setStatus("error"); setStatusText("شناسه قانون معتبر نیست."); return;
-    }
-    setStatus("loading"); setStatusText("در حال دریافت شرایط...");
-    try {
-      const response = await fetch(`/api/keywords/conditions?rule_id=${id}`, { credentials: "same-origin" });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || "دریافت شرایط ناموفق بود.");
-      const conditions = data.conditions ?? {};
-      setUserId(Array.isArray(conditions.user_ids) ? conditions.user_ids.join(", ") : "");
-      setChatId(Array.isArray(conditions.chat_ids) ? conditions.chat_ids.join(", ") : "");
-      setChatType(Array.isArray(conditions.chat_types) && conditions.chat_types[0] ? conditions.chat_types[0] : "group");
-      setStartTime(conditions.time_start ?? "");
-      setEndTime(conditions.time_end ?? "");
-      setMax(conditions.max_executions ? String(conditions.max_executions) : "");
-      setStatus("saved"); setStatusText("شرایط از دیتابیس بارگذاری شد.");
-    } catch (error) {
-      setStatus("error"); setStatusText(error instanceof Error ? error.message : "خطای دریافت شرایط.");
-    }
+  const [actions, setActions] = useState<Action[]>([]);
+  const [type, setType] = useState<Action["type"]>("reply");
+  const [text, setText] = useState("");
+  const [status, setStatus] = useState("");
+  const add = () => {
+    if (type === "reply" && !text.trim()) { setStatus("متن پاسخ را وارد کنید."); return; }
+    setActions([...actions, { type, ...(text.trim() ? { text: text.trim() } : {}) }]);
+    setText(""); setStatus("");
   };
-
   const save = async () => {
     const id = Number(ruleId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setStatus("error"); setStatusText("شناسه قانون معتبر نیست."); return;
-    }
-    const conditions: Record<string, unknown> = {};
-    const users = userId.split(",").map(x => x.trim()).filter(Boolean);
-    const chats = chatId.split(",").map(x => x.trim()).filter(Boolean);
-    if (users.length) conditions.user_ids = users;
-    if (chats.length) conditions.chat_ids = chats;
-    if (chatType) conditions.chat_types = [chatType];
-    if (startTime) conditions.time_start = startTime;
-    if (endTime) conditions.time_end = endTime;
-    if (max.trim()) conditions.max_executions = Number(max);
-
-    setStatus("loading"); setStatusText("در حال ذخیره در دیتابیس...");
+    setStatus("در حال ذخیره...");
     try {
-      const response = await fetch("/api/keywords/conditions", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rule_id: id, conditions }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || "ذخیره شرایط ناموفق بود.");
-      setStatus("saved"); setStatusText("شرایط با موفقیت در دیتابیس ذخیره شد.");
-    } catch (error) {
-      setStatus("error"); setStatusText(error instanceof Error ? error.message : "خطای ذخیره شرایط.");
-    }
+      const r = await fetch("/api/keywords/actions", { method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify({rule_id:id,actions}) });
+      const d = await r.json(); if (!r.ok || !d.ok) throw new Error(d.error || "ذخیره ناموفق بود.");
+      setStatus("اقدامات با موفقیت ذخیره شدند.");
+    } catch(e) { setStatus(e instanceof Error ? e.message : "خطای ذخیره."); }
   };
-
-  const clear = async () => {
-    const id = Number(ruleId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setStatus("error"); setStatusText("شناسه قانون معتبر نیست."); return;
-    }
-    setStatus("loading"); setStatusText("در حال پاک‌سازی...");
+  const load = async () => {
+    const id = Number(ruleId); setStatus("در حال بارگذاری...");
     try {
-      const response = await fetch("/api/keywords/conditions", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rule_id: id, conditions: {} }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || "پاک‌سازی ناموفق بود.");
-      setUserId(""); setChatId(""); setChatType(""); setStartTime(""); setEndTime(""); setMax("");
-      setStatus("saved"); setStatusText("تمام شرایط این قانون پاک شد.");
-    } catch (error) {
-      setStatus("error"); setStatusText(error instanceof Error ? error.message : "خطای پاک‌سازی.");
-    }
+      const r=await fetch(`/api/keywords/actions?rule_id=${id}`,{credentials:"same-origin"});
+      const d=await r.json(); if(!r.ok||!d.ok) throw new Error(d.error||"بارگذاری ناموفق بود.");
+      setActions(Array.isArray(d.actions)?d.actions:[]); setStatus("اقدامات از دیتابیس بارگذاری شدند.");
+    } catch(e){setStatus(e instanceof Error?e.message:"خطای بارگذاری.");}
   };
-
-  return (
-    <div className="mt-5 rounded-2xl border border-line bg-surface-2/70 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div><p className="text-sm font-semibold">تنظیم‌گر شرایط</p><p className="mt-1 text-xs leading-5 text-muted">شرایط قانون مستقیماً از طریق API احراز هویت‌شده در دیتابیس ذخیره می‌شوند.</p></div>
-        <span className="rounded-full border border-line px-2.5 py-1 text-[10px] text-subtle">DATABASE CONNECTED</span>
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه قانون</span><input value={ruleId} onChange={e=>setRuleId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="7" dir="ltr" /></label>
-        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه کاربر</span><input value={userId} onChange={e=>setUserId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="123456789 یا چند شناسه با , " dir="ltr" /></label>
-        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه گفتگو</span><input value={chatId} onChange={e=>setChatId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="-100123456789 یا چند شناسه" dir="ltr" /></label>
-        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">نوع گفتگو</span><select value={chatType} onChange={e=>setChatType(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none"><option value="">همه</option><option value="group">group</option><option value="pm">pm</option><option value="channel">channel</option></select></label>
-        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شروع زمان</span><input value={startTime} onChange={e=>setStartTime(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="09:00" dir="ltr" /></label>
-        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">پایان زمان</span><input value={endTime} onChange={e=>setEndTime(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="18:00" dir="ltr" /></label>
-        <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">حداکثر دفعات اجرا</span><input value={max} onChange={e=>setMax(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="نامحدود" dir="ltr" /></label>
-      </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <button onClick={load} disabled={status==="loading"} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium transition hover:bg-surface-2 disabled:opacity-50">بارگذاری</button>
-        <button onClick={save} disabled={status==="loading"} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium transition hover:bg-surface-2 disabled:opacity-50">ذخیره شرایط</button>
-        <button onClick={clear} disabled={status==="loading"} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium transition hover:bg-surface-2 disabled:opacity-50">پاک‌سازی</button>
-      </div>
-      {statusText && <div className={cn("mt-3 rounded-xl border px-3 py-2 text-xs", status==="error" ? "border-red-400/20 text-red-300" : "border-line text-muted")}>{statusText}</div>}
+  const labels: Record<Action["type"],string> = { reply:"پاسخ", notify:"اعلان", log:"لاگ" };
+  return <div className="mt-5 rounded-2xl border border-line bg-surface-2/70 p-4">
+    <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">سازنده اقدامات</p><p className="mt-1 text-xs leading-5 text-muted">چند اقدام را برای یک قانون بسازید و به ترتیب اجرا ذخیره کنید.</p></div><span className="rounded-full border border-line px-2.5 py-1 text-[10px] text-subtle">ACTION BUILDER</span></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه قانون</span><input value={ruleId} onChange={e=>setRuleId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">نوع اقدام</span><select value={type} onChange={e=>setType(e.target.value as Action["type"])} className="mt-2 w-full bg-transparent text-sm outline-none"><option value="reply">پاسخ</option><option value="notify">اعلان</option><option value="log">لاگ</option></select></label>
+      <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">متن اقدام</span><input value={text} onChange={e=>setText(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="برای پاسخ، متن پیام را وارد کنید."/></label>
     </div>
-  );
+    <div className="mt-3 flex gap-2"><button onClick={add} className="flex-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm">افزودن اقدام</button><button onClick={load} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">بارگذاری</button></div>
+    <div className="mt-3 space-y-2">{actions.map((a,i)=><div key={i} className="flex items-center gap-3 rounded-xl border border-line bg-surface p-3"><span className="text-xs text-accent">{String(i+1).padStart(2,"0")}</span><span className="text-sm font-medium">{labels[a.type]}</span><span className="min-w-0 flex-1 truncate text-xs text-muted">{a.text || "بدون متن"}</span><button onClick={()=>setActions(actions.filter((_,x)=>x!==i))} className="text-xs text-muted">حذف</button></div>)}</div>
+    <button onClick={save} className="mt-3 w-full rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium">ذخیره اقدامات</button>
+    {status && <p className="mt-3 rounded-xl border border-line px-3 py-2 text-xs text-muted">{status}</p>}
+  </div>;
 }
+
 
 function CapabilityView({ item, onBack }: { item: Capability; onBack: () => void }) {
   const [tab, setTab] = useState<"detail" | "guide">("detail");
