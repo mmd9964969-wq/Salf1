@@ -3,7 +3,7 @@ import {
   deleteKeywordRule,
   getKeywordRule,
   listKeywordRules,
-  matchesKeywordRule,
+  matchesKeywordRule,\n  explainKeywordConditions,
   setKeywordRuleEnabled,\n  updateKeywordRuleConditions,
   type KeywordTriggerType,
 } from "./keyword-engine";
@@ -122,6 +122,21 @@ export const keywordCommandHandler: CommandHandler = async (command, context) =>
     const rule = await getKeywordRule(ownerId, id);
     if (!rule) return fail(command.key, command.args, "قانون موردنظر پیدا نشد.");
     const current = { ...(rule.conditions ?? {}) };
+    if (action === "check" || action === "بررسی") {
+      const userId = rest[2] ?? "";
+      const chatId = rest[3] ?? "";
+      const chatType = rest[4] ?? "";
+      const result = explainKeywordConditions(rule, { userId, chatId, chatType });
+      return ok(command.key, command.args, [
+        `◈ بررسی شرایط قانون #${id}`,
+        "",
+        `⛂ - کاربر : ${userId || "—"}`,
+        `⛂ - گفتگو : ${chatId || "—"}`,
+        `⛂ - نوع : ${chatType || "—"}`,
+        `⛂ - نتیجه : ${result.matched ? "● مجاز برای اجرا" : "○ مسدود"}`,
+        `⛂ - دلیل : ${result.reason}`,
+      ].join("\\n"));
+    }
 
     if (action === "status" || action === "وضعیت") {
       return ok(command.key, command.args, [
