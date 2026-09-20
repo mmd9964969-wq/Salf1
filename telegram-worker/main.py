@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import os
+import random
 from pathlib import Path
 
 from aiohttp import ClientSession, web
@@ -16,6 +17,7 @@ API_ID_RAW = os.getenv("TELEGRAM_API_ID", "")
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 WORKER_API_TOKEN = os.getenv("WORKER_API_TOKEN", "")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
+KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
@@ -81,6 +83,7 @@ async def health(request):
         "telegram_configured": configured(),
         "customers_loaded": len(clients),
         "event_bridge_configured": bool(EVENT_BRIDGE_URL),
+        "keyword_ack_configured": bool(KEYWORD_ACK_URL),
     })
 
 
@@ -206,9 +209,9 @@ async def disconnect(request):
     })
 
 
-async def send_event_to_backend(payload: dict):
-    if not EVENT_BRIDGE_URL or http_session is None:
-        return
+async def post_json(url: str, payload: dict):
+    if not url or http_session is None:
+        return None
 
     headers = {"Content-Type": "application/json"}
     if WORKER_API_TOKEN:
@@ -216,21 +219,89 @@ async def send_event_to_backend(payload: dict):
 
     try:
         async with http_session.post(
-            EVENT_BRIDGE_URL,
+            url,
             json=payload,
             headers=headers,
-            timeout=10,
+            timeout=15,
         ) as response:
             if response.status >= 300:
-                print(f"Event bridge rejected event: HTTP {response.status}")
+                print(f"Backend rejected request: HTTP {response.status}")
+                return None
+            return await response.json()
     except Exception as exc:
-        print(f"Event bridge error: {exc}")
+        print(f"Backend request error: {exc}")
+        return None
+
+
+async def execute_keyword_actions(
+    event,
+    customer_id: str,
+    matches: list[dict],
+):
+    if not matches:
+        return
+
+    for rule in matches:
+        rule_id = int(rule.get("id", 0))
+        actions = rule.get("actions") or []
+        delay_min = max(0, int(rule.get("delay_min", 0)))
+        delay_max = max(delay_min, int(rule.get("delay_max", delay_min)))
+
+        if delay_max > 0:
+            await asyncio.sleep(random.uniform(delay_min, delay_max))
+
+        executed = False
+
+        for action in actions:
+            action_type = str(action.get("type", "")).strip()
+            action_text = str(action.get("text", "")).strip()
+
+            if action_type == "reply" and action_text:
+                await event.respond(action_text)
+                executed = True
+            elif action_type == "log":
+                print({
+                    "type": "keyword.log",
+                    "customer_id": customer_id,
+                    "rule_id": rule_id,
+                    "message": event.raw_text[:1000],
+                })
+            elif action_type == "notify":
+                print({
+                    "type": "keyword.notify",
+                    "customer_id": customer_id,
+                    "rule_id": rule_id,
+                })
+
+        if executed and rule_id > 0 and KEYWORD_ACK_URL:
+            await post_json(
+                KEYWORD_ACK_URL,
+                {"customer_id": customer_id, "rule_id": rule_id},
+            )
+
+
+async def send_event_to_backend(payload: dict):
+    if not EVENT_BRIDGE_URL:
+        return None
+    return await post_json(EVENT_BRIDGE_URL, payload)
 
 
 async def message_event(event, customer_id: str):
     text = (event.raw_text or "").strip()
     if not text:
         return
+
+    if event.out:
+        return
+
+    if event.is_private:
+        chat_type = "pm"
+    elif event.is_channel:
+        chat_type = "channel"
+    elif event.is_group:
+        chat_type = "group"
+    else:
+        chat_type = "other"
 
     payload = {
         "type": "telegram.message",
@@ -241,16 +312,27 @@ async def message_event(event, customer_id: str):
             "text": text[:4000],
             "message_id": getattr(event.message, "id", None),
             "date": event.message.date.isoformat() if event.message and event.message.date else None,
+            "chat_type": chat_type,
         },
     }
 
     print(payload)
-    await send_event_to_backend(payload)
+
+    result = await send_event_to_backend(payload)
+    if isinstance(result, dict) and result.get("ok"):
+        await execute_keyword_actions(
+            event,
+            customer_id,
+            result.get("matches") or [],
+        )
 
 
 def attach_events(client: TelegramClient, customer_id: str):
     async def handler(event):
-        await message_event(event, customer_id)
+        try:
+            await message_event(event, customer_id)
+        except Exception as exc:
+            print(f"Telegram event handler error: {exc}")
 
     client.add_event_handler(handler, events.NewMessage)
 
@@ -271,6 +353,9 @@ async def main():
 
     if not EVENT_BRIDGE_URL:
         print("WARNING: SALF1_EVENT_BRIDGE_URL is not configured; message events will only be logged.")
+
+    if not KEYWORD_ACK_URL:
+        print("WARNING: SALF1_KEYWORD_ACK_URL is not configured; execution counts will not be acknowledged.")
 
     http_session = ClientSession()
     await init_loaded_sessions()
