@@ -258,11 +258,11 @@ async def execute_keyword_actions(
             action_delay_min = max(0, int(action.get("delayMin", action.get("delay_min", 0)) or 0))
             action_delay_max = max(action_delay_min, int(action.get("delayMax", action.get("delay_max", action_delay_min)) or action_delay_min))
 
-            if action_type not in {"reply", "react", "log", "notify"}:
-                print({"type": "keyword.action_blocked", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "reason": "advanced action is not enabled in worker"})
+            if action_type not in {"reply", "react", "log", "notify", "delete", "forward"}:
+                print({"type": "keyword.action_blocked", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "reason": "unsupported action"})
                 continue
 
-            if action_type in {"reply", "react"} and not action_text:
+            if action_type in {"reply", "react", "notify", "forward"} and not action_text:
                 print({"type": "keyword.action_blocked", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "reason": "missing action value"})
                 continue
 
@@ -280,7 +280,13 @@ async def execute_keyword_actions(
                     print({"type": "keyword.log", "customer_id": customer_id, "rule_id": rule_id, "message": event.raw_text[:1000]})
                     executed = True
                 elif action_type == "notify":
-                    print({"type": "keyword.notify", "customer_id": customer_id, "rule_id": rule_id})
+                    await client_for(customer_id).send_message("me", action_text)
+                    executed = True
+                elif action_type == "delete":
+                    await event.delete()
+                    executed = True
+                elif action_type == "forward":
+                    await client_for(customer_id).forward_messages(action_text, event.message)
                     executed = True
             except Exception as exc:
                 print({"type": "keyword.action_error", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "error": str(exc)})
