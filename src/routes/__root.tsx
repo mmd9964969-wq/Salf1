@@ -3,7 +3,7 @@ import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
-const APP_NAME = "نکسا · مرکز فرمان اکانت";
+const APP_NAME = "SALF1 · مرکز فرمان اکانت";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -14,7 +14,7 @@ export const Route = createRootRoute({
       { name: "theme-color", content: "#0b0c0e" },
       {
         name: "description",
-        content: "نکسا — پنل مدیریت اکانت با پاسخ خودکار، دستورها، زمان‌بندی و گزارش فعالیت.",
+        content: "SALF1 — سیستم حرفه‌ای مدیریت و کنترل اکانت تلگرام.";
       },
     ],
     links: [
@@ -26,7 +26,7 @@ export const Route = createRootRoute({
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,500;1,6..72,500&family=Vazirmatn:wght@400;500;600;700&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,500;1,6..72,500&family=Vazirmatn:wght@400;500;600;700&display=swap",
       },
     ],
   }),
