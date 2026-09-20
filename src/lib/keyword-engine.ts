@@ -331,11 +331,15 @@ export function matchesKeywordConditions(
   return true;
 }
 
-export function isKeywordRuleOnCooldown(rule: KeywordRule, now = Date.now()) {
-  if (!rule.lastExecutedAt || rule.cooldownSeconds <= 0) return false;
+export function getKeywordCooldownRemaining(rule: KeywordRule, now = Date.now()) {
+  if (!rule.lastExecutedAt || rule.cooldownSeconds <= 0) return 0;
   const last = new Date(rule.lastExecutedAt).getTime();
-  return Number.isFinite(last)
-    && now - last < rule.cooldownSeconds * 1000;
+  if (!Number.isFinite(last)) return 0;
+  return Math.max(0, rule.cooldownSeconds - Math.floor((now - last) / 1000));
+}
+
+export function isKeywordRuleOnCooldown(rule: KeywordRule, now = Date.now()) {
+  return getKeywordCooldownRemaining(rule, now) > 0;
 }
 
 export function matchesKeywordRule(rule: KeywordRule, text: string) {
