@@ -3,7 +3,7 @@ import {
   deleteKeywordRule,
   getKeywordRule,
   listKeywordRules,
-  matchesKeywordRule,\n  explainKeywordConditions,
+  matchesKeywordRule,\n  explainKeywordConditions,\n  getKeywordCooldownRemaining,
   setKeywordRuleEnabled,\n  updateKeywordRuleConditions,
   type KeywordTriggerType,
 } from "./keyword-engine";
@@ -127,6 +127,9 @@ export const keywordCommandHandler: CommandHandler = async (command, context) =>
       const chatId = rest[3] ?? "";
       const chatType = rest[4] ?? "";
       const result = explainKeywordConditions(rule, { userId, chatId, chatType });
+      const cooldownRemaining = getKeywordCooldownRemaining(rule);
+      const maxExecutions = Number((rule.conditions ?? {}).max_executions);
+      const maxReached = Number.isFinite(maxExecutions) && maxExecutions > 0 && rule.executionCount >= maxExecutions;
       return ok(command.key, command.args, [
         `◈ بررسی شرایط قانون #${id}`,
         "",
@@ -134,7 +137,7 @@ export const keywordCommandHandler: CommandHandler = async (command, context) =>
         `⛂ - گفتگو : ${chatId || "—"}`,
         `⛂ - نوع : ${chatType || "—"}`,
         `⛂ - نتیجه : ${result.matched ? "● مجاز برای اجرا" : "○ مسدود"}`,
-        `⛂ - دلیل : ${result.reason}`,
+        `⛂ - دلیل : ${result.reason}`,\n        `⛂ - Cooldown : ${cooldownRemaining > 0 ? `${cooldownRemaining} ثانیه باقی‌مانده` : "آزاد"}`,\n        `⛂ - سقف اجرا : ${maxReached ? "● تکمیل شده" : Number.isFinite(maxExecutions) && maxExecutions > 0 ? `${rule.executionCount}/${maxExecutions}` : "نامحدود"}`,
       ].join("\\n"));
     }
 
