@@ -23,8 +23,8 @@ function normalizeActions(input: unknown): KeywordAction[] {
       throw new Error("نوع اقدام نامعتبر است.");
     }
     const text = value.text == null ? undefined : String(value.text).trim();
-    if (["reply","react","forward"].includes(type) && !text) throw new Error("این اقدام به مقدار متنی/شناسه نیاز دارد.");
-    const action = { type, ...(text ? { text } : {}) } as KeywordAction;\n    const policy = validateKeywordActionPolicy(action);\n    if (!policy.allowed) throw new Error(policy.reason);\n    return action;
+    if (["reply","notify","react","forward"].includes(type) && !text) throw new Error("این اقدام به مقدار متنی/شناسه نیاز دارد.");
+    const delayMin = Math.max(0, Math.floor(Number(value.delayMin ?? value.delay_min ?? 0) || 0));\n    const delayMax = Math.max(delayMin, Math.floor(Number(value.delayMax ?? value.delay_max ?? delayMin) || 0));\n    if (delayMin > 3600 || delayMax > 3600) throw new Error("تأخیر هر اقدام نمی‌تواند بیشتر از ۳۶۰۰ ثانیه باشد.");\n    const action = { type, ...(text ? { text } : {}), delayMin, delayMax } as KeywordAction;\n    const policy = validateKeywordActionPolicy(action);\n    if (!policy.allowed) throw new Error(policy.reason);\n    return action;
   });
 }
 
