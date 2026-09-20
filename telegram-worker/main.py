@@ -3,7 +3,7 @@ import hashlib
 import os
 from pathlib import Path
 
-from aiohttp import web
+from aiohttp import ClientSession, web
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
 
@@ -15,9 +15,11 @@ SESSION_DIR.mkdir(parents=True, exist_ok=True)
 API_ID_RAW = os.getenv("TELEGRAM_API_ID", "")
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 WORKER_API_TOKEN = os.getenv("WORKER_API_TOKEN", "")
+EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
+http_session: ClientSession | None = None
 
 
 def configured():
@@ -40,9 +42,9 @@ def get_customer_id(request: web.Request) -> str | None:
 
 
 def authorized(request: web.Request) -> bool:
-    if not WORKER_API_TOKEN:
-        return False
-    return request.headers.get("X-Salf1-Worker-Token", "") == WORKER_API_TOKEN
+    return bool(WORKER_API_TOKEN) and request.headers.get(
+        "X-Salf1-Worker-Token", ""
+    ) == WORKER_API_TOKEN
 
 
 def auth_error():
@@ -62,7 +64,12 @@ def customer_error():
 def client_for(customer_id: str) -> TelegramClient:
     client = clients.get(customer_id)
     if client is None:
-        client = TelegramClient(session_path(customer_id), int(API_ID_RAW), API_HASH)
+        client = TelegramClient(
+            session_path(customer_id),
+            int(API_ID_RAW),
+            API_HASH,
+        )
+        attach_events(client, customer_id)
         clients[customer_id] = client
     return client
 
@@ -73,6 +80,7 @@ async def health(request):
         "service": "salf1-telegram-worker",
         "telegram_configured": configured(),
         "customers_loaded": len(clients),
+        "event_bridge_configured": bool(EVENT_BRIDGE_URL),
     })
 
 
@@ -126,10 +134,7 @@ async def verify_login(request):
         await client.sign_in(phone, code)
     except SessionPasswordNeededError:
         if not password:
-            return web.json_response(
-                {"ok": False, "status": "2fa_required"},
-                status=401,
-            )
+            return web.json_response({"ok": False, "status": "2fa_required"}, status=401)
         await client.sign_in(password=password)
 
     me = await client.get_me()
@@ -201,24 +206,53 @@ async def disconnect(request):
     })
 
 
-async def message_event(event):
-    # Event ingestion is intentionally kept isolated from rule execution.
-    # The next backend bridge will consume this normalized payload.
-    if not event.raw_text:
+async def send_event_to_backend(payload: dict):
+    if not EVENT_BRIDGE_URL or http_session is None:
         return
 
-    customer_id = event.client.session.filename
-    print({
+    headers = {"Content-Type": "application/json"}
+    if WORKER_API_TOKEN:
+        headers["X-Salf1-Worker-Token"] = WORKER_API_TOKEN
+
+    try:
+        async with http_session.post(
+            EVENT_BRIDGE_URL,
+            json=payload,
+            headers=headers,
+            timeout=10,
+        ) as response:
+            if response.status >= 300:
+                print(f"Event bridge rejected event: HTTP {response.status}")
+    except Exception as exc:
+        print(f"Event bridge error: {exc}")
+
+
+async def message_event(event, customer_id: str):
+    text = (event.raw_text or "").strip()
+    if not text:
+        return
+
+    payload = {
         "type": "telegram.message",
-        "customer_session": customer_id,
-        "chat_id": getattr(event.chat, "id", None),
-        "sender_id": getattr(event.sender, "id", None) if event.sender else None,
-        "text": event.raw_text[:1000],
-    })
+        "customer_id": customer_id,
+        "message": {
+            "chat_id": getattr(event.chat, "id", None),
+            "sender_id": getattr(event.sender, "id", None) if event.sender else None,
+            "text": text[:4000],
+            "message_id": getattr(event.message, "id", None),
+            "date": event.message.date.isoformat() if event.message and event.message.date else None,
+        },
+    }
+
+    print(payload)
+    await send_event_to_backend(payload)
 
 
-def attach_events(client: TelegramClient):
-    client.add_event_handler(message_event, events.NewMessage)
+def attach_events(client: TelegramClient, customer_id: str):
+    async def handler(event):
+        await message_event(event, customer_id)
+
+    client.add_event_handler(handler, events.NewMessage)
 
 
 async def init_loaded_sessions():
@@ -226,16 +260,19 @@ async def init_loaded_sessions():
         return
 
     for directory in SESSION_DIR.glob("customer-*"):
-        customer_id = directory.name.removeprefix("customer-")
-        # The directory contains a hashed customer key; it is not reversible.
-        # Sessions are therefore loaded lazily by explicit customer requests.
-        print(f"Found persisted customer session: {customer_id}")
+        print(f"Found persisted customer session: {directory.name}")
 
 
 async def main():
+    global http_session
+
     if not WORKER_API_TOKEN:
         print("WARNING: WORKER_API_TOKEN is not configured; protected endpoints will return 401.")
 
+    if not EVENT_BRIDGE_URL:
+        print("WARNING: SALF1_EVENT_BRIDGE_URL is not configured; message events will only be logged.")
+
+    http_session = ClientSession()
     await init_loaded_sessions()
 
     runner = web.AppRunner(build_app())
