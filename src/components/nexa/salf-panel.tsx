@@ -205,14 +205,45 @@ function KeywordActionsPanel() {
   const [actions, setActions] = useState<Action[]>([]);
   const [type, setType] = useState<Action["type"]>("reply");
   const [text, setText] = useState("");
+  const [delayMin, setDelayMin] = useState("0");
+  const [delayMax, setDelayMax] = useState("0");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [status, setStatus] = useState("");
-  const add = () => {
-    if ((type === "reply" || type === "react" || type === "forward") && !text.trim()) { setStatus(type === "react" ? "واکنش را وارد کنید." : type === "forward" ? "مقصد فوروارد را وارد کنید." : "متن پاسخ را وارد کنید."); return; }
-    setActions([...actions, { type, ...(text.trim() ? { text: text.trim() } : {}), delayMin: Number(delayMin) || 0, delayMax: Math.max(Number(delayMin) || 0, Number(delayMax) || 0) }]);
-    setText(""); setStatus("");
+
+  const resetEditor = () => {
+    setType("reply"); setText(""); setDelayMin("0"); setDelayMax("0"); setEditingIndex(null);
   };
+
+  const addOrUpdate = () => {
+    const min = Math.max(0, Number(delayMin) || 0);
+    const max = Math.max(min, Number(delayMax) || 0);
+    if ((type === "reply" || type === "react" || type === "forward") && !text.trim()) {
+      setStatus(type === "react" ? "واکنش را وارد کنید." : type === "forward" ? "مقصد فوروارد را وارد کنید." : "متن پاسخ را وارد کنید.");
+      return;
+    }
+    const next: Action = { type, ...(text.trim() ? { text: text.trim() } : {}), delayMin: min, delayMax: max };
+    setActions(prev => editingIndex === null ? [...prev, next] : prev.map((item, i) => i === editingIndex ? next : item));
+    setStatus(editingIndex === null ? "اقدام به صف اضافه شد." : "اقدام ویرایش شد.");
+    resetEditor();
+  };
+
+  const edit = (index: number) => {
+    const a = actions[index];
+    setEditingIndex(index); setType(a.type); setText(a.text ?? "");
+    setDelayMin(String(a.delayMin ?? 0)); setDelayMax(String(a.delayMax ?? 0)); setStatus("");
+  };
+
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= actions.length) return;
+    setActions(prev => {
+      const next = [...prev]; [next[index], next[target]] = [next[target], next[index]]; return next;
+    });
+  };
+
   const save = async () => {
     const id = Number(ruleId);
+    if (!Number.isInteger(id) || id <= 0) { setStatus("شناسه قانون معتبر نیست."); return; }
     setStatus("در حال ذخیره...");
     try {
       const r = await fetch("/api/keywords/actions", { method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify({rule_id:id,actions}) });
@@ -220,29 +251,60 @@ function KeywordActionsPanel() {
       setStatus("اقدامات با موفقیت ذخیره شدند.");
     } catch(e) { setStatus(e instanceof Error ? e.message : "خطای ذخیره."); }
   };
+
   const load = async () => {
-    const id = Number(ruleId); setStatus("در حال بارگذاری...");
+    const id = Number(ruleId);
+    if (!Number.isInteger(id) || id <= 0) { setStatus("شناسه قانون معتبر نیست."); return; }
+    setStatus("در حال بارگذاری...");
     try {
       const r=await fetch(`/api/keywords/actions?rule_id=${id}`,{credentials:"same-origin"});
       const d=await r.json(); if(!r.ok||!d.ok) throw new Error(d.error||"بارگذاری ناموفق بود.");
       setActions(Array.isArray(d.actions)?d.actions:[]); setStatus("اقدامات از دیتابیس بارگذاری شدند.");
     } catch(e){setStatus(e instanceof Error?e.message:"خطای بارگذاری.");}
   };
+
   const labels: Record<Action["type"],string> = { reply:"پاسخ", notify:"اعلان", log:"لاگ", react:"واکنش", delete:"حذف", forward:"فوروارد" };
+  const blocked = new Set<Action["type"]>(["delete","forward"]);
+
   return <div className="mt-5 rounded-2xl border border-line bg-surface-2/70 p-4">
-    <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">سازنده اقدامات</p><p className="mt-1 text-xs leading-5 text-muted">چند اقدام را برای یک قانون بسازید و به ترتیب اجرا ذخیره کنید.</p></div><span className="rounded-full border border-line px-2.5 py-1 text-[10px] text-subtle">ACTION BUILDER</span></div>
+    <div className="flex items-start justify-between gap-3">
+      <div><p className="text-sm font-semibold">سازنده اقدامات حرفه‌ای</p><p className="mt-1 text-xs leading-5 text-muted">اقدامات را بسازید، ویرایش کنید و ترتیب اجرای آن‌ها را دقیق کنترل کنید.</p></div>
+      <span className="rounded-full border border-line px-2.5 py-1 text-[10px] text-subtle">ACTION BUILDER</span>
+    </div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
       <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه قانون</span><input value={ruleId} onChange={e=>setRuleId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
       <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">نوع اقدام</span><select value={type} onChange={e=>setType(e.target.value as Action["type"])} className="mt-2 w-full bg-transparent text-sm outline-none"><option value="reply">پاسخ</option><option value="notify">اعلان</option><option value="log">لاگ</option><option value="react">واکنش</option><option value="delete">حذف پیام</option><option value="forward">فوروارد</option></select></label>
-      <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2"><label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداقل (ثانیه)</span><input value={delayMin} onChange={e=>setDelayMin(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" /></label><label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداکثر (ثانیه)</span><input value={delayMax} onChange={e=>setDelayMax(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" /></label><label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">متن اقدام</span><input value={text} onChange={e=>setText(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder={type === "reply" ? "متن پاسخ..." : type === "react" ? "مثلاً ❤️" : type === "forward" ? "شناسه یا مقصد گفتگو..." : "این اقدام متن اضافی ندارد."}/></label>
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداقل (ثانیه)</span><input type="number" min="0" value={delayMin} onChange={e=>setDelayMin(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداکثر (ثانیه)</span><input type="number" min="0" value={delayMax} onChange={e=>setDelayMax(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
+      <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">مقدار اقدام</span><input value={text} onChange={e=>setText(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder={type === "reply" ? "متن پاسخ..." : type === "react" ? "مثلاً ❤️" : type === "forward" ? "شناسه یا مقصد گفتگو..." : "این اقدام مقدار متنی ندارد."}/></label>
     </div>
-    <div className="mt-3 flex gap-2"><button onClick={add} className="flex-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm">افزودن اقدام</button><button onClick={load} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">بارگذاری</button></div>
-    <div className="mt-3 space-y-2">{actions.map((a,i)=><div key={i} className="flex items-center gap-3 rounded-xl border border-line bg-surface p-3"><span className="text-xs text-accent">{String(i+1).padStart(2,"0")}</span><span className="text-sm font-medium">{labels[a.type]}</span><span className="min-w-0 flex-1 truncate text-xs text-muted">{a.text || "بدون متن"}</span><button onClick={()=>setActions(actions.filter((_,x)=>x!==i))} className="text-xs text-muted">حذف</button></div>)}</div>
+    <div className="mt-3 flex gap-2">
+      <button onClick={addOrUpdate} className="flex-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm">{editingIndex === null ? "افزودن اقدام" : "ذخیره ویرایش"}</button>
+      {editingIndex !== null && <button onClick={resetEditor} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">انصراف</button>}
+      <button onClick={load} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">بارگذاری</button>
+    </div>
+    <div className="mt-4 space-y-2">
+      {actions.length === 0 && <div className="rounded-xl border border-dashed border-line p-4 text-center text-xs text-muted">هنوز اقدامی برای این قانون ساخته نشده است.</div>}
+      {actions.map((a,i)=><div key={i} className="rounded-xl border border-line bg-surface p-3">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-accent">{String(i+1).padStart(2,"0")}</span>
+          <span className="text-sm font-medium">{labels[a.type]}</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted">{a.text || "بدون مقدار"}</span>
+          {blocked.has(a.type) && <span className="rounded-full border border-line px-2 py-1 text-[10px] text-muted">فعلاً مسدود</span>}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-subtle">
+          <span>تأخیر: {a.delayMin ?? 0}–{a.delayMax ?? 0} ثانیه</span>
+          <span>•</span><button onClick={()=>move(i,-1)} disabled={i===0} className="disabled:opacity-30">↑</button>
+          <button onClick={()=>move(i,1)} disabled={i===actions.length-1} className="disabled:opacity-30">↓</button>
+          <button onClick={()=>edit(i)} className="text-fg">ویرایش</button>
+          <button onClick={()=>setActions(actions.filter((_,x)=>x!==i))} className="text-muted">حذف</button>
+        </div>
+      </div>)}
+    </div>
     <button onClick={save} className="mt-3 w-full rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium">ذخیره اقدامات</button>
     {status && <p className="mt-3 rounded-xl border border-line px-3 py-2 text-xs text-muted">{status}</p>}
   </div>;
 }
-
 
 function CapabilityView({ item, onBack }: { item: Capability; onBack: () => void }) {
   const [tab, setTab] = useState<"detail" | "guide">("detail");
