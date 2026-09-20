@@ -272,6 +272,30 @@ export function validateKeywordActionPolicy(action: KeywordAction): KeywordActio
   return { allowed: true };
 }
 
+export function explainKeywordConditions(
+  rule: KeywordRule,
+  context: KeywordMatchContext = {},
+): { matched: boolean; reason: string } {
+  const conditions = (rule.conditions ?? {}) as KeywordConditions;
+  const userId = context.userId == null ? "" : String(context.userId);
+  const chatId = context.chatId == null ? "" : String(context.chatId);
+  const chatType = String(context.chatType ?? "").trim().toLocaleLowerCase();
+  const userIds = normalizeList(conditions.user_ids);
+  const chatIds = normalizeList(conditions.chat_ids);
+  const chatTypes = normalizeList(conditions.chat_types).map(x => x.toLocaleLowerCase());
+  const excludedUsers = normalizeList(conditions.excluded_user_ids);
+  const excludedChats = normalizeList(conditions.excluded_chat_ids);
+  if (userIds.length && !userIds.includes(userId)) return { matched:false, reason:"user_not_allowed" };
+  if (chatIds.length && !chatIds.includes(chatId)) return { matched:false, reason:"chat_not_allowed" };
+  if (chatTypes.length && !chatTypes.includes(chatType)) return { matched:false, reason:"chat_type_not_allowed" };
+  if (excludedUsers.includes(userId)) return { matched:false, reason:"user_excluded" };
+  if (excludedChats.includes(chatId)) return { matched:false, reason:"chat_excluded" };
+  const maxExecutions = Number(conditions.max_executions);
+  if (Number.isFinite(maxExecutions) && maxExecutions > 0 && rule.executionCount >= maxExecutions) return { matched:false, reason:"max_executions_reached" };
+  if (!timeInWindow(context.now ?? new Date(), conditions.time_start, conditions.time_end)) return { matched:false, reason:"outside_time_window" };
+  return { matched:true, reason:"matched" };
+}
+
 export function matchesKeywordConditions(
   rule: KeywordRule,
   context: KeywordMatchContext = {},
