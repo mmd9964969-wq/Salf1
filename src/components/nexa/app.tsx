@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { useSelfStore } from "@/lib/store";
 import { Shell } from "./shell";
-import { HomeView } from "./home";
 import { ChatsView } from "./chats";
 import { ProfileView, ActivityView, SettingsView } from "./account";
 import {
@@ -14,6 +13,27 @@ import {
 } from "./ops";
 import { Onboarding } from "./onboarding";
 import { SalfPanelView } from "./salf-panel";
+
+function SalfBrandFooter() {
+  return (
+    <footer className="salf-brand-footer" aria-label="Salf1 brand">
+      <div className="salf-brand-mark" aria-hidden="true">
+        <span className="salf-brand-orbit" />
+        <span className="salf-brand-letter">S</span>
+      </div>
+      <div className="min-w-0 text-right">
+        <p className="salf-brand-kicker">SALF1 · ACCOUNT CONTROL SYSTEM</p>
+        <p className="salf-brand-title">سازنده سلف : <strong>Jawati</strong></p>
+        <p className="salf-brand-meta">آیدی تلگرام : <span dir="ltr">@Jowati</span></p>
+      </div>
+      <div className="salf-brand-divider" />
+      <div className="salf-brand-team">
+        <span className="salf-brand-dot" />
+        <span>تیم پرشین تقدیم میکند</span>
+      </div>
+    </footer>
+  );
+}
 
 export function NexaApp() {
   const hydrated = useSelfStore((s) => s.hydrated);
@@ -112,5 +132,10 @@ export function NexaApp() {
     }
   })();
 
-  return <Shell>{content}</Shell>;
+  return (
+    <Shell>
+      {content}
+      {(view === "home" || !view) && <SalfBrandFooter />}
+    </Shell>
+  );
 }
