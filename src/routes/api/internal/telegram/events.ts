@@ -13,6 +13,21 @@ function authorized(request: Request) {
   return Boolean(token) && request.headers.get("X-Salf1-Worker-Token") === token;
 }
 
+function scopeMatches(scope: string, chatType: string) {
+  const normalized = scope.trim().toLocaleLowerCase();
+  if (!normalized || normalized === "all" || normalized === "همه") return true;
+  if (normalized === "pm" || normalized === "private" || normalized === "پیوی") {
+    return chatType === "pm";
+  }
+  if (normalized === "group" || normalized === "گروه") {
+    return chatType === "group";
+  }
+  if (normalized === "channel" || normalized === "کانال") {
+    return chatType === "channel";
+  }
+  return false;
+}
+
 export const Route = createFileRoute("/api/internal/telegram/events")({
   server: {
     handlers: {
@@ -30,6 +45,7 @@ export const Route = createFileRoute("/api/internal/telegram/events")({
             text?: string;
             message_id?: number | string | null;
             date?: string | null;
+            chat_type?: string;
           };
         };
 
@@ -45,6 +61,7 @@ export const Route = createFileRoute("/api/internal/telegram/events")({
 
         const customerId = String(body.customer_id ?? "").trim();
         const text = String(body.message?.text ?? "").trim();
+        const chatType = String(body.message?.chat_type ?? "other");
 
         if (!customerId || !text) {
           return json(
@@ -53,7 +70,9 @@ export const Route = createFileRoute("/api/internal/telegram/events")({
           );
         }
 
-        const rules = await findMatchingKeywordRules(customerId, text);
+        const rules = (await findMatchingKeywordRules(customerId, text)).filter(
+          (rule) => scopeMatches(rule.scope, chatType),
+        );
 
         return json({
           ok: true,
