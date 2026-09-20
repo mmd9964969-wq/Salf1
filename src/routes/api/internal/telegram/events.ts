@@ -70,7 +70,12 @@ export const Route = createFileRoute("/api/internal/telegram/events")({
           );
         }
 
-        const rules = (await findMatchingKeywordRules(customerId, text)).filter(
+        const rules = (await findMatchingKeywordRules(customerId, text, {
+          userId: body.message?.sender_id,
+          chatId: body.message?.chat_id,
+          chatType,
+          now: body.message?.date ? new Date(body.message.date) : new Date(),
+        })).filter(
           (rule) => scopeMatches(rule.scope, chatType),
         );
 
