@@ -376,62 +376,37 @@ export function SalfPanelView() {
   const profile = useSelfStore((s) => s.profile)!;
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [capability, setCapability] = useState<Capability | null>(null);
-  const section = sections.find(s => s.id === sectionId);
+  const [search, setSearch] = useState("");
+  const [commandCopied, setCommandCopied] = useState(false);
+  const totalCapabilities = sections.reduce((n, s) => n + s.items.length, 0);
+  const filteredSections = sections.map(section => ({...section,items: section.items.filter(item => !search.trim() || item.title.includes(search.trim()) || item.desc.includes(search.trim()) || item.commands.some(c => c.toLowerCase().includes(search.trim().toLowerCase())))})).filter(section => !search.trim() || section.items.length > 0);
   if (capability) return <CapabilityView item={capability} onBack={()=>setCapability(null)} />;
-  if (section) return (
-    <div className="nexa-rise mx-auto w-full max-w-5xl">
-      <button className="mb-4 inline-flex items-center gap-2 text-sm text-muted hover:text-fg" onClick={()=>setSectionId(null)}><ArrowRight className="size-4"/> پنل اصلی</button>
-      <header className="mb-5">
-        <p className="text-[11px] tracking-[0.16em] text-subtle uppercase">SALF1 CONTROL</p>
-        <h1 className="mt-1 text-2xl font-semibold">{section.title}</h1>
-        <p className="mt-1 text-sm text-muted">{section.desc}</p>
-      </header>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {section.items.map(item=>(
-          <button key={item.id} onClick={()=>setCapability(item)} className="salf-panel-button group rounded-2xl border border-line bg-surface/75 p-4 text-right shadow-[var(--shadow-border)] backdrop-blur-xl transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-2">
-            <div className="flex items-center gap-3">
-              <span className="salf-icon flex size-10 items-center justify-center rounded-xl bg-surface-2 text-muted group-hover:text-fg"><item.icon className="size-4"/></span>
-              <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{item.title}</span><span className="mt-1 block text-xs leading-5 text-muted">{item.desc}</span></span>
-              <ChevronLeft className="size-4 text-subtle transition group-hover:-translate-x-0.5"/>
-            </div>
-          </button>
-        ))}
+  if (sectionId) {
+    const section = sections.find(s => s.id === sectionId);
+    if (!section) return null;
+    return <div className="salf-page salf-dashboard">
+      <div className="salf-page-head"><button className="salf-ghost-button" onClick={()=>setSectionId(null)}><ArrowRight className="size-4"/> بازگشت به خانه</button>
+        <div className="salf-title-row"><div className="salf-emblem salf-emblem-sm"><section.icon className="size-5"/></div><div><p className="salf-eyebrow">SALF1 / MODULE</p><h1>{section.title}</h1><p>{section.desc}</p></div></div>
       </div>
-    </div>
-  );
-  return (
-    <div className="nexa-rise mx-auto w-full max-w-5xl">
-      <section className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface/75 p-4 shadow-[var(--shadow-float)] backdrop-blur-xl sm:p-6">
-        <div className="flex items-center gap-3">
-          <span className="flex size-12 items-center justify-center rounded-xl bg-surface-2 text-accent"><Gem className="size-5"/></span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] tracking-[0.16em] text-subtle uppercase">SALF1 CONTROL PANEL</p>
-            <h1 className="mt-1 text-2xl font-semibold">پنل مدیریت</h1>
-            <p className="mt-1 text-sm text-muted">تمام قابلیت‌های Salf1 در دسته‌بندی‌های شیشه‌ای و قابل جستجو.</p>
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="rounded-xl bg-surface-2 p-3"><p className="text-[11px] text-subtle">اکانت</p><p className="mt-1 truncate text-sm font-medium">@{profile.username}</p></div>
-          <div className="rounded-xl bg-surface-2 p-3"><p className="text-[11px] text-subtle">وضعیت</p><p className="mt-1 text-sm font-medium text-ok">● فعال</p></div>
-          <div className="rounded-xl bg-surface-2 p-3"><p className="text-[11px] text-subtle">ترون</p><p className="mt-1 text-sm font-medium">{faNum(1250)} جم</p></div>
-          <div className="rounded-xl bg-surface-2 p-3"><p className="text-[11px] text-subtle">قابلیت‌ها</p><p className="mt-1 text-sm font-medium">{faNum(sections.reduce((n,s)=>n+s.items.length,0))}</p></div>
-        </div>
-      </section>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {sections.map(section=>(
-          <button key={section.id} onClick={()=>setSectionId(section.id)} className="salf-panel-button group rounded-2xl border border-line bg-surface/70 p-4 text-right shadow-[var(--shadow-border)] backdrop-blur-xl transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-2">
-            <div className="flex items-center gap-3">
-              <span className="salf-icon flex size-11 items-center justify-center rounded-xl bg-surface-2 text-muted group-hover:text-fg"><section.icon className="size-5"/></span>
-              <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">{section.title}</span><span className="mt-1 block text-xs text-muted">{section.desc}</span><span className="mt-2 block text-[11px] text-subtle">{faNum(section.items.length)} قابلیت</span></span>
-              <ChevronLeft className="size-4 text-subtle"/>
-            </div>
-          </button>
-        ))}
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <button onClick={()=>setSectionId("billing")} className="rounded-2xl border border-line bg-surface/60 p-4 text-right hover:bg-surface-2"><div className="flex items-center gap-3"><Gem className="size-5 text-muted"/><div><p className="text-sm font-medium">ترون و اشتراک</p><p className="text-xs text-muted">موجودی، مصرف و وضعیت اشتراک</p></div></div></button>
-        <button onClick={()=>setSectionId("account")} className="rounded-2xl border border-line bg-surface/60 p-4 text-right hover:bg-surface-2"><div className="flex items-center gap-3"><BookOpen className="size-5 text-muted"/><div><p className="text-sm font-medium">راهنمای قابلیت‌ها</p><p className="text-xs text-muted">راهنمای هر قابلیت داخل همان بخش</p></div></div></button>
-      </div>
-    </div>
-  );
+      <div className="salf-feature-grid">{section.items.map((item,index)=><button key={item.id} onClick={()=>setCapability(item)} className="salf-feature-card">
+        <span className="salf-card-index">{String(index+1).padStart(2,"0")}</span><span className="salf-card-icon"><item.icon className="size-5"/></span>
+        <span className="salf-card-copy"><strong>{item.title}</strong><span>{item.desc}</span><small>{faNum(item.commands.length)} دستور قابل مدیریت</small></span><ChevronLeft className="salf-card-arrow size-5"/>
+      </button>)}</div>
+    </div>;
+  }
+  const copyCommand = async () => { try { await navigator.clipboard.writeText("/panel"); setCommandCopied(true); window.setTimeout(()=>setCommandCopied(false),1400); } catch {} };
+  return <div className="salf-page salf-dashboard">
+    <section className="salf-hero"><div className="salf-hero-grid"/>
+      <div className="salf-hero-top"><div className="salf-brand-lockup"><div className="salf-emblem"><span>S</span><i/></div><div><p className="salf-eyebrow">SELF ACCOUNT LAYER / 01</p><h1>SALF<span>1</span></h1><p className="salf-hero-sub">مرکز فرمان اکانت تلگرام — طراحی‌شده برای کنترل دقیق، سریع و حرفه‌ای.</p></div></div><div className="salf-live-pill"><span/> سیستم فعال <b>LIVE</b></div></div>
+      <div className="salf-hero-main"><div><p className="salf-kicker">WELCOME BACK</p><h2>سلام، {profile.name}</h2><p className="salf-hero-description">همه‌چیز از اینجا شروع می‌شود؛ از پروفایل و پیام‌ها تا اتوماسیون، امنیت، رسانه و سیستم‌های پیشرفته.</p><div className="salf-hero-actions"><button className="salf-primary-button" onClick={()=>setSectionId("automation")}><Zap className="size-4"/> شروع اتوماسیون <ChevronLeft className="size-4"/></button><button className="salf-secondary-button" onClick={copyCommand}>{commandCopied ? "کپی شد ✓" : "/panel"} <Command className="size-4"/></button></div></div>
+        <div className="salf-orbit-card"><div className="salf-orbit-ring ring-one"/><div className="salf-orbit-ring ring-two"/><div className="salf-orbit-core"><span>S</span><small>01</small></div><p>ACCOUNT<br/><strong>CONTROL</strong></p></div></div>
+      <div className="salf-stat-grid"><div><span>اکانت</span><strong>@{profile.username}</strong><small>شناسه فعال</small></div><div><span>وضعیت سیستم</span><strong className="is-ok">● آنلاین</strong><small>سالم و آماده</small></div><div><span>جم ترون</span><strong>{faNum(1250)}</strong><small>موجودی فعلی</small></div><div><span>ماژول‌ها</span><strong>{faNum(sections.length)}</strong><small>{faNum(totalCapabilities)} قابلیت</small></div></div>
+    </section>
+    <section className="salf-command-bar"><div className="salf-search-wrap"><Search className="size-4"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="جستجو در قابلیت‌ها، ماژول‌ها و دستورات..."/></div><div className="salf-command-hint"><span>فرمان سریع</span><code dir="ltr">/panel</code><kbd>ENTER</kbd></div></section>
+    <div className="salf-section-heading"><div><p className="salf-eyebrow">COMMAND ARCHITECTURE</p><h2>مرکز کنترل</h2><p>ماژول‌ها را انتخاب کنید و وارد تنظیمات جزئی هر قابلیت شوید.</p></div><span>{faNum(filteredSections.length)} / {faNum(sections.length)} ماژول</span></div>
+    <div className="salf-module-grid">{filteredSections.map((section,index)=><button key={section.id} onClick={()=>setSectionId(section.id)} className="salf-module-card"><span className="salf-module-number">{String(index+1).padStart(2,"0")}</span><span className="salf-module-icon"><section.icon className="size-5"/></span><span className="salf-module-body"><strong>{section.title}</strong><span>{section.desc}</span><small>{faNum(section.items.length)} قابلیت</small></span><ChevronLeft className="salf-module-arrow size-5"/></button>)}</div>
+    {filteredSections.length===0&&<div className="salf-empty-state"><Search className="size-6"/><strong>نتیجه‌ای پیدا نشد</strong><span>عبارت دیگری جستجو کنید.</span></div>}
+    <section className="salf-command-catalog"><div><p className="salf-eyebrow">QUICK ACCESS</p><h3>دسترسی سریع</h3></div><div className="salf-quick-grid"><button onClick={()=>setSectionId("billing")}><Gem className="size-4"/><span>ترون و اشتراک</span><ChevronLeft className="size-4"/></button><button onClick={()=>setSectionId("security")}><ShieldCheck className="size-4"/><span>مرکز امنیت</span><ChevronLeft className="size-4"/></button><button onClick={()=>setSectionId("advanced")}><Wrench className="size-4"/><span>ابزارهای پیشرفته</span><ChevronLeft className="size-4"/></button><button onClick={()=>setSectionId("account")}><BookOpen className="size-4"/><span>راهنمای قابلیت‌ها</span><ChevronLeft className="size-4"/></button></div></section>
+    <footer className="salf-page-signature"><span>SALF1</span><i/><span>SELF ACCOUNT CONTROL SYSTEM</span><b>MADE BY JAWATI</b></footer>
+  </div>;
 }
