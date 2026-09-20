@@ -61,10 +61,15 @@ export function NexaApp() {
     }
 
     const unsub = persistApi.onFinishHydration(finish);
-    void Promise.resolve(persistApi.rehydrate()).finally(finish);
+    try {
+      void Promise.resolve(persistApi.rehydrate()).finally(finish);
+    } catch {
+      // Corrupt/blocked localStorage must never leave the panel on its splash screen.
+      finish();
+    }
     if (persistApi.hasHydrated()) finish();
 
-    const fallback = window.setTimeout(finish, 400);
+    const fallback = window.setTimeout(finish, 700);
     return () => {
       cancelled = true;
       unsub();
