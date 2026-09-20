@@ -255,6 +255,11 @@ async def execute_keyword_actions(
         for action in actions:
             action_type = str(action.get("type", "")).strip()
             action_text = str(action.get("text", "")).strip()
+            action_delay_min = max(0, int(action.get("delayMin", action.get("delay_min", 0)) or 0))
+            action_delay_max = max(action_delay_min, int(action.get("delayMax", action.get("delay_max", action_delay_min)) or action_delay_min))
+
+            if action_delay_max > 0:
+                await asyncio.sleep(random.uniform(action_delay_min, action_delay_max))
 
             if action_type == "reply" and action_text:
                 await event.respond(action_text)
