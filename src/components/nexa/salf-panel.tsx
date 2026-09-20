@@ -264,7 +264,7 @@ function KeywordActionsPanel() {
   };
 
   const labels: Record<Action["type"],string> = { reply:"پاسخ", notify:"اعلان", log:"لاگ", react:"واکنش", delete:"حذف", forward:"فوروارد" };
-  const blocked = new Set<Action["type"]>(["delete","forward"]);
+  const blocked = new Set<Action["type"]>();
 
   return <div className="mt-5 rounded-2xl border border-line bg-surface-2/70 p-4">
     <div className="flex items-start justify-between gap-3">
@@ -276,7 +276,7 @@ function KeywordActionsPanel() {
       <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">نوع اقدام</span><select value={type} onChange={e=>setType(e.target.value as Action["type"])} className="mt-2 w-full bg-transparent text-sm outline-none"><option value="reply">پاسخ</option><option value="notify">اعلان</option><option value="log">لاگ</option><option value="react">واکنش</option><option value="delete">حذف پیام</option><option value="forward">فوروارد</option></select></label>
       <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداقل (ثانیه)</span><input type="number" min="0" value={delayMin} onChange={e=>setDelayMin(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
       <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداکثر (ثانیه)</span><input type="number" min="0" value={delayMax} onChange={e=>setDelayMax(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
-      <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">مقدار اقدام</span><input value={text} onChange={e=>setText(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder={type === "reply" ? "متن پاسخ..." : type === "react" ? "مثلاً ❤️" : type === "forward" ? "شناسه یا مقصد گفتگو..." : "این اقدام مقدار متنی ندارد."}/></label>
+      <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">مقدار اقدام</span><input value={text} onChange={e=>setText(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder={type === "reply" ? "متن پاسخ..." : type === "notify" ? "متن اعلان برای Saved Messages..." : type === "react" ? "مثلاً ❤️" : type === "forward" ? "شناسه یا @username مقصد..." : "این اقدام مقدار متنی ندارد."}/></label>
     </div>
     <div className="mt-3 flex gap-2">
       <button onClick={addOrUpdate} className="flex-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm">{editingIndex === null ? "افزودن اقدام" : "ذخیره ویرایش"}</button>
