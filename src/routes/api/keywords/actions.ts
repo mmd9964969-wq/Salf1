@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   getKeywordRule,
   updateKeywordRuleActions,
-  type KeywordAction,\n  validateKeywordActionPolicy,
+  type KeywordAction,
+  validateKeywordActionPolicy,
 } from "@/lib/keyword-engine";
 import { requireUserId, UnauthorizedError } from "@/lib/auth/verify.server";
 
@@ -24,7 +25,13 @@ function normalizeActions(input: unknown): KeywordAction[] {
     }
     const text = value.text == null ? undefined : String(value.text).trim();
     if (["reply","notify","react","forward"].includes(type) && !text) throw new Error("این اقدام به مقدار متنی/شناسه نیاز دارد.");
-    const delayMin = Math.max(0, Math.floor(Number(value.delayMin ?? value.delay_min ?? 0) || 0));\n    const delayMax = Math.max(delayMin, Math.floor(Number(value.delayMax ?? value.delay_max ?? delayMin) || 0));\n    if (delayMin > 3600 || delayMax > 3600) throw new Error("تأخیر هر اقدام نمی‌تواند بیشتر از ۳۶۰۰ ثانیه باشد.");\n    const action = { type, ...(text ? { text } : {}), delayMin, delayMax } as KeywordAction;\n    const policy = validateKeywordActionPolicy(action);\n    if (!policy.allowed) throw new Error(policy.reason);\n    return action;
+    const delayMin = Math.max(0, Math.floor(Number(value.delayMin ?? value.delay_min ?? 0) || 0));
+    const delayMax = Math.max(delayMin, Math.floor(Number(value.delayMax ?? value.delay_max ?? delayMin) || 0));
+    if (delayMin > 3600 || delayMax > 3600) throw new Error("تأخیر هر اقدام نمی‌تواند بیشتر از ۳۶۰۰ ثانیه باشد.");
+    const action = { type, ...(text ? { text } : {}), delayMin, delayMax } as KeywordAction;
+    const policy = validateKeywordActionPolicy(action);
+    if (!policy.allowed) throw new Error(policy.reason);
+    return action;
   });
 }
 
