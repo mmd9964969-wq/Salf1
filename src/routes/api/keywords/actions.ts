@@ -19,11 +19,11 @@ function normalizeActions(input: unknown): KeywordAction[] {
     if (!item || typeof item !== "object") throw new Error("ساختار اقدام نامعتبر است.");
     const value = item as Record<string, unknown>;
     const type = String(value.type ?? "");
-    if (type !== "reply" && type !== "notify" && type !== "log") {
+    if (!["reply","notify","log","react","delete","forward"].includes(type)) {
       throw new Error("نوع اقدام نامعتبر است.");
     }
     const text = value.text == null ? undefined : String(value.text).trim();
-    if (type === "reply" && !text) throw new Error("متن پاسخ نمی‌تواند خالی باشد.");
+    if (["reply","react","forward"].includes(type) && !text) throw new Error("این اقدام به مقدار متنی/شناسه نیاز دارد.");
     return { type, ...(text ? { text } : {}) } as KeywordAction;
   });
 }
