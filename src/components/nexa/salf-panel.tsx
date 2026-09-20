@@ -230,7 +230,7 @@ function CapabilityView({ item, onBack }: { item: Capability; onBack: () => void
           <button onClick={()=>setTab("detail")} className={cn("rounded-lg px-3 py-2 text-sm",tab==="detail"&&"bg-surface text-fg shadow-[var(--shadow-border)]")}>جزئیات قابلیت</button>
           <button onClick={()=>setTab("guide")} className={cn("rounded-lg px-3 py-2 text-sm",tab==="guide"&&"bg-surface text-fg shadow-[var(--shadow-border)]")}>راهنمای کامل</button>
         </div>
-        {item.id === "keywords" && <KeywordConditionsPanel />}\n        {tab==="detail" ? (
+        {item.id === "keywords" && <><KeywordConditionsPanel /><KeywordActionsPanel /></>}\n        {tab==="detail" ? (
           <div className="mt-5 space-y-3">
             <div className="rounded-xl border border-line bg-surface-2/70 p-4">
               <p className="text-sm font-medium">وضعیت</p>
