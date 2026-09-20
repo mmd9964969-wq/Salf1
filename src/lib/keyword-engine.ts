@@ -338,6 +338,32 @@ export function getKeywordCooldownRemaining(rule: KeywordRule, now = Date.now())
   return Math.max(0, rule.cooldownSeconds - Math.floor((now - last) / 1000));
 }
 
+export type KeywordMatchExplanation =
+  | { matched: true; reason: "matched" }
+  | { matched: false; reason: string };
+
+export function explainKeywordMatch(
+  rule: KeywordRule,
+  text: string,
+  context: KeywordMatchContext = {},
+): KeywordMatchExplanation {
+  if (!rule.enabled) return { matched: false, reason: "disabled" };
+  if (!text.trim()) return { matched: false, reason: "empty_text" };
+  if (!matchesKeywordRule(rule, text)) {
+    return { matched: false, reason: "trigger_not_matched" };
+  }
+
+  const condition = explainKeywordConditions(rule, context);
+  if (!condition.matched) return condition;
+
+  const cooldownRemaining = getKeywordCooldownRemaining(rule);
+  if (cooldownRemaining > 0) {
+    return { matched: false, reason: "cooldown_active" };
+  }
+
+  return { matched: true, reason: "matched" };
+}
+
 export function isKeywordRuleOnCooldown(rule: KeywordRule, now = Date.now()) {
   return getKeywordCooldownRemaining(rule, now) > 0;
 }
