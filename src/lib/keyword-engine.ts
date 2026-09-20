@@ -253,7 +253,7 @@ export type KeywordActionPolicyResult = { allowed: true } | { allowed: false; re
 
 export function validateKeywordActionPolicy(action: KeywordAction): KeywordActionPolicyResult {
   if (!action || !action.type) return { allowed: false, reason: "نوع اقدام مشخص نیست." };
-  if (["reply", "react", "forward"].includes(action.type) && !String(action.text ?? "").trim()) {
+  if (["reply", "notify", "react", "forward"].includes(action.type) && !String(action.text ?? "").trim()) {
     return { allowed: false, reason: "این اقدام به مقدار نیاز دارد." };
   }
   if (action.type === "react") {
