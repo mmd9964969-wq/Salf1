@@ -31,7 +31,7 @@ const definitions: CommandDefinition[] = [
     key: "keyword",
     aliases: ["keyword", "کلمه"],
     description: "مدیریت حرفه‌ای اقدامات کلمه‌ای و قوانین خودکار",
-    usage: ["/keyword add", "/keyword list", "/keyword info 7", "/keyword test 7", "/keyword pause 7", "/keyword resume 7", "/keyword del 7", "/keyword status"],
+    usage: ["/keyword add", "/keyword list", "/keyword info 7", "/keyword test 7", "/keyword condition 7 status", "/keyword condition 7 user 123", "/keyword condition 7 chat -100123", "/keyword condition 7 type group", "/keyword condition 7 time 09:00 18:00", "/keyword condition 7 max 10", "/keyword condition 7 clear", "/keyword pause 7", "/keyword resume 7", "/keyword del 7", "/keyword status"],
     category: "automation",
   },
   {
