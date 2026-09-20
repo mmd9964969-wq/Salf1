@@ -30,8 +30,8 @@ const definitions: CommandDefinition[] = [
   {
     key: "keyword",
     aliases: ["keyword", "کلمه"],
-    description: "مدیریت اقدامات کلمه‌ای",
-    usage: ["/keyword list", "کلمه list"],
+    description: "مدیریت حرفه‌ای اقدامات کلمه‌ای و قوانین خودکار",
+    usage: ["/keyword add", "/keyword list", "/keyword info 7", "/keyword test 7", "/keyword pause 7", "/keyword resume 7", "/keyword del 7", "/keyword status"],
     category: "automation",
   },
   {
