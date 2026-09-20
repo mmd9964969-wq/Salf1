@@ -264,6 +264,9 @@ async def execute_keyword_actions(
             if action_type == "reply" and action_text:
                 await event.respond(action_text)
                 executed = True
+            elif action_type == "react" and action_text:
+                await event.react(action_text)
+                executed = True
             elif action_type == "log":
                 print({
                     "type": "keyword.log",
