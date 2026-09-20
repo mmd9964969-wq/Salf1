@@ -91,7 +91,9 @@ export const Route = createFileRoute("/api/internal/telegram/events")({
             delay_max: rule.delayMax,
             cooldown_seconds: rule.cooldownSeconds,
             scope: rule.scope,
-            conditions: rule.conditions,\n            cooldown_remaining: getKeywordCooldownRemaining(rule),\n            execution_count: rule.executionCount,
+            conditions: rule.conditions,
+            cooldown_remaining: getKeywordCooldownRemaining(rule),
+            execution_count: rule.executionCount,
           })),
         });
       },
