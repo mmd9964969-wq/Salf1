@@ -50,7 +50,7 @@ const sections: Section[] = [
     { id:"autoreact", title:"واکنش خودکار", icon:Zap, desc:"واکنش شرطی، تصادفی و زمان‌دار", commands:["/autoreact add سلام 👋","/autoreact chance 40","/autoreact list","/autoreact status"] },
     { id:"autoreply", title:"پاسخ خودکار", icon:MessageCircle, desc:"پاسخ بر اساس کلمه، کاربر، چت و زمان", commands:["/autoreply add سلام","/autoreply exact \"سلام خوبی?\"","/autoreply delay 2-5","/autoreply status"] },
     { id:"afk", title:"عدم دسترسی", icon:Moon, desc:"مدیریت وضعیت عدم دسترسی با پاسخ، زمان و استثنا", commands:["/afk on","/afk off","/afk status","/afk set","/afk delay 2-5","/afk except add @username","/afk mode first","/afk log on"] },
-    { id:"keywords", title:"اقدامات کلمه‌ای", icon:Target, desc:"اجرای اقدام بر اساس متن پیام", commands:["/keyword add"] },
+    { id:"keywords", title:"اقدامات کلمه‌ای", icon:Target, desc:"Rule Engine برای تشخیص متن، اعمال شرط و اجرای یک یا چند اقدام", commands:["/keyword add","/keyword list","/keyword info 7","/keyword pause 7","/keyword resume 7","/keyword del 7","/keyword test 7","/keyword status"] },
     { id:"custom", title:"دستورات سفارشی", icon:Bot, desc:"ساخت فرمان‌های اختصاصی", commands:["/command add"] },
     { id:"conditional", title:"قوانین شرطی", icon:Brain, desc:"ترکیب چند شرط برای اجرای اقدام", commands:["/rule add","/rule list"] },
   ]},
@@ -103,6 +103,67 @@ const sections: Section[] = [
     { id:"subscription", title:"اشتراک", icon:Gem, desc:"وضعیت پلن و زمان باقی‌مانده", commands:["/subscription"] },
   ]},
 ];
+
+function KeywordGuide() {
+  return (
+    <div className="mt-5 space-y-3">
+      <div className="rounded-xl border border-line bg-surface-2 p-4">
+        <p className="text-sm font-semibold">معماری قانون</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {[
+            ["01","محرک","کلمه، عبارت یا الگوی پیام"],
+            ["02","شرط","چت، کاربر، زمان و محدودیت"],
+            ["03","اقدام","پاسخ، لاگ، اعلان یا چند اقدام"],
+          ].map(([n,t,d]) => (
+            <div key={n} className="rounded-xl border border-line bg-surface/60 p-3">
+              <p className="text-[11px] text-accent">{n}</p>
+              <p className="mt-1 text-sm font-medium">{t}</p>
+              <p className="mt-1 text-xs leading-5 text-muted">{d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="rounded-xl border border-line bg-surface-2 p-4">
+        <p className="text-sm font-semibold">محرک‌های قابل تعریف</p>
+        <div className="mt-3 space-y-2 text-sm leading-7 text-muted">
+          <p>★ - تطابق دقیق، شامل عبارت، شروع با عبارت و پایان با عبارت</p>
+          <p>⛂ - چند کلمه یا چند عبارت برای یک قانون</p>
+          <p>⛂ - الگوی Regex برای قوانین پیشرفته</p>
+          <p>⛂ - نادیده‌گرفتن فاصله و تفاوت حروف در حالت‌های قابل تنظیم</p>
+        </div>
+      </div>
+      <div className="rounded-xl border border-line bg-surface-2 p-4">
+        <p className="text-sm font-semibold">شرایط اجرا</p>
+        <div className="mt-3 space-y-2 text-sm leading-7 text-muted">
+          <p>★ - پیوی، گروه، کانال یا چت‌های انتخابی</p>
+          <p>⛂ - کاربران مشخص، مخاطبین یا لیست استثنا</p>
+          <p>⛂ - روز و ساعت مشخص</p>
+          <p>⛂ - Cooldown و سقف اجرای قانون</p>
+        </div>
+      </div>
+      <div className="rounded-xl border border-line bg-surface-2 p-4">
+        <p className="text-sm font-semibold">اقدامات</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {["ارسال پاسخ متنی یا رسانه","ثبت لاگ و اعلان","اجرای چند اقدام پشت‌سرهم","اجرای قانون دیگر","تأخیر قبل از اجرا","توقف ادامه قوانین"].map(x =>
+            <div key={x} className="rounded-lg bg-surface px-3 py-2 text-xs text-muted">{x}</div>
+          )}
+        </div>
+      </div>
+      <div className="rounded-xl border border-line bg-surface-2 p-4">
+        <p className="text-sm font-semibold">نمونه قانون</p>
+        <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs leading-6 text-muted">
+          <p>★ - نام: پاسخ قیمت</p>
+          <p>⛂ - محرک: شامل «قیمت»</p>
+          <p>⛂ - محدوده: پیوی</p>
+          <p>⛂ - شرط: کاربر غیرمخاطب</p>
+          <p>⛂ - تأخیر: 3 تا 6 ثانیه</p>
+          <p>⛂ - Cooldown: 60 ثانیه</p>
+          <p>⛂ - اقدام: ارسال پاسخ + ثبت لاگ</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function CapabilityView({ item, onBack }: { item: Capability; onBack: () => void }) {
   const [tab, setTab] = useState<"detail" | "guide">("detail");
