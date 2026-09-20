@@ -258,28 +258,32 @@ async def execute_keyword_actions(
             action_delay_min = max(0, int(action.get("delayMin", action.get("delay_min", 0)) or 0))
             action_delay_max = max(action_delay_min, int(action.get("delayMax", action.get("delay_max", action_delay_min)) or action_delay_min))
 
+            if action_type not in {"reply", "react", "log", "notify"}:
+                print({"type": "keyword.action_blocked", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "reason": "advanced action is not enabled in worker"})
+                continue
+
+            if action_type in {"reply", "react"} and not action_text:
+                print({"type": "keyword.action_blocked", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "reason": "missing action value"})
+                continue
+
             if action_delay_max > 0:
                 await asyncio.sleep(random.uniform(action_delay_min, action_delay_max))
 
-            if action_type == "reply" and action_text:
-                await event.respond(action_text)
-                executed = True
-            elif action_type == "react" and action_text:
-                await event.react(action_text)
-                executed = True
-            elif action_type == "log":
-                print({
-                    "type": "keyword.log",
-                    "customer_id": customer_id,
-                    "rule_id": rule_id,
-                    "message": event.raw_text[:1000],
-                })
-            elif action_type == "notify":
-                print({
-                    "type": "keyword.notify",
-                    "customer_id": customer_id,
-                    "rule_id": rule_id,
-                })
+            try:
+                if action_type == "reply":
+                    await event.respond(action_text)
+                    executed = True
+                elif action_type == "react":
+                    await event.react(action_text)
+                    executed = True
+                elif action_type == "log":
+                    print({"type": "keyword.log", "customer_id": customer_id, "rule_id": rule_id, "message": event.raw_text[:1000]})
+                    executed = True
+                elif action_type == "notify":
+                    print({"type": "keyword.notify", "customer_id": customer_id, "rule_id": rule_id})
+                    executed = True
+            except Exception as exc:
+                print({"type": "keyword.action_error", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "error": str(exc)})
 
         if executed and rule_id > 0 and KEYWORD_ACK_URL:
             await post_json(
