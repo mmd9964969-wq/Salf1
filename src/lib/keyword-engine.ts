@@ -26,7 +26,7 @@ export type KeywordConditions = {
 };
 
 export type KeywordAction = {
-  type: "reply" | "notify" | "log";
+  type: "reply" | "notify" | "log" | "react" | "delete" | "forward";
   text?: string;
 };
 
