@@ -4,7 +4,7 @@ import {
   ShieldCheck, Pencil, HardDrive, Timer, Users, LockKeyhole, Wrench, Gem,
   BookOpen, Eye, Zap, MessageCircle, Moon, Target, Bot, Repeat2, Pin,
   Search, Trash2, Download, CalendarClock, Ban, FileText, UserPlus,
-  ChevronLeft, Play, Power, CircleHelp
+  ChevronLeft, Play, Power, CircleHelp, Command
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSelfStore } from "@/lib/store";
