@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { findMatchingKeywordRules } from "@/lib/keyword-engine";
+import { findMatchingKeywordRules, getKeywordCooldownRemaining } from "@/lib/keyword-engine";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -91,7 +91,7 @@ export const Route = createFileRoute("/api/internal/telegram/events")({
             delay_max: rule.delayMax,
             cooldown_seconds: rule.cooldownSeconds,
             scope: rule.scope,
-            conditions: rule.conditions,
+            conditions: rule.conditions,\n            cooldown_remaining: getKeywordCooldownRemaining(rule),\n            execution_count: rule.executionCount,
           })),
         });
       },
