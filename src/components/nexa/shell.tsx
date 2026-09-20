@@ -89,97 +89,10 @@ export function Shell({ children }: { children: ReactNode }) {
   const activeChatId = useSelfStore((s) => s.activeChatId);
   const [menu, setMenu] = useState(false);
   const hideDock = view === "chats" && Boolean(activeChatId);
-
-  return (
-    <div className="flex h-dvh min-h-dvh overflow-hidden bg-bg text-fg">
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-e border-line lg:flex">
-        <div className="px-5 pb-2 pt-6">
-          <p className="text-[10px] font-medium tracking-[0.22em] text-subtle">SELF COMMAND</p>
-          <p className="font-display text-3xl italic leading-none">Nexa</p>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-          <NavList />
-        </div>
-        <div className="border-t border-line p-3">
-          <div className="flex items-center gap-2 rounded-lg bg-surface p-2 shadow-[var(--shadow-border)]">
-            <Avatar name={profile.name} hue={200} size="sm" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{profile.name}</p>
-              <p className="truncate text-[11px] text-muted" dir="ltr">
-                @{profile.username}
-              </p>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-line bg-bg/90 px-3 backdrop-blur-sm lg:h-16 lg:px-6">
-          <Sheet open={menu} onOpenChange={setMenu}>
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenu(true)} aria-label="منو">
-              <Menu className="size-5" />
-            </Button>
-            <SheetContent side="right">
-              <div className="px-5 pb-2 pt-6">
-                <p className="font-display text-2xl italic">Nexa</p>
-              </div>
-              <SheetClose asChild>
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  <NavList onPick={() => setMenu(false)} />
-                </div>
-              </SheetClose>
-            </SheetContent>
-          </Sheet>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium lg:hidden">{VIEW_LABEL[view]}</p>
-            <div className="hidden items-center gap-2 lg:flex">
-              <span className="relative inline-flex size-2">
-                <span className="nexa-pulse absolute inset-0 rounded-full bg-ok" />
-              </span>
-              <span className="text-xs text-muted">نشست فعال</span>
-              <Badge tone="muted">{profile.sessionId}</Badge>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden text-xs text-muted sm:inline">افک</span>
-            <Switch checked={afk.on} onCheckedChange={(v) => setAfk(v, afk.reason || "کمی بعد برمی‌گردم.")} />
-          </div>
-        </header>
-
-        <main
-          className={cn(
-            "flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-20 pt-5 lg:px-8 lg:pb-8",
-            view === "chats" && "overflow-hidden pt-3 lg:pt-4",
-            hideDock && "pb-3",
-          )}
-        >
-          {children}
-        </main>
-
-        <nav className={cn("fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-line bg-bg/95 px-2 py-1 backdrop-blur-sm lg:hidden", hideDock && "hidden")}>
-          {(
-            [
-              ["home", Home],
-              ["chats", MessageSquare],
-              ["commands", Command],
-              ["settings", Settings],
-            ] as const
-          ).map(([id, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setView(id)}
-              className={cn(
-                "flex h-12 flex-col items-center justify-center gap-0.5 text-[11px]",
-                view === id ? "text-fg" : "text-muted",
-              )}
-            >
-              <Icon className="size-4" />
-              {VIEW_LABEL[id]}
-            </button>
-          ))}
-        </nav>
-      </div>
-    </div>
-  );
+  return <div className="salf-shell">
+    <aside className="salf-sidebar"><div className="salf-sidebar-brand"><div className="salf-sidebar-mark">S<span>1</span></div><div><strong>SALF<span>1</span></strong><small>ACCOUNT CONTROL</small></div></div><div className="salf-sidebar-status"><span/> سیستم فعال <b>LIVE</b></div><div className="salf-sidebar-scroll"><NavList/></div><div className="salf-sidebar-user"><Avatar name={profile.name} hue={200} size="sm"/><div><strong>{profile.name}</strong><span dir="ltr">@{profile.username}</span></div><Settings className="size-4"/></div></aside>
+    <div className="salf-workspace"><header className="salf-topbar"><div className="salf-mobile-menu"><Sheet open={menu} onOpenChange={setMenu}><Button variant="ghost" size="icon" onClick={()=>setMenu(true)} aria-label="منو"><Menu className="size-5"/></Button><SheetContent side="right"><div className="p-5"><div className="salf-sidebar-brand"><div className="salf-sidebar-mark">S<span>1</span></div><div><strong>SALF<span>1</span></strong><small>ACCOUNT CONTROL</small></div></div></div><SheetClose asChild><div className="min-h-0 flex-1 overflow-y-auto"><NavList onPick={()=>setMenu(false)}/></div></SheetClose></SheetContent></Sheet></div><div className="salf-topbar-title"><span className="salf-topbar-dot"/><div><strong>{VIEW_LABEL[view]}</strong><small>CONTROL CENTER / SALF1</small></div></div><div className="salf-topbar-actions"><div className="salf-session"><span>SESSION</span><b dir="ltr">{profile.sessionId}</b></div><div className="salf-afk"><span>AFK</span><Switch checked={afk.on} onCheckedChange={(v)=>setAfk(v,afk.reason||"کمی بعد برمی‌گردم.")}/></div><Avatar name={profile.name} hue={200} size="sm"/></div></header>
+    <main className={cn("salf-main",view==="chats"&&"salf-main-chat",hideDock&&"salf-main-chat-active")}>{children}</main>
+    <nav className={cn("salf-mobile-dock",hideDock&&"hidden")}>{([["home",Home],["chats",MessageSquare],["commands",Command],["settings",Settings]] as const).map(([id,Icon])=><button key={id} type="button" onClick={()=>setView(id)} className={view===id?"active":""}><Icon className="size-4"/><span>{VIEW_LABEL[id]}</span></button>)}</nav></div>
+  </div>;
 }
