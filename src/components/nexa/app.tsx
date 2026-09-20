@@ -13,6 +13,7 @@ import {
   SnippetsView,
 } from "./ops";
 import { Onboarding } from "./onboarding";
+import { SalfPanelView } from "./salf-panel";
 
 export function NexaApp() {
   const hydrated = useSelfStore((s) => s.hydrated);
@@ -85,7 +86,7 @@ export function NexaApp() {
   const content = (() => {
     switch (view) {
       case "home":
-        return <HomeView />;
+        return <SalfPanelView />;
       case "chats":
         return <ChatsView />;
       case "autoreply":
@@ -107,7 +108,7 @@ export function NexaApp() {
       case "settings":
         return <SettingsView />;
       default:
-        return <HomeView />;
+        return <SalfPanelView />;
     }
   })();
 
