@@ -174,7 +174,7 @@ function KeywordActionsPanel() {
   const [status, setStatus] = useState("");
   const add = () => {
     if (type === "reply" && !text.trim()) { setStatus("متن پاسخ را وارد کنید."); return; }
-    setActions([...actions, { type, ...(text.trim() ? { text: text.trim() } : {}) }]);
+    setActions([...actions, { type, ...(text.trim() ? { text: text.trim() } : {}), delayMin: Number(delayMin) || 0, delayMax: Math.max(Number(delayMin) || 0, Number(delayMax) || 0) }]);
     setText(""); setStatus("");
   };
   const save = async () => {
@@ -200,7 +200,7 @@ function KeywordActionsPanel() {
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
       <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه قانون</span><input value={ruleId} onChange={e=>setRuleId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
       <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">نوع اقدام</span><select value={type} onChange={e=>setType(e.target.value as Action["type"])} className="mt-2 w-full bg-transparent text-sm outline-none"><option value="reply">پاسخ</option><option value="notify">اعلان</option><option value="log">لاگ</option></select></label>
-      <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">متن اقدام</span><input value={text} onChange={e=>setText(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="برای پاسخ، متن پیام را وارد کنید."/></label>
+      <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2"><label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداقل (ثانیه)</span><input value={delayMin} onChange={e=>setDelayMin(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" /></label><label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">تأخیر حداکثر (ثانیه)</span><input value={delayMax} onChange={e=>setDelayMax(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" /></label><label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">متن اقدام</span><input value={text} onChange={e=>setText(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="برای پاسخ، متن پیام را وارد کنید."/></label>
     </div>
     <div className="mt-3 flex gap-2"><button onClick={add} className="flex-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm">افزودن اقدام</button><button onClick={load} className="rounded-xl border border-line bg-surface px-4 py-3 text-sm">بارگذاری</button></div>
     <div className="mt-3 space-y-2">{actions.map((a,i)=><div key={i} className="flex items-center gap-3 rounded-xl border border-line bg-surface p-3"><span className="text-xs text-accent">{String(i+1).padStart(2,"0")}</span><span className="text-sm font-medium">{labels[a.type]}</span><span className="min-w-0 flex-1 truncate text-xs text-muted">{a.text || "بدون متن"}</span><button onClick={()=>setActions(actions.filter((_,x)=>x!==i))} className="text-xs text-muted">حذف</button></div>)}</div>
