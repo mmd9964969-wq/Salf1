@@ -14,7 +14,7 @@ export const Route = createRootRoute({
       { name: "theme-color", content: "#0b0c0e" },
       {
         name: "description",
-        content: "SALF1 — سیستم حرفه‌ای مدیریت و کنترل اکانت تلگرام.";
+        content: "SALF1 — سیستم حرفه‌ای مدیریت و کنترل اکانت تلگرام." ,
       },
     ],
     links: [
