@@ -249,6 +249,29 @@ function timeInWindow(now: Date, start?: string, end?: string) {
   return current >= startMinutes || current < endMinutes;
 }
 
+export type KeywordActionPolicyResult = { allowed: true } | { allowed: false; reason: string };
+
+export function validateKeywordActionPolicy(action: KeywordAction): KeywordActionPolicyResult {
+  if (!action || !action.type) return { allowed: false, reason: "نوع اقدام مشخص نیست." };
+  if (["reply", "react", "forward"].includes(action.type) && !String(action.text ?? "").trim()) {
+    return { allowed: false, reason: "این اقدام به مقدار نیاز دارد." };
+  }
+  if (action.type === "react") {
+    const value = String(action.text ?? "").trim();
+    if (value.length > 16) return { allowed: false, reason: "واکنش نامعتبر است." };
+  }
+  if (action.type === "forward") {
+    const target = String(action.text ?? "").trim();
+    if (!/^(?:-?\\d+|@[A-Za-z0-9_]{5,32})$/.test(target)) {
+      return { allowed: false, reason: "مقصد فوروارد باید شناسه عددی یا @username معتبر باشد." };
+    }
+  }
+  if (!["reply", "notify", "log", "react", "delete", "forward"].includes(action.type)) {
+    return { allowed: false, reason: "نوع اقدام پشتیبانی نمی‌شود." };
+  }
+  return { allowed: true };
+}
+
 export function matchesKeywordConditions(
   rule: KeywordRule,
   context: KeywordMatchContext = {},
