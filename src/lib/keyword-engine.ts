@@ -7,6 +7,24 @@ export type KeywordTriggerType =
   | "ends_with"
   | "regex";
 
+export type KeywordMatchContext = {
+  userId?: string | number | null;
+  chatId?: string | number | null;
+  chatType?: string | null;
+  now?: Date;
+};
+
+export type KeywordConditions = {
+  user_ids?: Array<string | number>;
+  chat_ids?: Array<string | number>;
+  chat_types?: string[];
+  excluded_user_ids?: Array<string | number>;
+  excluded_chat_ids?: Array<string | number>;
+  time_start?: string;
+  time_end?: string;
+  max_executions?: number;
+};
+
 export type KeywordAction = {
   type: "reply" | "notify" | "log";
   text?: string;
@@ -181,6 +199,59 @@ export async function markKeywordRuleExecuted(ownerId: string, id: number) {
   return rows[0] ? mapRule(rows[0]) : null;
 }
 
+function normalizeList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function timeInWindow(now: Date, start?: string, end?: string) {
+  if (!start || !end) return true;
+  const startMatch = /^(\\d{2}):(\\d{2})$/.exec(start);
+  const endMatch = /^(\\d{2}):(\\d{2})$/.exec(end);
+  if (!startMatch || !endMatch) return false;
+  const startMinutes = Number(startMatch[1]) * 60 + Number(startMatch[2]);
+  const endMinutes = Number(endMatch[1]) * 60 + Number(endMatch[2]);
+  const current = now.getHours() * 60 + now.getMinutes();
+  if (startMinutes === endMinutes) return true;
+  if (startMinutes < endMinutes) return current >= startMinutes && current < endMinutes;
+  return current >= startMinutes || current < endMinutes;
+}
+
+export function matchesKeywordConditions(
+  rule: KeywordRule,
+  context: KeywordMatchContext = {},
+) {
+  const conditions = (rule.conditions ?? {}) as KeywordConditions;
+  const userId = context.userId == null ? "" : String(context.userId);
+  const chatId = context.chatId == null ? "" : String(context.chatId);
+  const chatType = String(context.chatType ?? "").trim().toLocaleLowerCase();
+
+  const userIds = normalizeList(conditions.user_ids);
+  const chatIds = normalizeList(conditions.chat_ids);
+  const chatTypes = normalizeList(conditions.chat_types).map((item) =>
+    item.toLocaleLowerCase(),
+  );
+  const excludedUsers = normalizeList(conditions.excluded_user_ids);
+  const excludedChats = normalizeList(conditions.excluded_chat_ids);
+
+  if (userIds.length && !userIds.includes(userId)) return false;
+  if (chatIds.length && !chatIds.includes(chatId)) return false;
+  if (chatTypes.length && !chatTypes.includes(chatType)) return false;
+  if (excludedUsers.includes(userId)) return false;
+  if (excludedChats.includes(chatId)) return false;
+
+  const maxExecutions = Number(conditions.max_executions);
+  if (Number.isFinite(maxExecutions) && maxExecutions > 0 && rule.executionCount >= maxExecutions) {
+    return false;
+  }
+
+  if (!timeInWindow(context.now ?? new Date(), conditions.time_start, conditions.time_end)) {
+    return false;
+  }
+
+  return true;
+}
+
 export function isKeywordRuleOnCooldown(rule: KeywordRule, now = Date.now()) {
   if (!rule.lastExecutedAt || rule.cooldownSeconds <= 0) return false;
   const last = new Date(rule.lastExecutedAt).getTime();
@@ -214,9 +285,13 @@ export function matchesKeywordRule(rule: KeywordRule, text: string) {
 export async function findMatchingKeywordRules(
   ownerId: string,
   text: string,
+  context: KeywordMatchContext = {},
 ) {
   const rules = await listKeywordRules(ownerId);
   return rules.filter(
-    (rule) => matchesKeywordRule(rule, text) && !isKeywordRuleOnCooldown(rule),
+    (rule) =>
+      matchesKeywordRule(rule, text) &&
+      matchesKeywordConditions(rule, context) &&
+      !isKeywordRuleOnCooldown(rule),
   );
 }
