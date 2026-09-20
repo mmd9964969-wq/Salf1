@@ -4,7 +4,7 @@ import {
   getKeywordRule,
   listKeywordRules,
   matchesKeywordRule,
-  setKeywordRuleEnabled,
+  setKeywordRuleEnabled,\n  updateKeywordRuleConditions,
   type KeywordTriggerType,
 } from "./keyword-engine";
 import type { CommandContext, CommandHandler, CommandResult } from "./command-router";
@@ -114,6 +114,54 @@ export const keywordCommandHandler: CommandHandler = async (command, context) =>
         `⛂ - آخرین اجرا : ${rule.lastExecutedAt ?? "هنوز اجرا نشده"}`,
       ].join("\n"),
     );
+  }
+
+  if (sub === "condition" || sub === "شرط") {
+    if (!id) return fail(command.key, command.args, "شناسه قانون را وارد کنید؛ مثال: keyword condition 7 time 09:00 18:00");
+    const action = (rest[1] ?? "status").toLocaleLowerCase();
+    const rule = await getKeywordRule(ownerId, id);
+    if (!rule) return fail(command.key, command.args, "قانون موردنظر پیدا نشد.");
+    const current = { ...(rule.conditions ?? {}) };
+
+    if (action === "status" || action === "وضعیت") {
+      return ok(command.key, command.args, [
+        `◈ شرایط قانون #${id}`,
+        "",
+        `⛂ - کاربرها : ${Array.isArray(current.user_ids) ? current.user_ids.join(", ") || "همه" : "همه"}`,
+        `⛂ - گفتگوها : ${Array.isArray(current.chat_ids) ? current.chat_ids.join(", ") || "همه" : "همه"}`,
+        `⛂ - نوع گفتگو : ${Array.isArray(current.chat_types) ? current.chat_types.join(", ") || "همه" : "همه"}`,
+        `⛂ - استثنای کاربر : ${Array.isArray(current.excluded_user_ids) ? current.excluded_user_ids.join(", ") || "ندارد" : "ندارد"}`,
+        `⛂ - استثنای گفتگو : ${Array.isArray(current.excluded_chat_ids) ? current.excluded_chat_ids.join(", ") || "ندارد" : "ندارد"}`,
+        `⛂ - زمان : ${current.time_start && current.time_end ? `${current.time_start} تا ${current.time_end}` : "همیشه"}`,
+        `⛂ - سقف اجرا : ${current.max_executions ?? "نامحدود"}`,
+      ].join("\n"));
+    }
+
+    let next = { ...current } as Record<string, unknown>;
+    if (action === "user" || action === "کاربر") next.user_ids = rest.slice(2);
+    else if (action === "chat" || action === "گفتگو") next.chat_ids = rest.slice(2);
+    else if (action === "type" || action === "نوع") next.chat_types = rest.slice(2);
+    else if (action === "exclude-user" || action === "استثنای-کاربر") next.excluded_user_ids = rest.slice(2);
+    else if (action === "exclude-chat" || action === "استثنای-گفتگو") next.excluded_chat_ids = rest.slice(2);
+    else if (action === "time" || action === "زمان") {
+      if (!/^\\d{2}:\\d{2}$/.test(rest[2] ?? "") || !/^\\d{2}:\\d{2}$/.test(rest[3] ?? "")) {
+        return fail(command.key, command.args, "زمان را به شکل HH:MM وارد کنید؛ مثال: keyword condition 7 time 09:00 18:00");
+      }
+      next.time_start = rest[2];
+      next.time_end = rest[3];
+    } else if (action === "max" || action === "حداکثر") {
+      const max = Number(rest[2]);
+      if (!Number.isInteger(max) || max < 1) return fail(command.key, command.args, "حداکثر اجرا باید یک عدد صحیح مثبت باشد.");
+      next.max_executions = max;
+    } else if (action === "clear" || action === "پاکسازی") {
+      next = {};
+    } else {
+      return fail(command.key, command.args, "شرط ناشناخته است. گزینه‌ها: user, chat, type, exclude-user, exclude-chat, time, max, clear, status");
+    }
+
+    const updated = await updateKeywordRuleConditions(ownerId, id, next);
+    if (!updated) return fail(command.key, command.args, "قانون موردنظر پیدا نشد.");
+    return ok(command.key, command.args, `◈ شرایط قانون #${id} به‌روزرسانی شد\\n\\n⛂ - وضعیت : ● ذخیره شد\\n⛂ - برای مشاهده: keyword condition ${id} status`);
   }
 
   if (sub === "pause" || sub === "توقف") {
