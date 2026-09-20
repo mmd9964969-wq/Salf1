@@ -165,6 +165,48 @@ function KeywordGuide() {
   );
 }
 
+function KeywordConditionsPanel() {
+  const [ruleId, setRuleId] = useState("7");
+  const [userId, setUserId] = useState("");
+  const [chatId, setChatId] = useState("");
+  const [chatType, setChatType] = useState("group");
+  const [start, setStart] = useState("09:00");
+  const [end, setEnd] = useState("18:00");
+  const [max, setMax] = useState("");
+  const [command, setCommand] = useState("");
+
+  const build = () => {
+    const id = ruleId.trim() || "7";
+    const parts: string[] = [];
+    if (userId.trim()) parts.push(`کاربر ${userId.trim()}`);
+    if (chatId.trim()) parts.push(`گفتگو ${chatId.trim()}`);
+    if (chatType) parts.push(`نوع ${chatType}`);
+    if (start && end) parts.push(`زمان ${start} ${end}`);
+    if (max.trim()) parts.push(`حداکثر ${max.trim()}`);
+    setCommand(`کلمه شرط ${id} ${parts.join(" ")}`.trim());
+  };
+
+  return (
+    <div className="mt-5 rounded-2xl border border-line bg-surface-2/70 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div><p className="text-sm font-semibold">تنظیم‌گر شرایط</p><p className="mt-1 text-xs leading-5 text-muted">شرط‌های قانون را انتخاب کنید و دستور آماده دریافت کنید.</p></div>
+        <span className="rounded-full border border-line px-2.5 py-1 text-[10px] text-subtle">KEYWORD CONDITIONS</span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه قانون</span><input value={ruleId} onChange={e=>setRuleId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="7" dir="ltr" /></label>
+        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه کاربر</span><input value={userId} onChange={e=>setUserId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="123456789" dir="ltr" /></label>
+        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه گفتگو</span><input value={chatId} onChange={e=>setChatId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="-100123456789" dir="ltr" /></label>
+        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">نوع گفتگو</span><select value={chatType} onChange={e=>setChatType(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none"><option value="group">group</option><option value="pm">pm</option><option value="channel">channel</option></select></label>
+        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شروع زمان</span><input value={start} onChange={e=>setStart(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" /></label>
+        <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">پایان زمان</span><input value={end} onChange={e=>setEnd(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" /></label>
+        <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">حداکثر دفعات اجرا</span><input value={max} onChange={e=>setMax(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" placeholder="نامحدود" dir="ltr" /></label>
+      </div>
+      <button onClick={build} className="mt-3 w-full rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium transition hover:bg-surface-2">تولید دستور</button>
+      {command && <div className="mt-3 rounded-xl border border-line bg-black/30 p-3"><p className="text-[11px] text-subtle">دستور آماده</p><code dir="ltr" className="mt-2 block overflow-x-auto text-xs text-accent">{command}</code><p className="mt-2 text-[11px] text-muted">این نسخه دستور را تولید می‌کند؛ ذخیره مستقیم از پنل در مرحله اتصال API انجام می‌شود.</p></div>}
+    </div>
+  );
+}
+
 function CapabilityView({ item, onBack }: { item: Capability; onBack: () => void }) {
   const [tab, setTab] = useState<"detail" | "guide">("detail");
   return (
@@ -185,7 +227,7 @@ function CapabilityView({ item, onBack }: { item: Capability; onBack: () => void
           <button onClick={()=>setTab("detail")} className={cn("rounded-lg px-3 py-2 text-sm",tab==="detail"&&"bg-surface text-fg shadow-[var(--shadow-border)]")}>جزئیات قابلیت</button>
           <button onClick={()=>setTab("guide")} className={cn("rounded-lg px-3 py-2 text-sm",tab==="guide"&&"bg-surface text-fg shadow-[var(--shadow-border)]")}>راهنمای کامل</button>
         </div>
-        {tab==="detail" ? (
+        {item.id === "keywords" && <KeywordConditionsPanel />}\n        {tab==="detail" ? (
           <div className="mt-5 space-y-3">
             <div className="rounded-xl border border-line bg-surface-2/70 p-4">
               <p className="text-sm font-medium">وضعیت</p>
