@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   getKeywordRule,
   updateKeywordRuleActions,
-  type KeywordAction,
+  type KeywordAction,\n  validateKeywordActionPolicy,
 } from "@/lib/keyword-engine";
 import { requireUserId, UnauthorizedError } from "@/lib/auth/verify.server";
 
@@ -24,7 +24,7 @@ function normalizeActions(input: unknown): KeywordAction[] {
     }
     const text = value.text == null ? undefined : String(value.text).trim();
     if (["reply","react","forward"].includes(type) && !text) throw new Error("این اقدام به مقدار متنی/شناسه نیاز دارد.");
-    return { type, ...(text ? { text } : {}) } as KeywordAction;
+    const action = { type, ...(text ? { text } : {}) } as KeywordAction;\n    const policy = validateKeywordActionPolicy(action);\n    if (!policy.allowed) throw new Error(policy.reason);\n    return action;
   });
 }
 
