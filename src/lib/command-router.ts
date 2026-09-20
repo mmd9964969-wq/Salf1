@@ -21,6 +21,14 @@ export type CommandHandler = (
 
 const handlers = new Map<string, CommandHandler>();
 
+export function registerBuiltInCommandHandlers() {
+  // Built-ins are imported lazily so the router stays reusable in UI/tests.
+  return import("./keyword-command-handler").then(({ keywordCommandHandler }) => {
+    registerCommandHandler("keyword", keywordCommandHandler);
+  });
+}
+
+
 export function registerCommandHandler(key: string, handler: CommandHandler) {
   if (!getCommandDefinition(key)) {
     throw new Error(`Unknown command: ${key}`);
