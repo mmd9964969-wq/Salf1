@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" role="img" aria-label="Nexa">
+  <rect width="16" height="16" rx="3.5" fill="#0b0c0e"/>
+  <rect x="4" y="3" width="2" height="10" fill="#c5cdd6"/>
+  <rect x="10" y="5" width="2" height="8" fill="#c5cdd6"/>
+  <polygon points="6,3 8,3 12,13 10,13" fill="#c5cdd6"/>
+  <rect x="10" y="3" width="2" height="2" fill="#8a9a8c"/>
+</svg>
