@@ -3,7 +3,7 @@ import {
   deleteKeywordRule,
   getKeywordRule,
   listKeywordRules,
-  matchesKeywordRule,\n  explainKeywordConditions,\n  getKeywordCooldownRemaining,
+  matchesKeywordRule,\n  explainKeywordConditions,\n  explainKeywordMatch,\n  getKeywordCooldownRemaining,
   setKeywordRuleEnabled,\n  updateKeywordRuleConditions,
   type KeywordTriggerType,
 } from "./keyword-engine";
