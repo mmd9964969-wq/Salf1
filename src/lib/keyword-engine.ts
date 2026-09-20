@@ -176,6 +176,22 @@ export async function updateKeywordRuleConditions(
   return rows[0] ? mapRule(rows[0]) : null;
 }
 
+export async function updateKeywordRuleActions(
+  ownerId: string,
+  id: number,
+  actions: KeywordAction[],
+) {
+  const sql = await getSql();
+  const rows = await sql.query<Record<string, unknown>>(
+    `update keyword_actions
+     set actions = $3::jsonb, updated_at = now()
+     where owner_id = $1 and id = $2
+     returning *`,
+    [ownerId, id, JSON.stringify(actions)],
+  );
+  return rows[0] ? mapRule(rows[0]) : null;
+}
+
 export async function setKeywordRuleEnabled(
   ownerId: string,
   id: number,
