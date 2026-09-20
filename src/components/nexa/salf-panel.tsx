@@ -165,6 +165,40 @@ function KeywordGuide() {
   );
 }
 
+function KeywordConditionsPanel() {
+  type Conditions = { user_ids?: string[]; chat_ids?: string[]; chat_types?: string[]; excluded_user_ids?: string[]; excluded_chat_ids?: string[]; time_start?: string; time_end?: string; max_executions?: number };
+  const [ruleId,setRuleId]=useState("7");
+  const [conditions,setConditions]=useState<Conditions>({});
+  const [user,setUser]=useState(""); const [chat,setChat]=useState("");
+  const [excludedUser,setExcludedUser]=useState(""); const [excludedChat,setExcludedChat]=useState("");
+  const [status,setStatus]=useState("");
+  const add=(key:"user_ids"|"chat_ids"|"excluded_user_ids"|"excluded_chat_ids",value:string,setter:(v:string)=>void)=>{
+    const v=value.trim(); if(!v)return;
+    setConditions(x=>({...x,[key]:Array.from(new Set([...(x[key]||[]),v]))})); setter("");
+  };
+  const remove=(key:"user_ids"|"chat_ids"|"excluded_user_ids"|"excluded_chat_ids",value:string)=>
+    setConditions(x=>({...x,[key]:(x[key]||[]).filter(v=>v!==value)}));
+  const load=async()=>{setStatus("در حال بارگذاری...");try{const r=await fetch(`/api/keywords/conditions?rule_id=${Number(ruleId)}`,{credentials:"same-origin"});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||"بارگذاری ناموفق بود.");setConditions(d.conditions||{});setStatus("شرایط بارگذاری شد.");}catch(e){setStatus(e instanceof Error?e.message:"خطای بارگذاری.");}};
+  const save=async()=>{setStatus("در حال ذخیره...");try{const r=await fetch("/api/keywords/conditions",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({rule_id:Number(ruleId),conditions})});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||"ذخیره ناموفق بود.");setConditions(d.conditions||conditions);setStatus("شرایط و استثناها ذخیره شدند.");}catch(e){setStatus(e instanceof Error?e.message:"خطای ذخیره.");}};
+  const list=(key:"user_ids"|"chat_ids"|"excluded_user_ids"|"excluded_chat_ids",title:string,input:string,setter:(v:string)=>void,ph:string)=><div className="rounded-xl border border-line bg-surface p-3"><p className="text-xs font-medium">{title}</p><div className="mt-2 flex gap-2"><input value={input} onChange={e=>setter(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();add(key,input,setter)}}} className="min-w-0 flex-1 bg-transparent text-sm outline-none" dir="ltr" placeholder={ph}/><button onClick={()=>add(key,input,setter)} className="rounded-lg border border-line px-3 py-1.5 text-xs">افزودن</button></div><div className="mt-2 flex flex-wrap gap-1.5">{(conditions[key]||[]).map(v=><button key={v} onClick={()=>remove(key,v)} className="rounded-full border border-line px-2 py-1 text-[11px] text-muted">{v} ×</button>)}</div></div>;
+  return <div className="mt-5 rounded-2xl border border-line bg-surface-2/70 p-4">
+    <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">شرایط و استثناها</p><p className="mt-1 text-xs leading-5 text-muted">قانون را محدود کنید یا کاربران و گفتگوهای مشخص را از اجرا خارج کنید.</p></div><span className="rounded-full border border-line px-2.5 py-1 text-[10px] text-subtle">CONDITIONS</span></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شناسه قانون</span><input value={ruleId} onChange={e=>setRuleId(e.target.value)} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr"/></label>
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">نوع گفتگو</span><select value={(conditions.chat_types||[""]).join(",")} onChange={e=>setConditions(x=>({...x,chat_types:e.target.value?[e.target.value]:[]}))} className="mt-2 w-full bg-transparent text-sm outline-none"><option value="">همه</option><option value="pm">پیوی</option><option value="group">گروه</option><option value="channel">کانال</option></select></label>
+      {list("user_ids","فقط کاربران مشخص",user,setUser,"شناسه کاربر")}
+      {list("chat_ids","فقط گفتگوهای مشخص",chat,setChat,"شناسه گفتگو")}
+      {list("excluded_user_ids","استثنای کاربران",excludedUser,setExcludedUser,"شناسه کاربر برای عدم اجرا")}
+      {list("excluded_chat_ids","استثنای گفتگوها",excludedChat,setExcludedChat,"شناسه گفتگو برای عدم اجرا")}
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">شروع زمان</span><input value={conditions.time_start||""} onChange={e=>setConditions(x=>({...x,time_start:e.target.value}))} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" placeholder="09:00"/></label>
+      <label className="rounded-xl border border-line bg-surface p-3"><span className="text-xs text-muted">پایان زمان</span><input value={conditions.time_end||""} onChange={e=>setConditions(x=>({...x,time_end:e.target.value}))} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" placeholder="18:00"/></label>
+      <label className="rounded-xl border border-line bg-surface p-3 sm:col-span-2"><span className="text-xs text-muted">حداکثر اجرا</span><input type="number" min="1" value={conditions.max_executions||""} onChange={e=>setConditions(x=>({...x,max_executions:e.target.value?Number(e.target.value):undefined}))} className="mt-2 w-full bg-transparent text-sm outline-none" dir="ltr" placeholder="مثلاً 10"/></label>
+    </div>
+    <div className="mt-3 flex gap-2"><button onClick={load} className="flex-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm">بارگذاری</button><button onClick={save} className="flex-1 rounded-xl border border-line bg-surface px-4 py-3 text-sm font-medium">ذخیره شرایط</button></div>
+    {status&&<p className="mt-3 rounded-xl border border-line px-3 py-2 text-xs text-muted">{status}</p>}
+  </div>;
+}
+
 function KeywordActionsPanel() {
   type Action = { type: "reply" | "notify" | "log" | "react" | "delete" | "forward"; text?: string; delayMin?: number; delayMax?: number };
   const [ruleId, setRuleId] = useState("7");
