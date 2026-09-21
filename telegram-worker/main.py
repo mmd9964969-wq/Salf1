@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
+import html
 import os
 import random
 from pathlib import Path
 
-from aiohttp import ClientSession, web
+import asyncpg
+from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events
 from telethon.errors import SessionPasswordNeededError
 
@@ -15,17 +17,34 @@ SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 API_ID_RAW = os.getenv("TELEGRAM_API_ID", "")
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
-WORKER_API_TOKEN = os.getenv("WORKER_API_TOKEN", "")
+WORKER_API_TOKEN = os.getenv("WORKER_API_TOKEN", "").strip()
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+BOT_TOKEN = os.getenv("SALF1_BOT_TOKEN", "").strip()
+CREATOR_USERNAME = os.getenv("SALF1_CREATOR_USERNAME", "Jowati").strip().lstrip("@")
+CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
 
+REFERRAL_REWARD = 300
+TRIAL_HOURS = 24
+
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
+pending_codes: dict[str, str] = {}
+enabled_cache: dict[str, bool] = {}
+me_cache: dict[str, int] = {}
+bot_states: dict[int, str] = {}
 http_session: ClientSession | None = None
+db_pool: asyncpg.Pool | None = None
+bot_username = ""
 
 
 def configured():
     return API_ID_RAW.isdigit() and bool(API_HASH)
+
+
+def bot_configured():
+    return bool(BOT_TOKEN and db_pool is not None)
 
 
 def customer_key(customer_id: str) -> str:
@@ -76,11 +95,377 @@ def client_for(customer_id: str) -> TelegramClient:
     return client
 
 
+async def db_user(customer_id: str):
+    if db_pool is None:
+        return None
+    try:
+        user_id = int(customer_id)
+    except ValueError:
+        return None
+    async with db_pool.acquire() as conn:
+        return await conn.fetchrow(
+            "select * from salf1_bot_users where telegram_user_id = $1",
+            user_id,
+        )
+
+
+async def ensure_bot_user(
+    telegram_user_id: int,
+    username: str | None,
+    first_name: str | None,
+    referrer_user_id: int | None = None,
+):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+
+    if referrer_user_id == telegram_user_id:
+        referrer_user_id = None
+
+    async with db_pool.acquire() as conn:
+        return await conn.fetchrow(
+            """
+            insert into salf1_bot_users (
+              telegram_user_id,
+              username,
+              first_name,
+              trial_expires_at,
+              referrer_user_id
+            )
+            values ($1, $2, $3, now() + interval '24 hours', $4)
+            on conflict (telegram_user_id) do update set
+              username = excluded.username,
+              first_name = excluded.first_name,
+              updated_at = now()
+            returning *
+            """,
+            telegram_user_id,
+            username,
+            first_name,
+            referrer_user_id,
+        )
+
+
+async def update_account_state(customer_id: str, connected: bool):
+    if db_pool is None:
+        return
+    try:
+        user_id = int(customer_id)
+    except ValueError:
+        return
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            update salf1_bot_users
+            set account_connected = $2,
+                updated_at = now()
+            where telegram_user_id = $1
+            """,
+            user_id,
+            connected,
+        )
+
+
+async def set_salf_enabled(customer_id: str, enabled: bool):
+    if db_pool is not None:
+        try:
+            user_id = int(customer_id)
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    update salf1_bot_users
+                    set salf_enabled = $2,
+                        updated_at = now()
+                    where telegram_user_id = $1
+                    """,
+                    user_id,
+                    enabled,
+                )
+        except (ValueError, asyncpg.PostgresError) as exc:
+            print(f"State update error: {exc}")
+            return
+    enabled_cache[customer_id] = enabled
+
+
+async def referral_summary(telegram_user_id: int):
+    if db_pool is None:
+        return {"count": 0, "balance": 0}
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            select
+              u.tron_balance,
+              coalesce(
+                (select count(*) from salf1_bot_referral_rewards r
+                 where r.referrer_user_id = u.telegram_user_id),
+                0
+              ) as referral_count
+            from salf1_bot_users u
+            where u.telegram_user_id = $1
+            """,
+            telegram_user_id,
+        )
+    if not row:
+        return {"count": 0, "balance": 0}
+    return {"count": int(row["referral_count"]), "balance": int(row["tron_balance"])}
+
+
+async def reward_referral(telegram_user_id: int) -> bool:
+    if db_pool is None:
+        return False
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                select referrer_user_id, referral_rewarded
+                from salf1_bot_users
+                where telegram_user_id = $1
+                for update
+                """,
+                telegram_user_id,
+            )
+            if not row:
+                return False
+
+            referrer = row["referrer_user_id"]
+            if referrer is None or bool(row["referral_rewarded"]):
+                return False
+
+            reward_row = await conn.fetchrow(
+                """
+                insert into salf1_bot_referral_rewards (
+                  referred_user_id,
+                  referrer_user_id,
+                  reward_tron
+                )
+                values ($1, $2, $3)
+                on conflict (referred_user_id) do nothing
+                returning referred_user_id
+                """,
+                telegram_user_id,
+                int(referrer),
+                REFERRAL_REWARD,
+            )
+            if not reward_row:
+                await conn.execute(
+                    """
+                    update salf1_bot_users
+                    set referral_rewarded = true,
+                        updated_at = now()
+                    where telegram_user_id = $1
+                    """,
+                    telegram_user_id,
+                )
+                return False
+
+            await conn.execute(
+                """
+                update salf1_bot_users
+                set tron_balance = tron_balance + $2,
+                    referral_count = referral_count + 1,
+                    updated_at = now()
+                where telegram_user_id = $1
+                """,
+                int(referrer),
+                REFERRAL_REWARD,
+            )
+
+            await conn.execute(
+                """
+                update salf1_bot_users
+                set referral_rewarded = true,
+                    updated_at = now()
+                where telegram_user_id = $1
+                """,
+                telegram_user_id,
+            )
+
+    await bot_send(
+        int(referrer),
+        "◈ الماس رایگان\
+\
+یک رفرال معتبر با موفقیت ثبت شد.\
+\
+⛂ پاداش شما : <b>300 جم ترون</b>\
+⛂ این پاداش فقط یک‌بار برای هر کاربر جدید ثبت می‌شود."
+    )
+    return True
+
+
+async def account_status(customer_id: str):
+    if not configured():
+        return {"connected": False, "authorized": False, "error": "telegram api not configured"}
+
+    client = client_for(customer_id)
+    await client.connect()
+    authorized_user = await client.is_user_authorized()
+    if not authorized_user:
+        enabled_cache[customer_id] = False
+        await update_account_state(customer_id, False)
+        return {"connected": False, "authorized": False}
+
+    me = await client.get_me()
+    me_cache[customer_id] = int(me.id)
+    await update_account_state(customer_id, True)
+    row = await db_user(customer_id)
+    if row:
+        enabled_cache[customer_id] = bool(row["salf_enabled"])
+
+    return {
+        "connected": True,
+        "authorized": True,
+        "user": {
+            "id": me.id,
+            "username": me.username,
+            "first_name": me.first_name,
+            "last_name": me.last_name,
+        },
+    }
+
+
+async def start_customer_login(customer_id: str, phone: str):
+    if not configured():
+        raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH are not configured")
+    client = client_for(customer_id)
+    await client.connect()
+    await client.send_code_request(phone)
+    pending_phones[customer_id] = phone
+
+
+async def verify_customer_login(customer_id: str, code: str, password: str = ""):
+    phone = pending_phones.get(customer_id)
+    client = clients.get(customer_id)
+    if not client or not phone:
+        raise RuntimeError("start login first")
+
+    try:
+        if code:
+            pending_codes[customer_id] = code
+            await client.sign_in(phone, code)
+        else:
+            stored_code = pending_codes.get(customer_id)
+            if stored_code:
+                await client.sign_in(phone, stored_code)
+    except SessionPasswordNeededError:
+        if not password:
+            return {"status": "2fa_required"}
+        await client.sign_in(password=password)
+
+    me = await client.get_me()
+    pending_phones.pop(customer_id, None)
+    pending_codes.pop(customer_id, None)
+    me_cache[customer_id] = int(me.id)
+    await update_account_state(customer_id, True)
+    await set_salf_enabled(customer_id, False)
+    try:
+        await reward_referral(int(customer_id))
+    except (ValueError, RuntimeError, asyncpg.PostgresError) as exc:
+        print(f"Referral reward error: {exc}")
+
+    return {
+        "status": "connected",
+        "user": {
+            "id": me.id,
+            "username": me.username,
+            "first_name": me.first_name,
+            "last_name": me.last_name,
+        },
+    }
+
+
+async def charge_customer_minute(customer_id: str):
+    if db_pool is None:
+        return
+
+    try:
+        user_id = int(customer_id)
+    except ValueError:
+        return
+
+    async with db_pool.acquire() as conn:
+        trial_row = await conn.fetchrow(
+            """
+            select trial_expires_at
+            from salf1_bot_users
+            where telegram_user_id = $1
+              and salf_enabled = true
+              and account_connected = true
+            """,
+            user_id,
+        )
+        if not trial_row:
+            return
+
+        if trial_row["trial_expires_at"].timestamp() > asyncio.get_running_loop().time():
+            return
+
+        row = await conn.fetchrow(
+            """
+            update salf1_bot_users
+            set tron_balance = tron_balance - 1,
+                updated_at = now()
+            where telegram_user_id = $1
+              and salf_enabled = true
+              and account_connected = true
+              and trial_expires_at <= now()
+              and tron_balance > 0
+            returning tron_balance
+            """,
+            user_id,
+        )
+
+        if row:
+            return
+
+        await conn.execute(
+            """
+            update salf1_bot_users
+            set salf_enabled = false,
+                updated_at = now()
+            where telegram_user_id = $1
+              and trial_expires_at <= now()
+              and tron_balance <= 0
+            """,
+            user_id,
+        )
+
+    enabled_cache[customer_id] = False
+    await bot_send(
+        user_id,
+        "◈ سالف متوقف شد\
+\
+اعتبار مصرفی شما به پایان رسید.\
+\
+⛂ مصرف فعال : 1 جم ترون / دقیقه\
+⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
+    )
+
+
+async def billing_loop():
+    while True:
+        try:
+            if db_pool is not None:
+                rows = await db_pool.fetch(
+                    """
+                    select telegram_user_id
+                    from salf1_bot_users
+                    where salf_enabled = true
+                      and account_connected = true
+                    """
+                )
+                for row in rows:
+                    await charge_customer_minute(str(row["telegram_user_id"]))
+        except Exception as exc:
+            print(f"Billing loop error: {exc}")
+        await asyncio.sleep(60)
+
+
 async def health(request):
     return web.json_response({
         "ok": True,
         "service": "salf1-telegram-worker",
         "telegram_configured": configured(),
+        "mini_bot_configured": bot_configured(),
         "customers_loaded": len(clients),
         "event_bridge_configured": bool(EVENT_BRIDGE_URL),
         "keyword_ack_configured": bool(KEYWORD_ACK_URL),
@@ -105,10 +490,10 @@ async def start_login(request):
     if not phone:
         return web.json_response({"ok": False, "error": "phone is required"}, status=400)
 
-    client = client_for(customer_id)
-    await client.connect()
-    await client.send_code_request(phone)
-    pending_phones[customer_id] = phone
+    try:
+        await start_customer_login(customer_id, phone)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
     return web.json_response({"ok": True, "status": "code_sent"})
 
@@ -121,38 +506,26 @@ async def verify_login(request):
     if not customer_id:
         return customer_error()
 
-    phone = pending_phones.get(customer_id)
-    client = clients.get(customer_id)
-    if not client or not phone:
-        return web.json_response({"ok": False, "error": "start login first"}, status=400)
-
     data = await request.json()
     code = str(data.get("code", "")).strip()
     password = str(data.get("password", "")).strip()
 
-    if not code:
+    if not code and customer_id not in pending_codes:
         return web.json_response({"ok": False, "error": "code is required"}, status=400)
 
     try:
-        await client.sign_in(phone, code)
-    except SessionPasswordNeededError:
-        if not password:
-            return web.json_response({"ok": False, "status": "2fa_required"}, status=401)
-        await client.sign_in(password=password)
+        result = await verify_customer_login(customer_id, code, password)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
-    me = await client.get_me()
-    pending_phones.pop(customer_id, None)
+    if result["status"] == "2fa_required":
+        return web.json_response({"ok": False, "status": "2fa_required"}, status=401)
 
     return web.json_response({
         "ok": True,
         "status": "connected",
         "customer_id": customer_id,
-        "user": {
-            "id": me.id,
-            "username": me.username,
-            "first_name": me.first_name,
-            "last_name": me.last_name,
-        },
+        "user": result["user"],
     })
 
 
@@ -164,26 +537,15 @@ async def status(request):
     if not customer_id:
         return customer_error()
 
-    client = clients.get(customer_id)
-    if not client or not client.is_connected():
-        return web.json_response({"ok": True, "connected": False})
+    try:
+        result = await account_status(customer_id)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
-    authorized_user = await client.is_user_authorized()
-    if not authorized_user:
-        return web.json_response({"ok": True, "connected": False, "authorized": False})
-
-    me = await client.get_me()
     return web.json_response({
         "ok": True,
-        "connected": True,
-        "authorized": True,
         "customer_id": customer_id,
-        "user": {
-            "id": me.id,
-            "username": me.username,
-            "first_name": me.first_name,
-            "last_name": me.last_name,
-        },
+        **result,
     })
 
 
@@ -200,7 +562,12 @@ async def disconnect(request):
         await client.disconnect()
         clients.pop(customer_id, None)
 
+    me_cache.pop(customer_id, None)
+    enabled_cache[customer_id] = False
     pending_phones.pop(customer_id, None)
+    pending_codes.pop(customer_id, None)
+    await update_account_state(customer_id, False)
+    await set_salf_enabled(customer_id, False)
 
     return web.json_response({
         "ok": True,
@@ -255,19 +622,49 @@ async def execute_keyword_actions(
         for action in actions:
             action_type = str(action.get("type", "")).strip()
             action_text = str(action.get("text", "")).strip()
-            action_delay_min = max(0, int(action.get("delayMin", action.get("delay_min", 0)) or 0))
-            action_delay_max = max(action_delay_min, int(action.get("delayMax", action.get("delay_max", action_delay_min)) or action_delay_min))
+            action_delay_min = max(
+                0,
+                int(action.get("delayMin", action.get("delay_min", 0)) or 0),
+            )
+            action_delay_max = max(
+                action_delay_min,
+                int(
+                    action.get(
+                        "delayMax",
+                        action.get("delay_max", action_delay_min),
+                    )
+                    or action_delay_min
+                ),
+            )
 
             if action_type not in {"reply", "react", "log", "notify", "delete", "forward"}:
-                print({"type": "keyword.action_blocked", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "reason": "unsupported action"})
+                print(
+                    {
+                        "type": "keyword.action_blocked",
+                        "customer_id": customer_id,
+                        "rule_id": rule_id,
+                        "action": action_type,
+                        "reason": "unsupported action",
+                    }
+                )
                 continue
 
             if action_type in {"reply", "react", "notify", "forward"} and not action_text:
-                print({"type": "keyword.action_blocked", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "reason": "missing action value"})
+                print(
+                    {
+                        "type": "keyword.action_blocked",
+                        "customer_id": customer_id,
+                        "rule_id": rule_id,
+                        "action": action_type,
+                        "reason": "missing action value",
+                    }
+                )
                 continue
 
             if action_delay_max > 0:
-                await asyncio.sleep(random.uniform(action_delay_min, action_delay_max))
+                await asyncio.sleep(
+                    random.uniform(action_delay_min, action_delay_max)
+                )
 
             try:
                 if action_type == "reply":
@@ -277,19 +674,38 @@ async def execute_keyword_actions(
                     await event.react(action_text)
                     executed = True
                 elif action_type == "log":
-                    print({"type": "keyword.log", "customer_id": customer_id, "rule_id": rule_id, "message": event.raw_text[:1000]})
+                    print(
+                        {
+                            "type": "keyword.log",
+                            "customer_id": customer_id,
+                            "rule_id": rule_id,
+                            "message": event.raw_text[:1000],
+                        }
+                    )
                     executed = True
                 elif action_type == "notify":
-                    await client_for(customer_id).send_message("me", action_text)
+                    await client_for(customer_id).send_message(
+                        "me", action_text
+                    )
                     executed = True
                 elif action_type == "delete":
                     await event.delete()
                     executed = True
                 elif action_type == "forward":
-                    await client_for(customer_id).forward_messages(action_text, event.message)
+                    await client_for(customer_id).forward_messages(
+                        action_text, event.message
+                    )
                     executed = True
             except Exception as exc:
-                print({"type": "keyword.action_error", "customer_id": customer_id, "rule_id": rule_id, "action": action_type, "error": str(exc)})
+                print(
+                    {
+                        "type": "keyword.action_error",
+                        "customer_id": customer_id,
+                        "rule_id": rule_id,
+                        "action": action_type,
+                        "error": str(exc),
+                    }
+                )
 
         if executed and rule_id > 0 and KEYWORD_ACK_URL:
             await post_json(
@@ -304,12 +720,179 @@ async def send_event_to_backend(payload: dict):
     return await post_json(EVENT_BRIDGE_URL, payload)
 
 
+def normalize_text(value: str) -> str:
+    return (
+        value.strip()
+        .replace("/", "", 1)
+        .replace("\u200c", "")
+        .lower()
+    )
+
+
+async def send_owner_panel(event, customer_id: str, is_owner: bool):
+    if is_owner:
+        text = """
+<b>◈ SALF1 | مرکز فرمان</b>
+
+<b>━━ مدیریت سرویس</b>
+⛂ سلف روشن
+⛂ سلف خاموش
+⛂ وضعیت سلف
+⛂ موجودی
+
+<b>━━ اتوماسیون فعال</b>
+⛂ کلمه لیست
+⛂ کلمه افزودن
+⛂ کلمه اطلاعات
+⛂ کلمه تست
+⛂ کلمه شرط
+
+<b>━━ ورود و حساب</b>
+⛂ ورود اکانت ← از مینی‌بات
+⛂ خروج از اکانت ← مدیریت اتصال
+
+<b>━━ دستورهای اصلی</b>
+⛂ پنل | /panel
+⛂ موجودی | /balance
+⛂ سلف روشن | /self on
+⛂ سلف خاموش | /self off
+⛂ وضعیت سلف | /self status
+
+ارسال «پنل» در هر گفتگوی قابل‌دسترسی، همین مرکز فرمان را باز می‌کند.
+"""
+    else:
+        text = """
+<b>◈ SALF1 | مرکز فرمان</b>
+
+وضعیت و فهرست دستورات سالف در دسترس است؛
+تغییر وضعیت سرویس فقط توسط مالک اکانت انجام می‌شود.
+
+⛂ پنل
+⛂ موجودی
+⛂ وضعیت سلف
+"""
+    await event.respond(text, parse_mode="html")
+
+
+async def handle_self_command(event, customer_id: str, text: str):
+    normalized = normalize_text(text)
+    if normalized not in {
+        "پنل",
+        "panel",
+        "موجودی",
+        "balance",
+        "سلف روشن",
+        "self on",
+        "روشن کردن سلف",
+        "سلف خاموش",
+        "self off",
+        "خاموش کردن سلف",
+        "وضعیت سلف",
+        "self status",
+        "status",
+    }:
+        return False
+
+    client = client_for(customer_id)
+    owner_id = me_cache.get(customer_id)
+    if owner_id is None:
+        try:
+            me = await client.get_me()
+            owner_id = int(me.id)
+            me_cache[customer_id] = owner_id
+        except Exception:
+            owner_id = None
+
+    sender_id = getattr(event, "sender_id", None)
+    is_owner = bool(event.out or (owner_id and sender_id == owner_id))
+
+    if normalized in {"پنل", "panel"}:
+        await send_owner_panel(event, customer_id, is_owner)
+        return True
+
+    if not is_owner:
+        await event.respond(
+            "⛂ این دستور فقط توسط مالک اکانت قابل اجراست.",
+            parse_mode="html",
+        )
+        return True
+
+    if normalized in {"موجودی", "balance"}:
+        row = await db_user(customer_id)
+        balance = int(row["tron_balance"]) if row else 0
+        trial = row["trial_expires_at"] if row else None
+        enabled = bool(row["salf_enabled"]) if row else False
+        trial_text = "فعال" if trial and trial > __import__("datetime").datetime.now(trial.tzinfo) else "پایان‌یافته"
+        await event.respond(
+            f"""<b>◈ موجودی SALF1</b>
+
+⛂ موجودی : <b>{balance:,} جم ترون</b>
+⛂ مصرف : 1 جم / دقیقه
+⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
+⛂ تست 24 ساعته : {trial_text}
+""",
+            parse_mode="html",
+        )
+        return True
+
+    if normalized in {"وضعیت سلف", "self status", "status"}:
+        row = await db_user(customer_id)
+        connected = bool(row["account_connected"]) if row else False
+        enabled = bool(row["salf_enabled"]) if row else False
+        await event.respond(
+            f"""<b>◈ وضعیت SALF1</b>
+
+⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
+⛂ رویدادها : {"فعال" if enabled else "متوقف"}
+""",
+            parse_mode="html",
+        )
+        return True
+
+    if normalized in {"سلف روشن", "self on", "روشن کردن سلف"}:
+        row = await db_user(customer_id)
+        if not row or not bool(row["account_connected"]):
+            await event.respond(
+                "⛂ ابتدا اکانت را از مینی‌بات SALF1 وارد کنید.",
+                parse_mode="html",
+            )
+            return True
+        trial_active = row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+        balance = int(row["tron_balance"])
+        if not trial_active and balance <= 0:
+            await event.respond(
+                "⛂ اعتبار کافی نیست. ابتدا ترون دریافت کنید.",
+                parse_mode="html",
+            )
+            return True
+        await set_salf_enabled(customer_id, True)
+        await event.respond(
+            "● SALF1 روشن شد.\n⛂ اجرای قابلیت‌های متصل از این لحظه فعال است.",
+            parse_mode="html",
+        )
+        return True
+
+    await set_salf_enabled(customer_id, False)
+    await event.respond(
+        "○ SALF1 خاموش شد.\n⛂ اجرای قابلیت‌های خودکار متوقف شد.",
+        parse_mode="html",
+    )
+    return True
+
+
 async def message_event(event, customer_id: str):
     text = (event.raw_text or "").strip()
     if not text:
         return
 
+    if await handle_self_command(event, customer_id, text):
+        return
+
     if event.out:
+        return
+
+    if not enabled_cache.get(customer_id, False):
         return
 
     if event.is_private:
@@ -356,15 +939,491 @@ def attach_events(client: TelegramClient, customer_id: str):
 
 
 async def init_loaded_sessions():
-    if not configured():
+    if not configured() or db_pool is None:
         return
 
-    for directory in SESSION_DIR.glob("customer-*"):
-        print(f"Found persisted customer session: {directory.name}")
+    rows = await db_pool.fetch(
+        """
+        select telegram_user_id, salf_enabled, account_connected
+        from salf1_bot_users
+        where account_connected = true
+        """
+    )
+
+    for row in rows:
+        customer_id = str(row["telegram_user_id"])
+        try:
+            client = client_for(customer_id)
+            await client.connect()
+            if await client.is_user_authorized():
+                me = await client.get_me()
+                me_cache[customer_id] = int(me.id)
+                enabled_cache[customer_id] = bool(row["salf_enabled"])
+                print(
+                    f"Loaded persisted customer session: {customer_id} "
+                    f"(enabled={enabled_cache[customer_id]})"
+                )
+            else:
+                await update_account_state(customer_id, False)
+                enabled_cache[customer_id] = False
+        except Exception as exc:
+            print(f"Failed to load customer {customer_id}: {exc}")
+
+
+def main_menu_markup():
+    keyboard = [
+        [{"text": "⚙️ مدیریت سلف", "callback_data": "manage"}],
+        [{"text": "💎 الماس رایگان", "callback_data": "referral"}],
+        [{"text": "◌ پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"}],
+    ]
+    if CHANNEL_USERNAME:
+        keyboard.append(
+            [{"text": "◈ کانال پرشین", "url": f"https://t.me/{CHANNEL_USERNAME}"}]
+        )
+    else:
+        keyboard.append(
+            [{"text": "◈ کانال پرشین", "callback_data": "channel_missing"}]
+        )
+    return {"inline_keyboard": keyboard}
+
+
+def manage_menu_markup():
+    return {
+        "inline_keyboard": [
+            [{"text": "🔐 ورود اکانت", "callback_data": "login"}],
+            [
+                {"text": "● روشن کردن سلف", "callback_data": "enable"},
+                {"text": "○ خاموش کردن سلف", "callback_data": "disable"},
+            ],
+            [{"text": "📊 وضعیت سلف", "callback_data": "status"}],
+            [{"text": "‹ بازگشت", "callback_data": "home"}],
+        ]
+    }
+
+
+async def bot_api(method: str, payload: dict | None = None, timeout: int = 35):
+    if not BOT_TOKEN or http_session is None:
+        return None
+
+    try:
+        async with http_session.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/{method}",
+            json=payload or {},
+            timeout=ClientTimeout(total=timeout),
+        ) as response:
+            data = await response.json()
+            if not data.get("ok"):
+                print(f"Bot API {method} failed: {data}")
+            return data
+    except Exception as exc:
+        print(f"Bot API {method} error: {exc}")
+        return None
+
+
+async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
+    return await bot_api(
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            **({"reply_markup": reply_markup} if reply_markup else {}),
+        },
+    )
+
+
+async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
+    return await bot_api(
+        "editMessageText",
+        {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+            **({"reply_markup": reply_markup} if reply_markup else {}),
+        },
+    )
+
+
+async def bot_answer_callback(callback_id: str):
+    return await bot_api(
+        "answerCallbackQuery",
+        {"callback_query_id": callback_id},
+        timeout=10,
+    )
+
+
+def mini_main_text(user_first_name: str | None):
+    name = html.escape(user_first_name or "کاربر")
+    return f"""
+<b>◈ SALF1</b>
+<b>سیستم مدیریت و کنترل اکانت تلگرام</b>
+
+سلام <b>{name}</b>.
+
+یک روز تست رایگان شما فعال است.
+از همین مینی‌بات می‌توانید اکانت را وارد کنید، سالف را روشن یا خاموش کنید و میزان اعتبار را ببینید.
+
+⛂ مصرف فعال : 1 جم ترون / دقیقه
+⛂ تست اولیه : 24 ساعت
+"""
+
+
+async def mini_manage_text(user_id: int):
+    row = await db_user(str(user_id))
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    balance = int(row["tron_balance"]) if row else 0
+    trial_active = bool(
+        row
+        and row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+    )
+    return f"""
+<b>◈ مدیریت SALF1</b>
+
+⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
+⛂ تست رایگان : {"● فعال" if trial_active else "○ پایان‌یافته"}
+⛂ موجودی : <b>{balance:,} جم ترون</b>
+
+از این بخش تمام کنترل‌های اصلی سالف در دسترس است.
+"""
+
+
+async def referral_text(user_id: int):
+    row = await db_user(str(user_id))
+    if not row:
+        return "⛂ اطلاعات حساب شما آماده نیست. /start را دوباره بزنید.", None
+
+    summary = await referral_summary(user_id)
+    invite = (
+        f"https://t.me/{bot_username}?start=ref_{user_id}"
+        if bot_username
+        else "لینک دعوت پس از اتصال نام کاربری بات فعال می‌شود."
+    )
+    text = f"""
+<b>◈ الماس رایگان</b>
+
+دوستانت را به SALF1 دعوت کن و برای هر رفرال معتبر <b>{REFERRAL_REWARD} جم ترون</b> بگیر.
+
+<b>لینک دعوت اختصاصی شما</b>
+<code>{html.escape(invite)}</code>
+
+⛂ پاداش هر رفرال : <b>{REFERRAL_REWARD} جم ترون</b>
+⛂ تعداد رفرال معتبر شما : <b>{summary["count"]}</b>
+⛂ موجودی فعلی شما : <b>{summary["balance"]:,} جم ترون</b>
+
+رفرال زمانی معتبر می‌شود که کاربر جدید از لینک شما وارد شود و اکانت تلگرام خود را در SALF1 متصل کند.
+"""
+    markup = {
+        "inline_keyboard": [
+            [{"text": "🔗 باز کردن لینک دعوت", "url": invite}]
+            if bot_username
+            else [],
+            [{"text": "‹ بازگشت", "callback_data": "home"}],
+        ]
+    }
+    markup["inline_keyboard"] = [row for row in markup["inline_keyboard"] if row]
+    return text, markup
+
+
+async def process_bot_message(message: dict):
+    user = message.get("from") or {}
+    chat = message.get("chat") or {}
+    if not user.get("id") or not chat.get("id"):
+        return
+
+    user_id = int(user["id"])
+    username = user.get("username")
+    first_name = user.get("first_name") or "کاربر"
+    text = str(message.get("text") or "").strip()
+
+    payload = ""
+    if text.lower().startswith("/start"):
+        parts = text.split(maxsplit=1)
+        if len(parts) == 2:
+            payload = parts[1].strip()
+
+        referrer = None
+        if payload.startswith("ref_"):
+            try:
+                referrer = int(payload[4:])
+            except ValueError:
+                referrer = None
+
+        await ensure_bot_user(user_id, username, first_name, referrer)
+        bot_states.pop(user_id, None)
+        await bot_send(chat["id"], mini_main_text(first_name), main_menu_markup())
+        return
+
+    await ensure_bot_user(user_id, username, first_name)
+
+    state = bot_states.get(user_id)
+    if state == "await_phone":
+        phone = text.replace(" ", "")
+        if not phone.startswith("+") or len(phone) < 8:
+            await bot_send(chat["id"], "⛂ شماره را با فرمت بین‌المللی ارسال کنید؛ مثال: <code>+98912...</code>")
+            return
+        try:
+            await start_customer_login(str(user_id), phone)
+            bot_states[user_id] = "await_code"
+            await bot_send(
+                chat["id"],
+                "● کد ورود ارسال شد.\
+\
+کدی که تلگرام برای شما فرستاده را همین‌جا ارسال کنید."
+            )
+        except Exception as exc:
+            await bot_send(chat["id"], f"⛂ شروع ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
+        return
+
+    if state == "await_code":
+        code = "".join(ch for ch in text if ch.isdigit())
+        if len(code) < 3:
+            await bot_send(chat["id"], "⛂ کد ورود معتبر نیست.")
+            return
+        try:
+            result = await verify_customer_login(str(user_id), code)
+            if result["status"] == "2fa_required":
+                bot_states[user_id] = "await_2fa"
+                await bot_send(
+                    chat["id"],
+                    "◈ تأیید دومرحله‌ای فعال است.\
+\
+رمز دو مرحله‌ای تلگرام را ارسال کنید."
+                )
+                return
+
+            bot_states.pop(user_id, None)
+            await bot_send(
+                chat["id"],
+                "● اکانت با موفقیت متصل شد.\
+\
+اکنون از «مدیریت سلف» می‌توانید سرویس را روشن کنید.",
+                manage_menu_markup(),
+            )
+        except Exception as exc:
+            await bot_send(chat["id"], f"⛂ ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
+        return
+
+    if state == "await_2fa":
+        try:
+            result = await verify_customer_login(str(user_id), "", text)
+            if result["status"] == "2fa_required":
+                await bot_send(chat["id"], "⛂ رمز دو مرحله‌ای صحیح نبود یا دوباره درخواست شد.")
+                return
+            bot_states.pop(user_id, None)
+            await bot_send(
+                chat["id"],
+                "● اکانت با موفقیت متصل شد.\
+\
+اکنون می‌توانید سالف را روشن کنید.",
+                manage_menu_markup(),
+            )
+        except Exception as exc:
+            await bot_send(chat["id"], f"⛂ ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
+        return
+
+    normalized = normalize_text(text)
+    if normalized in {"مدیریت سلف", "مدیریت", "salf", "self", "panel", "پنل"}:
+        await bot_send(chat["id"], await mini_manage_text(user_id), manage_menu_markup())
+        return
+
+    if normalized in {"الماس رایگان", "الماس", "رفرال", "referral"}:
+        referral_message, markup = await referral_text(user_id)
+        await bot_send(chat["id"], referral_message, markup)
+        return
+
+
+async def process_callback(callback_query: dict):
+    callback_id = callback_query.get("id")
+    message = callback_query.get("message") or {}
+    from_user = callback_query.get("from") or {}
+    data = str(callback_query.get("data") or "")
+    chat = message.get("chat") or {}
+    if not callback_id or not from_user.get("id") or not chat.get("id"):
+        return
+
+    user_id = int(from_user["id"])
+    chat_id = int(chat["id"])
+    message_id = int(message.get("message_id", 0))
+    await bot_answer_callback(callback_id)
+
+    if data == "home":
+        await bot_edit(
+            chat_id,
+            message_id,
+            mini_main_text(from_user.get("first_name")),
+            main_menu_markup(),
+        )
+        return
+
+    if data == "manage":
+        await bot_edit(chat_id, message_id, await mini_manage_text(user_id), manage_menu_markup())
+        return
+
+    if data == "login":
+        bot_states[user_id] = "await_phone"
+        await bot_edit(
+            chat_id,
+            message_id,
+            "◈ <b>ورود اکانت</b>\
+\
+شماره تلفن اکانت تلگرام را با فرمت بین‌المللی ارسال کنید.\
+\
+مثال : <code>+98912...</code>",
+            manage_menu_markup(),
+        )
+        return
+
+    if data == "status":
+        result = await account_status(str(user_id))
+        row = await db_user(str(user_id))
+        balance = int(row["tron_balance"]) if row else 0
+        trial_active = bool(
+            row
+            and row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+        )
+        enabled = bool(row["salf_enabled"]) if row else False
+        await bot_edit(
+            chat_id,
+            message_id,
+            f"""<b>◈ وضعیت SALF1</b>
+
+⛂ اکانت : {"● متصل" if result.get("authorized") else "○ متصل نیست"}
+⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
+⛂ تست 24 ساعته : {"● فعال" if trial_active else "○ پایان‌یافته"}
+⛂ موجودی : <b>{balance:,} جم ترون</b>
+""",
+            manage_menu_markup(),
+        )
+        return
+
+    if data in {"enable", "disable"}:
+        result = await account_status(str(user_id))
+        if not result.get("authorized"):
+            await bot_edit(
+                chat_id,
+                message_id,
+                "⛂ ابتدا اکانت خود را وارد کنید.",
+                manage_menu_markup(),
+            )
+            return
+
+        if data == "disable":
+            await set_salf_enabled(str(user_id), False)
+            await bot_edit(
+                chat_id,
+                message_id,
+                "○ <b>SALF1 خاموش شد.</b>\
+\
+تمام اجرای خودکار سرویس برای این اکانت متوقف شد.",
+                manage_menu_markup(),
+            )
+            return
+
+        row = await db_user(str(user_id))
+        if not row:
+            await bot_edit(chat_id, message_id, "⛂ اطلاعات حساب پیدا نشد.", manage_menu_markup())
+            return
+
+        trial_active = row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+        balance = int(row["tron_balance"])
+        if not trial_active and balance <= 0:
+            await bot_edit(
+                chat_id,
+                message_id,
+                "⛂ اعتبار کافی نیست.\
+\
+الماس رایگان را باز کنید و از رفرال‌ها جم ترون بگیرید.",
+                manage_menu_markup(),
+            )
+            return
+
+        await set_salf_enabled(str(user_id), True)
+        await bot_edit(
+            chat_id,
+            message_id,
+            "● <b>SALF1 روشن شد.</b>\
+\
+سرویس فعال است و مصرف از اعتبار/تست اعمال می‌شود.",
+            manage_menu_markup(),
+        )
+        return
+
+    if data == "referral":
+        text, markup = await referral_text(user_id)
+        await bot_edit(chat_id, message_id, text, markup)
+        return
+
+    if data == "channel_missing":
+        await bot_edit(
+            chat_id,
+            message_id,
+            "⛂ آدرس کانال پرشین هنوز در تنظیمات این نسخه ثبت نشده است.",
+            main_menu_markup(),
+        )
+        return
+
+
+async def mini_bot_loop():
+    global bot_username
+    if not bot_configured():
+        print("Mini bot is disabled: SALF1_BOT_TOKEN and DATABASE_URL are required.")
+        return
+
+    identity = await bot_api("getMe", {}, timeout=15)
+    if not identity or not identity.get("ok"):
+        print("Mini bot failed to initialize with getMe.")
+        return
+
+    bot_username = str(identity["result"].get("username") or "").strip()
+    offset = 0
+    print(f"SALF1 mini bot started as @{bot_username}")
+
+    while True:
+        try:
+            response = await bot_api(
+                "getUpdates",
+                {
+                    "offset": offset,
+                    "timeout": 25,
+                    "allowed_updates": ["message", "callback_query"],
+                },
+                timeout=35,
+            )
+            if not response or not response.get("ok"):
+                await asyncio.sleep(3)
+                continue
+
+            for update in response.get("result", []):
+                offset = max(offset, int(update["update_id"]) + 1)
+                if update.get("callback_query"):
+                    await process_callback(update["callback_query"])
+                elif update.get("message"):
+                    await process_bot_message(update["message"])
+        except Exception as exc:
+            print(f"Mini bot loop error: {exc}")
+            await asyncio.sleep(3)
 
 
 async def main():
-    global http_session
+    global http_session, db_pool
+
+    if DATABASE_URL:
+        try:
+            db_pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=1,
+                max_size=5,
+                command_timeout=15,
+            )
+            print("Salf1 worker database connected.")
+        except Exception as exc:
+            print(f"WARNING: database connection failed: {exc}")
+            db_pool = None
+    else:
+        print("WARNING: DATABASE_URL is not configured; mini bot persistence is disabled.")
 
     if not WORKER_API_TOKEN:
         print("WARNING: WORKER_API_TOKEN is not configured; protected endpoints will return 401.")
@@ -375,15 +1434,28 @@ async def main():
     if not KEYWORD_ACK_URL:
         print("WARNING: SALF1_KEYWORD_ACK_URL is not configured; execution counts will not be acknowledged.")
 
-    http_session = ClientSession()
-    await init_loaded_sessions()
+    if not BOT_TOKEN:
+        print("WARNING: SALF1_BOT_TOKEN is not configured; the mini bot is disabled.")
 
-    runner = web.AppRunner(build_app())
-    await runner.setup()
-    site = web.TCPSite(runner, HOST, PORT)
-    await site.start()
-    print(f"Salf1 Telegram Worker listening on {HOST}:{PORT}")
-    await asyncio.Event().wait()
+    http_session = ClientSession()
+    try:
+        await init_loaded_sessions()
+        runner = web.AppRunner(build_app())
+        await runner.setup()
+        site = web.TCPSite(runner, HOST, PORT)
+        await site.start()
+        print(f"Salf1 Telegram Worker listening on {HOST}:{PORT}")
+
+        tasks = [
+            asyncio.create_task(billing_loop()),
+            asyncio.create_task(mini_bot_loop()),
+        ]
+        await asyncio.Event().wait()
+    finally:
+        if db_pool is not None:
+            await db_pool.close()
+        if http_session is not None:
+            await http_session.close()
 
 
 def build_app():
