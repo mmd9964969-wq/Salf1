@@ -1133,7 +1133,7 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
     return f"""
 <b>◈ مـدیـریـت اکـانـت سـلـف</b>
 
-- خـوش اومـدی، <b>[ {name} ]</b> مـحتـرم.
+- خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
 ⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
 ⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
@@ -1443,7 +1443,7 @@ async def process_callback(callback_query: dict):
 
 ⛂ - وضعیت اکانت : ○ متصل نیست
 
-★ - برای استفاده از سالف، ابتدا اکانت تلگرام خود را متصل کنید.
+★ - برای استفاده از سلف ابتدا اکانت تلگرام خود را متصل کنید.
 """
         await bot_edit(
             chat_id,
