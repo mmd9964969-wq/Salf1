@@ -1221,29 +1221,34 @@ async def referral_text(user_id: int):
         else "لینک دعوت پس از اتصال نام کاربری بات فعال می‌شود."
     )
     text = f"""
-<b>◈ الماس رایگان</b>
+<b>◈ الماس ترون رایگان</b>
 
-دوستانت را به SALF1 دعوت کن و برای هر رفرال معتبر <b>{REFERRAL_REWARD:,} جم ترون</b> بگیر.
+⛂ - با دعوت دوستانت برای هر رفرال معتبر جم ترون دریافت کن.
 
-<b>لینک دعوت اختصاصی شما</b>
-<code>{html.escape(invite)}</code>
+─────━━───── ◈ ─────━━─────
 
-⛂ پاداش هر رفرال : <b>{REFERRAL_REWARD:,} جم ترون</b>
-⛂ تعداد رفرال معتبر شما : <b>{summary["count"]}</b>
-⛂ موجودی فعلی شما : <b>{summary["balance"]:,} جم ترون</b>
+<b>◈ شرایط رفرال</b>
 
-رفرال زمانی معتبر می‌شود که کاربر جدید از لینک شما وارد شود و اکانت تلگرام خود را در SALF1 متصل کند.
+⛂ - ورود از لینک دعوت شما
+⛂ - اتصال اکانت تلگرام
+⛂ - عضویت در کانال رسمی
+
+<b>◈ پاداش رفرال</b>
+
+⛂ - رفرال 01 تا 05  ›  20 ترون
+⛂ - رفرال 06 تا 10  ›  30 ترون
+⛂ - رفرال 11 تا 20  ›  40 ترون
+⛂ - رفرال 21+        ›  50 ترون
+
+─────━━───── ◈ ─────━━─────
+
+⌁ لینک دعوت اختصاصی :
+{html.escape(invite)}
+
+⌁ هر 1 ترون = 1 دقیقه استفاده
+⌁ رفرال معتبر = <b>{summary["count"]}</b>
 """
-    markup = {
-        "inline_keyboard": [
-            [{"text": "🔗 باز کردن لینک دعوت", "url": invite}]
-            if bot_username
-            else [],
-            [{"text": "‹ بازگشت", "callback_data": "home"}],
-        ]
-    }
-    markup["inline_keyboard"] = [row for row in markup["inline_keyboard"] if row]
-    return text, markup
+    return text, {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "home"}]]}
 
 
 async def process_bot_message(message: dict):
