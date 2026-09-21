@@ -992,21 +992,34 @@ async def init_loaded_sessions():
 
 
 def main_menu_markup():
-    keyboard = [
-        [
-            {"text": "⚙️ مدیریت سلف", "callback_data": "manage"},
-            {"text": "💎 الماس رایگان", "callback_data": "referral"},
-        ],
-        [
-            {"text": "◌ پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"},
-            (
-                {"text": "◈ کانال پرشین", "url": f"https://t.me/{CHANNEL_USERNAME}"}
-                if CHANNEL_USERNAME
-                else {"text": "◈ کانال پرشین", "callback_data": "channel_missing"}
-            ),
-        ],
-    ]
-    return {"inline_keyboard": keyboard}
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "⚙️ مدیریت سلف", "callback_data": "manage"},
+            ],
+            [
+                {"text": "💎 الماس رایگان", "callback_data": "referral"},
+            ],
+            [
+                {"text": "◌ پشتیبانی", "callback_data": "support"},
+                {"text": "◈ کانال پرشین", "callback_data": "channel"},
+            ],
+        ]
+    }
+
+def support_markup():
+    rows = []
+    if CREATOR_USERNAME:
+        rows.append([{"text": "◌ ارتباط با پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"}])
+    rows.append([{"text": "‹ بازگشت", "callback_data": "home"}])
+    return {"inline_keyboard": rows}
+
+def channel_markup():
+    rows = []
+    if CHANNEL_USERNAME:
+        rows.append([{"text": "◈ ورود به کانال", "url": f"https://t.me/{CHANNEL_USERNAME}"}])
+    rows.append([{"text": "‹ بازگشت", "callback_data": "home"}])
+    return {"inline_keyboard": rows}
 
 
 def manage_menu_markup(connected: bool = False, enabled: bool = False):
@@ -1476,6 +1489,28 @@ async def process_callback(callback_query: dict):
     if data == "referral":
         text, markup = await referral_text(user_id)
         await bot_edit(chat_id, message_id, text, markup)
+        return
+
+    if data == "support":
+        support_text = """
+<b>◌ پشتیبانی</b>
+
+برای ارتباط با پشتیبانی SALF1
+از طریق دکمه زیر اقدام کنید.
+
+پاسخ‌گویی و پیگیری درخواست‌ها از همین مسیر انجام می‌شود.
+"""
+        await bot_edit(chat_id, message_id, support_text, support_markup())
+        return
+
+    if data == "channel":
+        channel_text = """
+<b>◈ کانال پرشین</b>
+
+آخرین اخبار، بروزرسانی‌ها و اطلاعیه‌های
+SALF1 را در کانال رسمی دنبال کنید.
+"""
+        await bot_edit(chat_id, message_id, channel_text, channel_markup())
         return
 
     if data == "channel_missing":
