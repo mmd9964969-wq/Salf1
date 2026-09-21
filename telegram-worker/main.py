@@ -25,6 +25,9 @@ CREATOR_USERNAME = os.getenv("SALF1_CREATOR_USERNAME", "Jowati").strip().lstrip(
 CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "Pers3anSelf").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
+ROLE = os.getenv("SALF1_ROLE", "bot").strip().lower()
+DB_POOL_MIN = max(1, int(os.getenv("SALF1_DB_POOL_MIN", "1")))
+DB_POOL_MAX = max(DB_POOL_MIN, int(os.getenv("SALF1_DB_POOL_MAX", "8")))
 
 REFERRAL_REWARD = int(os.getenv("SALF1_REFERRAL_REWARD", "500"))
 TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
@@ -468,19 +471,43 @@ async def charge_customer_minute(customer_id: str):
 
 
 async def billing_loop():
+    """Charge active customers in batches instead of one DB transaction per user."""
     while True:
         try:
             if db_pool is not None:
-                rows = await db_pool.fetch(
-                    """
-                    select telegram_user_id
-                    from salf1_bot_users
-                    where salf_enabled = true
-                      and account_connected = true
-                    """
-                )
-                for row in rows:
-                    await charge_customer_minute(str(row["telegram_user_id"]))
+                async with db_pool.acquire() as conn:
+                    stopped = await conn.fetch(
+                        """
+                        with charged as (
+                          update salf1_bot_users
+                          set tron_balance = tron_balance - 1,
+                              updated_at = now()
+                          where salf_enabled = true
+                            and account_connected = true
+                            and (trial_expires_at is null or trial_expires_at <= now())
+                            and tron_balance > 0
+                          returning telegram_user_id
+                        )
+                        update salf1_bot_users
+                        set salf_enabled = false,
+                            updated_at = now()
+                        where salf_enabled = true
+                          and account_connected = true
+                          and (trial_expires_at is null or trial_expires_at <= now())
+                          and tron_balance <= 0
+                        returning telegram_user_id
+                        """
+                    )
+
+                for row in stopped:
+                    user_id = int(row["telegram_user_id"])
+                    enabled_cache[str(user_id)] = False
+                    await bot_send(
+                        user_id,
+                        "◈ سالف متوقف شد\\n\\nاعتبار مصرفی شما به پایان رسید.\\n\\n"
+                        "⛂ مصرف فعال : 1 جم ترون / دقیقه\\n"
+                        "⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
+                    )
         except Exception as exc:
             print(f"Billing loop error: {exc}")
         await asyncio.sleep(60)
@@ -490,6 +517,7 @@ async def health(request):
     return web.json_response({
         "ok": True,
         "service": "salf1-telegram-worker",
+        "role": ROLE,
         "telegram_configured": configured(),
         "mini_bot_configured": bot_configured(),
         "customers_loaded": len(clients),
@@ -1645,8 +1673,8 @@ async def main():
         try:
             db_pool = await asyncpg.create_pool(
                 DATABASE_URL,
-                min_size=1,
-                max_size=5,
+                min_size=DB_POOL_MIN,
+                max_size=DB_POOL_MAX,
                 command_timeout=15,
             )
             print("Salf1 worker database connected.")
@@ -1666,7 +1694,9 @@ async def main():
         print("WARNING: SALF1_KEYWORD_ACK_URL is not configured; execution counts will not be acknowledged.")
 
     if not BOT_TOKEN:
-        print("WARNING: SALF1_BOT_TOKEN is not configured; the mini bot is disabled.")
+        print("WARNING: SALF1_BOT_TOKEN is not configured; the bot API is disabled.")
+
+    print(f"Salf1 worker role: {ROLE}; DB pool={DB_POOL_MIN}-{DB_POOL_MAX}")
 
     http_session = ClientSession()
     try:
@@ -1677,10 +1707,11 @@ async def main():
         await site.start()
         print(f"Salf1 Telegram Worker listening on {HOST}:{PORT}")
 
-        tasks = [
-            asyncio.create_task(billing_loop()),
-            asyncio.create_task(mini_bot_loop()),
-        ]
+        tasks = []
+        if ROLE in {"bot", "all"}:
+            tasks.append(asyncio.create_task(mini_bot_loop()))
+        if ROLE in {"billing", "all"}:
+            tasks.append(asyncio.create_task(billing_loop()))
         await asyncio.Event().wait()
     finally:
         if db_pool is not None:
