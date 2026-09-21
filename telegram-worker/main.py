@@ -1068,22 +1068,6 @@ async def bot_answer_callback(callback_id: str):
     )
 
 
-def mini_main_text(user_first_name: str | None):
-    name = html.escape(user_first_name or "کاربر")
-    return f"""
-<b>◈ SALF1</b>
-<b>سیستم مدیریت و کنترل اکانت تلگرام</b>
-
-سلام <b>{name}</b>.
-
-یک روز تست رایگان شما فعال است.
-از همین مینی‌بات می‌توانید اکانت را وارد کنید، سالف را روشن یا خاموش کنید و میزان اعتبار را ببینید.
-
-⛂ مصرف فعال : 1 جم ترون / دقیقه
-⛂ تست اولیه : 24 ساعت
-"""
-
-
 def trial_remaining_text(row) -> str:
     if not row:
         return "نامشخص"
@@ -1283,7 +1267,7 @@ async def process_bot_message(message: dict):
         return
 
     if normalized in {"مدیریت سلف", "مدیریت", "salf", "self", "panel", "پنل"}:
-        await bot_send(chat["id"], await mini_manage_text(user_id), manage_menu_markup())
+        await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
         return
 
     if normalized in {"الماس رایگان", "الماس", "رفرال", "referral"}:
