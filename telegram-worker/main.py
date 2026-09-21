@@ -129,10 +129,9 @@ async def ensure_bot_user(
               telegram_user_id,
               username,
               first_name,
-              trial_expires_at,
               referrer_user_id
             )
-            values ($1, $2, $3, now() + make_interval(hours => $4), $5)
+            values ($1, $2, $3, $4)
             on conflict (telegram_user_id) do update set
               username = excluded.username,
               first_name = excluded.first_name,
@@ -142,7 +141,6 @@ async def ensure_bot_user(
             telegram_user_id,
             username,
             first_name,
-            TRIAL_HOURS,
             referrer_user_id,
         )
 
@@ -359,6 +357,28 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     me_cache[customer_id] = int(me.id)
     await update_account_state(customer_id, True)
     await set_salf_enabled(customer_id, False)
+
+    # Start the one-time 24-hour trial only after the account login succeeds.
+    if db_pool is not None:
+        try:
+            user_id = int(customer_id)
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    update salf1_bot_users
+                    set trial_expires_at = coalesce(
+                          trial_expires_at,
+                          now() + make_interval(hours => $2)
+                        ),
+                        updated_at = now()
+                    where telegram_user_id = $1
+                    """,
+                    user_id,
+                    TRIAL_HOURS,
+                )
+        except (ValueError, asyncpg.PostgresError) as exc:
+            print(f"Trial start error: {exc}")
+
     try:
         await reward_referral(int(customer_id))
     except (ValueError, RuntimeError, asyncpg.PostgresError) as exc:
@@ -398,7 +418,8 @@ async def charge_customer_minute(customer_id: str):
         if not trial_row:
             return
 
-        if trial_row["trial_expires_at"] > datetime.now(trial_row["trial_expires_at"].tzinfo):
+        trial_expires_at = trial_row["trial_expires_at"]
+        if trial_expires_at is not None and trial_expires_at > datetime.now(trial_expires_at.tzinfo):
             return
 
         row = await conn.fetchrow(
@@ -409,7 +430,7 @@ async def charge_customer_minute(customer_id: str):
             where telegram_user_id = $1
               and salf_enabled = true
               and account_connected = true
-              and trial_expires_at <= now()
+              and (trial_expires_at is null or trial_expires_at <= now())
               and tron_balance > 0
             returning tron_balance
             """,
@@ -425,7 +446,7 @@ async def charge_customer_minute(customer_id: str):
             set salf_enabled = false,
                 updated_at = now()
             where telegram_user_id = $1
-              and trial_expires_at <= now()
+              and (trial_expires_at is null or trial_expires_at <= now())
               and tron_balance <= 0
             """,
             user_id,
@@ -1070,8 +1091,10 @@ async def bot_answer_callback(callback_id: str):
 
 def trial_remaining_text(row) -> str:
     if not row:
-        return "نامشخص"
+        return "ثبت‌نام نشده"
     expires_at = row["trial_expires_at"]
+    if expires_at is None:
+        return "پس از ورود اکانت شروع می‌شود"
     remaining = expires_at - datetime.now(expires_at.tzinfo)
     total_minutes = max(0, int(remaining.total_seconds() // 60))
     if total_minutes <= 0:
@@ -1112,14 +1135,20 @@ async def mini_manage_text(user_id: int):
     balance = int(row["tron_balance"]) if row else 0
     trial_active = bool(
         row
+        and row["trial_expires_at"] is not None
         and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
+    )
+    trial_text = "● فعال" if trial_active else (
+        "○ پس از ورود اکانت شروع می‌شود"
+        if row and row["trial_expires_at"] is None
+        else "○ پایان‌یافته"
     )
     return f"""
 <b>◈ مدیریت SALF1</b>
 
 ⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
 ⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست رایگان : {"● فعال" if trial_active else "○ پایان‌یافته"}
+⛂ تست رایگان : {trial_text}
 ⛂ موجودی : <b>{balance:,} جم ترون</b>
 
 از این بخش تمام کنترل‌های اصلی سالف در دسترس است.
@@ -1386,7 +1415,10 @@ async def process_callback(callback_query: dict):
             await bot_edit(chat_id, message_id, "⛂ اطلاعات حساب پیدا نشد.", manage_menu_markup())
             return
 
-        trial_active = row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+        trial_active = bool(
+            row["trial_expires_at"] is not None
+            and row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+        )
         balance = int(row["tron_balance"])
         if not trial_active and balance <= 0:
             await bot_edit(
