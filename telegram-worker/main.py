@@ -9,7 +9,7 @@ from datetime import datetime
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import PasswordHashInvalidError, SessionPasswordNeededError
 
 HOST = "0.0.0.0"
 PORT = int(os.getenv("PORT", "8080"))
@@ -349,7 +349,10 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     except SessionPasswordNeededError:
         if not password:
             return {"status": "2fa_required"}
-        await client.sign_in(password=password)
+        try:
+            await client.sign_in(password=password)
+        except PasswordHashInvalidError:
+            return {"status": "2fa_invalid"}
 
     me = await client.get_me()
     pending_phones.pop(customer_id, None)
@@ -995,14 +998,12 @@ def main_menu_markup():
     return {
         "inline_keyboard": [
             [
-                {"text": "⚙️ مدیریت سلف", "callback_data": "manage"},
+                {"text": "› مدیریت سلف", "callback_data": "manage"},
+                {"text": "› الماس رایگان", "callback_data": "referral"},
             ],
             [
-                {"text": "💎 الماس رایگان", "callback_data": "referral"},
-            ],
-            [
-                {"text": "◌ پشتیبانی", "callback_data": "support"},
-                {"text": "◈ کانال پرشین", "callback_data": "channel"},
+                {"text": "› پشتیبانی", "callback_data": "support"},
+                {"text": "› کانال رسمی", "callback_data": "channel"},
             ],
         ]
     }
@@ -1023,21 +1024,24 @@ def channel_markup():
 
 
 def manage_menu_markup(connected: bool = False, enabled: bool = False):
-    keyboard = []
+    keyboard = [
+        [
+            {"text": "› اتصال اکانت", "callback_data": "login"},
+            {"text": "› وضعیت اکانت", "callback_data": "account_status"},
+        ],
+    ]
+
     if connected:
         keyboard.append([
             {
-                "text": "○ خاموش کردن سلف" if enabled else "● روشن کردن سلف",
+                "text": "› خاموش کردن سلف" if enabled else "› روشن کردن سلف",
                 "callback_data": "disable" if enabled else "enable",
-            }
+            },
+            {"text": "› وضعیت سلف", "callback_data": "status"},
         ])
         keyboard.append([
-            {"text": "↻ وضعیت سلف", "callback_data": "status"},
-            {"text": "◌ خروج اکانت", "callback_data": "disconnect"},
+            {"text": "› خروج اکانت", "callback_data": "disconnect"},
         ])
-    else:
-        keyboard.append([{"text": "🔐 ورود اکانت", "callback_data": "login"}])
-        keyboard.append([{"text": "↻ وضعیت سلف", "callback_data": "status"}])
 
     keyboard.append([{"text": "‹ بازگشت", "callback_data": "home"}])
     return {"inline_keyboard": keyboard}
@@ -1161,14 +1165,19 @@ async def mini_manage_text(user_id: int):
         else "○ پایان‌یافته"
     )
     return f"""
-<b>◈ مدیریت SALF1</b>
+<b>◈ مـدیـریـت سـلـف</b>
 
-⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
-⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست رایگان : {trial_text}
-⛂ موجودی : <b>{balance:,} جم ترون</b>
+⛂ - اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ - سلف : {"● روشن" if enabled else "○ خاموش"}
+⛂ - تست رایگان 24 ساعت : {"پس از ورود اکانت" if row and row["trial_expires_at"] is None else trial_text}
+⛂ - موجودی : <b>{balance:,} جم ترون</b>
 
-از این بخش تمام کنترل‌های اصلی سالف در دسترس است.
+─────━━───── ◈ ─────━━─────
+
+<b>◈ وضـعیـت سـرویـس</b>
+
+★ - از این بخش، تمام کنترل‌های اصلی
+سلف در دسترس شما قرار دارد.
 """
 
 
@@ -1251,9 +1260,10 @@ async def process_bot_message(message: dict):
             bot_states[user_id] = "await_code"
             await bot_send(
                 chat["id"],
-                "● کد ورود ارسال شد.\
-\
-کدی که تلگرام برای شما فرستاده را همین‌جا ارسال کنید."
+                """<b>◈ تأیید اکانت</b>
+
+⛂ - کد ورود ارسال‌شده توسط تلگرام را
+ارسال کنید."""
             )
         except Exception as exc:
             await bot_send(chat["id"], f"⛂ شروع ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
@@ -1270,18 +1280,21 @@ async def process_bot_message(message: dict):
                 bot_states[user_id] = "await_2fa"
                 await bot_send(
                     chat["id"],
-                    "◈ تأیید دومرحله‌ای فعال است.\
-\
-رمز دو مرحله‌ای تلگرام را ارسال کنید."
+                    """<b>◈ تأیید دو مرحله‌ ای</b>
+
+⛂ - رمز عبور دو مرحله‌ای اکانت تلگرام را ارسال کنید."""
                 )
                 return
 
             bot_states.pop(user_id, None)
             await bot_send(
                 chat["id"],
-                "● اکانت با موفقیت متصل شد.\
-\
-اکنون از «مدیریت سلف» می‌توانید سرویس را روشن کنید.",
+                """<b>✓ اتصال اکانت موفق بود</b>
+
+⛂ - اکانت تلگرام با موفقیت متصل شد.
+⛂ - وضعیت اکانت : ● فعال
+
+◈ اکنون می‌توانید از امکانات سلف استفاده کنید.""",
                 await user_manage_markup(user_id),
             )
         except Exception as exc:
@@ -1291,15 +1304,34 @@ async def process_bot_message(message: dict):
     if state == "await_2fa":
         try:
             result = await verify_customer_login(str(user_id), "", text)
-            if result["status"] == "2fa_required":
-                await bot_send(chat["id"], "⛂ رمز دو مرحله‌ای صحیح نبود یا دوباره درخواست شد.")
+            if result["status"] == "2fa_invalid":
+                await bot_send(
+                    chat["id"],
+                    """<b>◈ تأیید دو مرحله‌ ای</b>
+
+⛂ - رمز عبور دو مرحله‌ای اکانت تلگرام را ارسال کنید.
+
+✘ رمز عبور وارد شده نادرست است لطفاً مجدداً تلاش کنید."""
+                )
                 return
+            if result["status"] == "2fa_required":
+                await bot_send(
+                    chat["id"],
+                    """<b>◈ تأیید دو مرحله‌ ای</b>
+
+⛂ - رمز عبور دو مرحله‌ای اکانت تلگرام را ارسال کنید."""
+                )
+                return
+
             bot_states.pop(user_id, None)
             await bot_send(
                 chat["id"],
-                "● اکانت با موفقیت متصل شد.\
-\
-اکنون می‌توانید سالف را روشن کنید.",
+                """<b>✓ اتصال اکانت موفق بود</b>
+
+⛂ - اکانت تلگرام با موفقیت متصل شد.
+⛂ - وضعیت اکانت : ● فعال
+
+◈ اکنون می‌توانید از امکانات سلف استفاده کنید.""",
                 await user_manage_markup(user_id),
             )
         except Exception as exc:
@@ -1362,11 +1394,12 @@ async def process_callback(callback_query: dict):
         await bot_edit(
             chat_id,
             message_id,
-            "◈ <b>ورود اکانت</b>\
-\
-شماره تلفن اکانت تلگرام را با فرمت بین‌المللی ارسال کنید.\
-\
-مثال : <code>+98912...</code>",
+            """<b>◈ ورود اکـانـت</b>
+
+⛂ - شماره تلفن اکانت تلگرام را
+   با فرمت بین‌المللی ارسال کنید.
+
+⌁ مثال : <code>+98912xxxxxxx</code>""",
             {"inline_keyboard": [[{"text": "‹ لغو ورود", "callback_data": "cancel_login"}], [{"text": "‹ بازگشت", "callback_data": "manage"}]]},
         )
         return
@@ -1377,6 +1410,45 @@ async def process_callback(callback_query: dict):
             chat_id,
             message_id,
             await mini_manage_text(user_id),
+            await user_manage_markup(user_id),
+        )
+        return
+
+    if data == "account_status":
+        result = await account_status(str(user_id))
+        row = await db_user(str(user_id))
+        connected = bool(row["account_connected"]) if row else False
+        if result.get("authorized") and result.get("user"):
+            account = result["user"]
+            account_name = html.escape(
+                " ".join(
+                    part for part in [account.get("first_name"), account.get("last_name")]
+                    if part
+                )
+                or "بدون نام"
+            )
+            username = account.get("username")
+            username_text = f"@{html.escape(username)}" if username else "بدون نام کاربری"
+            account_text = f"""
+<b>◈ وضـعیـت اکـانـت</b>
+
+⛂ - وضعیت اکانت : ● فعال
+⛂ - نام : {account_name}
+⛂ - نام کاربری : {username_text}
+⛂ - شناسه : <code>{int(account["id"])}</code>
+"""
+        else:
+            account_text = """
+<b>◈ وضـعیـت اکـانـت</b>
+
+⛂ - وضعیت اکانت : ○ متصل نیست
+
+★ - برای استفاده از سالف، ابتدا اکانت تلگرام خود را متصل کنید.
+"""
+        await bot_edit(
+            chat_id,
+            message_id,
+            account_text,
             await user_manage_markup(user_id),
         )
         return
