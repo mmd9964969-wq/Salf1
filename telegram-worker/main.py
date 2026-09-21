@@ -22,7 +22,7 @@ WORKER_API_TOKEN = os.getenv("WORKER_API_TOKEN", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 BOT_TOKEN = os.getenv("SALF1_BOT_TOKEN", "").strip()
 CREATOR_USERNAME = os.getenv("SALF1_CREATOR_USERNAME", "Jowati").strip().lstrip("@")
-CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "").strip().lstrip("@")
+CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "Pers3anSelf").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
 
@@ -1011,14 +1011,14 @@ def main_menu_markup():
 def support_markup():
     rows = []
     if CREATOR_USERNAME:
-        rows.append([{"text": "◌ ارتباط با پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"}])
+        rows.append([{"text": "› ارتباط با پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"}])
     rows.append([{"text": "‹ بازگشت", "callback_data": "home"}])
     return {"inline_keyboard": rows}
 
 def channel_markup():
     rows = []
     if CHANNEL_USERNAME:
-        rows.append([{"text": "◈ ورود به کانال", "url": f"https://t.me/{CHANNEL_USERNAME}"}])
+        rows.append([{"text": "› کانال پرشین سلف", "url": f"https://t.me/{CHANNEL_USERNAME}"}])
     rows.append([{"text": "‹ بازگشت", "callback_data": "home"}])
     return {"inline_keyboard": rows}
 
@@ -1569,22 +1569,20 @@ async def process_callback(callback_query: dict):
 
     if data == "support":
         support_text = """
-<b>◌ پشتیبانی</b>
+<b>◈ پشتیبانی</b>
 
-برای ارتباط با پشتیبانی SALF1
-از طریق دکمه زیر اقدام کنید.
+⛂ - برای ارتباط با پشتیبانی سلف از طریق دکمه زیر اقدام کنید.
 
-پاسخ‌گویی و پیگیری درخواست‌ها از همین مسیر انجام می‌شود.
+⌁ پاسخ‌گویی و پیگیری درخواست‌ها از همین مسیر انجام می‌شود.
 """
         await bot_edit(chat_id, message_id, support_text, support_markup())
         return
 
     if data == "channel":
         channel_text = """
-<b>◈ کانال پرشین</b>
+<b>◈ کانال پرشین سلف</b>
 
-آخرین اخبار، بروزرسانی‌ها و اطلاعیه‌های
-SALF1 را در کانال رسمی دنبال کنید.
+⛂ - آخرین اخبار بروزرسانی‌ ها و اطلاعیه‌ ها را در کانال دنبال کنید.
 """
         await bot_edit(chat_id, message_id, channel_text, channel_markup())
         return
