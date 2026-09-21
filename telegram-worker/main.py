@@ -1127,17 +1127,21 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
     trial_left = trial_remaining_text(row)
 
     return f"""
-<b>◈ SALF1</b>
-<b>سیستم مدیریت و کنترل اکانت تلگرام</b>
+<b>◈ مـدیـریـت اکـانـت سـلـف</b>
 
-سلام <b>{name}</b>.
-از همین مینی‌بات، اکانت خودت را متصل کن و سرویس SALF1 را مدیریت کن.
+- خـوش اومـدی، <b>[ {name} ]</b> مـحتـرم.
 
 ⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
 ⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست رایگان : <b>{trial_left}</b>
+⛂ تست رایگان 24 ساعت : {"پس از ورود اکانت" if row and row["trial_expires_at"] is None else trial_left}
 ⛂ موجودی : <b>{balance:,} جم ترون</b>
-⛂ مصرف فعال : 1 جم ترون / دقیقه
+⛂ مصرف فعال : 1 جم ترون در دقیقه
+
+─────━━───── ◈ ─────━━─────
+
+<b>◈ وضـعیـت سـرویـس</b>
+
+★ - برای شروع، اکانت خود را متصل کنید.
 """
 
 
