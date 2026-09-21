@@ -697,3 +697,22 @@ body{
   .salf-hero{border-radius:18px;padding:18px}
   .salf-hero-main h2{font-size:29px}
 }
+
+
+/* SALF1 V4 · Quiet Command Center — Persian-first navigation */
+.salf-sidebar-scroll{padding:8px 10px 18px!important}
+.salf-nav-group{margin:16px 9px 6px!important;padding:0!important;color:#5e5951!important;font:600 9px "Vazirmatn",sans-serif!important;letter-spacing:.02em!important}
+.salf-nav-item{position:relative;display:flex;align-items:center;gap:10px;width:100%;height:42px;padding:0 11px;border:1px solid transparent;border-radius:10px;background:transparent;color:#807a71;transition:all .18s ease;font-family:"Vazirmatn",sans-serif!important;font-size:11px!important;text-align:right}
+.salf-nav-item:hover{background:#141412!important;color:#e8e3da!important;border-color:var(--salf-classic-line)!important}
+.salf-nav-item.is-active{background:linear-gradient(90deg,#191916,#11110f)!important;color:#eeeae2!important;border-color:var(--salf-classic-line)!important;box-shadow:inset 2px 0 var(--salf-classic-champagne),0 7px 18px rgb(0 0 0/.12)}
+.salf-nav-arrow{opacity:0;margin-right:auto;color:#716b61;transform:translateX(4px);transition:.18s}
+.salf-nav-item:hover .salf-nav-arrow,.salf-nav-item.is-active .salf-nav-arrow{opacity:1;transform:none}
+.salf-nav-badge{min-width:19px;padding:2px 5px;border-radius:99px;background:#26241f;color:#c9bd9f;font:9px "IBM Plex Mono",monospace;text-align:center}
+.salf-sidebar-scroll nav{scrollbar-width:none}
+.salf-sidebar-scroll nav::-webkit-scrollbar{display:none}
+.salf-topbar-title strong{font-family:"Vazirmatn",sans-serif!important;font-size:12px!important;font-weight:600}
+.salf-topbar-title small{font-family:"IBM Plex Mono",monospace}
+.salf-mobile-dock{grid-template-columns:repeat(5,1fr)!important}
+.salf-mobile-dock button{font-family:"Vazirmatn",sans-serif!important;font-size:8px!important}
+.salf-command-bar{box-shadow:0 8px 28px rgb(0 0 0/.16)}
+@media(min-width:801px){.salf-sidebar-scroll{overflow-y:auto}.salf-sidebar-scroll nav{padding-bottom:10px}}
