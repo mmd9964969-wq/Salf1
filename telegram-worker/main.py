@@ -234,6 +234,24 @@ async def reward_referral(telegram_user_id: int) -> bool:
             if referrer is None or bool(row["referral_rewarded"]):
                 return False
 
+            current_count = await conn.fetchval(
+                """
+                select count(*)
+                from salf1_bot_referral_rewards
+                where referrer_user_id = $1
+                """,
+                int(referrer),
+            )
+            referral_number = int(current_count or 0) + 1
+            if referral_number <= 5:
+                reward_tron = 20
+            elif referral_number <= 10:
+                reward_tron = 30
+            elif referral_number <= 20:
+                reward_tron = 40
+            else:
+                reward_tron = 50
+
             reward_row = await conn.fetchrow(
                 """
                 insert into salf1_bot_referral_rewards (
@@ -247,7 +265,7 @@ async def reward_referral(telegram_user_id: int) -> bool:
                 """,
                 telegram_user_id,
                 int(referrer),
-                REFERRAL_REWARD,
+                reward_tron,
             )
             if not reward_row:
                 await conn.execute(
@@ -270,7 +288,7 @@ async def reward_referral(telegram_user_id: int) -> bool:
                 where telegram_user_id = $1
                 """,
                 int(referrer),
-                REFERRAL_REWARD,
+                reward_tron,
             )
 
             await conn.execute(
