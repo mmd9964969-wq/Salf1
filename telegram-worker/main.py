@@ -4,6 +4,7 @@ import html
 import os
 import random
 from pathlib import Path
+from datetime import datetime
 
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
@@ -396,7 +397,7 @@ async def charge_customer_minute(customer_id: str):
         if not trial_row:
             return
 
-        if trial_row["trial_expires_at"].timestamp() > asyncio.get_running_loop().time():
+        if trial_row["trial_expires_at"] > datetime.now(trial_row["trial_expires_at"].tzinfo):
             return
 
         row = await conn.fetchrow(
@@ -822,7 +823,7 @@ async def handle_self_command(event, customer_id: str, text: str):
         balance = int(row["tron_balance"]) if row else 0
         trial = row["trial_expires_at"] if row else None
         enabled = bool(row["salf_enabled"]) if row else False
-        trial_text = "فعال" if trial and trial > __import__("datetime").datetime.now(trial.tzinfo) else "پایان‌یافته"
+        trial_text = "فعال" if trial and trial > datetime.now(trial.tzinfo) else "پایان‌یافته"
         await event.respond(
             f"""<b>◈ موجودی SALF1</b>
 
@@ -858,7 +859,7 @@ async def handle_self_command(event, customer_id: str, text: str):
                 parse_mode="html",
             )
             return True
-        trial_active = row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+        trial_active = row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
         balance = int(row["tron_balance"])
         if not trial_active and balance <= 0:
             await event.respond(
@@ -1076,7 +1077,7 @@ async def mini_manage_text(user_id: int):
     balance = int(row["tron_balance"]) if row else 0
     trial_active = bool(
         row
-        and row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+        and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
     )
     return f"""
 <b>◈ مدیریت SALF1</b>
