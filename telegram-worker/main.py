@@ -26,8 +26,8 @@ CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
 
-REFERRAL_REWARD = 300
-TRIAL_HOURS = 24
+REFERRAL_REWARD = int(os.getenv("SALF1_REFERRAL_REWARD", "500"))
+TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
@@ -132,7 +132,7 @@ async def ensure_bot_user(
               trial_expires_at,
               referrer_user_id
             )
-            values ($1, $2, $3, now() + interval '24 hours', $4)
+            values ($1, $2, $3, now() + make_interval(hours => $4), $5)
             on conflict (telegram_user_id) do update set
               username = excluded.username,
               first_name = excluded.first_name,
@@ -142,6 +142,7 @@ async def ensure_bot_user(
             telegram_user_id,
             username,
             first_name,
+            TRIAL_HOURS,
             referrer_user_id,
         )
 
@@ -287,7 +288,7 @@ async def reward_referral(telegram_user_id: int) -> bool:
 \
 یک رفرال معتبر با موفقیت ثبت شد.\
 \
-⛂ پاداش شما : <b>300 جم ترون</b>\
+⛂ پاداش شما : <b>500 جم ترون</b>\
 ⛂ این پاداش فقط یک‌بار برای هر کاربر جدید ثبت می‌شود."
     )
     return True
@@ -733,40 +734,38 @@ def normalize_text(value: str) -> str:
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
     if is_owner:
         text = """
-<b>◈ SALF1 | مرکز فرمان</b>
+<b>◈ SALF1 · مرکز فرمان</b>
 
-<b>━━ مدیریت سرویس</b>
-⛂ سلف روشن
-⛂ سلف خاموش
-⛂ وضعیت سلف
-⛂ موجودی
-
-<b>━━ اتوماسیون فعال</b>
-⛂ کلمه لیست
-⛂ کلمه افزودن
-⛂ کلمه اطلاعات
-⛂ کلمه تست
-⛂ کلمه شرط
-
-<b>━━ ورود و حساب</b>
-⛂ ورود اکانت ← از مینی‌بات
-⛂ خروج از اکانت ← مدیریت اتصال
-
-<b>━━ دستورهای اصلی</b>
-⛂ پنل | /panel
-⛂ موجودی | /balance
+<b>━━ مدیریت سالف</b>
 ⛂ سلف روشن | /self on
 ⛂ سلف خاموش | /self off
 ⛂ وضعیت سلف | /self status
+⛂ موجودی | /balance
 
-ارسال «پنل» در هر گفتگوی قابل‌دسترسی، همین مرکز فرمان را باز می‌کند.
+<b>━━ اتوماسیون</b>
+⛂ کلمه لیست | keyword list
+⛂ کلمه افزودن | keyword add
+⛂ کلمه اطلاعات | keyword info
+⛂ کلمه تست | keyword test
+⛂ کلمه شرط | keyword condition
+
+<b>━━ اکانت</b>
+⛂ ورود اکانت ← از مینی‌بات SALF1
+⛂ خروج اکانت ← از مدیریت سلف
+
+<b>━━ دسترسی سریع</b>
+⛂ پنل | /panel
+⛂ موجودی | /balance
+⛂ وضعیت سلف | /self status
+
+این پنل متنی در هر گفتگویی که اکانت در آن پیام می‌فرستد قابل فراخوانی است.
 """
     else:
         text = """
-<b>◈ SALF1 | مرکز فرمان</b>
+<b>◈ SALF1 · مرکز فرمان</b>
 
-وضعیت و فهرست دستورات سالف در دسترس است؛
-تغییر وضعیت سرویس فقط توسط مالک اکانت انجام می‌شود.
+فقط نمایش عمومی پنل برای شما فعال است.
+تغییر وضعیت سرویس فقط توسط مالک اکانت ممکن است.
 
 ⛂ پنل
 ⛂ موجودی
@@ -973,33 +972,48 @@ async def init_loaded_sessions():
 
 def main_menu_markup():
     keyboard = [
-        [{"text": "⚙️ مدیریت سلف", "callback_data": "manage"}],
-        [{"text": "💎 الماس رایگان", "callback_data": "referral"}],
-        [{"text": "◌ پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"}],
+        [
+            {"text": "⚙️ مدیریت سلف", "callback_data": "manage"},
+            {"text": "💎 الماس رایگان", "callback_data": "referral"},
+        ],
+        [
+            {"text": "◌ پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"},
+            (
+                {"text": "◈ کانال پرشین", "url": f"https://t.me/{CHANNEL_USERNAME}"}
+                if CHANNEL_USERNAME
+                else {"text": "◈ کانال پرشین", "callback_data": "channel_missing"}
+            ),
+        ],
     ]
-    if CHANNEL_USERNAME:
-        keyboard.append(
-            [{"text": "◈ کانال پرشین", "url": f"https://t.me/{CHANNEL_USERNAME}"}]
-        )
-    else:
-        keyboard.append(
-            [{"text": "◈ کانال پرشین", "callback_data": "channel_missing"}]
-        )
     return {"inline_keyboard": keyboard}
 
 
-def manage_menu_markup():
-    return {
-        "inline_keyboard": [
-            [{"text": "🔐 ورود اکانت", "callback_data": "login"}],
-            [
-                {"text": "● روشن کردن سلف", "callback_data": "enable"},
-                {"text": "○ خاموش کردن سلف", "callback_data": "disable"},
-            ],
-            [{"text": "📊 وضعیت سلف", "callback_data": "status"}],
-            [{"text": "‹ بازگشت", "callback_data": "home"}],
-        ]
-    }
+def manage_menu_markup(connected: bool = False, enabled: bool = False):
+    keyboard = []
+    if connected:
+        keyboard.append([
+            {
+                "text": "○ خاموش کردن سلف" if enabled else "● روشن کردن سلف",
+                "callback_data": "disable" if enabled else "enable",
+            }
+        ])
+        keyboard.append([
+            {"text": "↻ وضعیت سلف", "callback_data": "status"},
+            {"text": "◌ خروج اکانت", "callback_data": "disconnect"},
+        ])
+    else:
+        keyboard.append([{"text": "🔐 ورود اکانت", "callback_data": "login"}])
+        keyboard.append([{"text": "↻ وضعیت سلف", "callback_data": "status"}])
+
+    keyboard.append([{"text": "‹ بازگشت", "callback_data": "home"}])
+    return {"inline_keyboard": keyboard}
+
+
+async def user_manage_markup(user_id: int):
+    row = await db_user(str(user_id))
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    return manage_menu_markup(connected, enabled)
 
 
 async def bot_api(method: str, payload: dict | None = None, timeout: int = 35):
@@ -1070,6 +1084,43 @@ def mini_main_text(user_first_name: str | None):
 """
 
 
+def trial_remaining_text(row) -> str:
+    if not row:
+        return "نامشخص"
+    expires_at = row["trial_expires_at"]
+    remaining = expires_at - datetime.now(expires_at.tzinfo)
+    total_minutes = max(0, int(remaining.total_seconds() // 60))
+    if total_minutes <= 0:
+        return "پایان‌یافته"
+    hours, minutes = divmod(total_minutes, 60)
+    if hours:
+        return f"{hours} ساعت و {minutes} دقیقه"
+    return f"{minutes} دقیقه"
+
+
+async def mini_main_text(user_id: int, user_first_name: str | None):
+    name = html.escape(user_first_name or "کاربر")
+    row = await db_user(str(user_id))
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    balance = int(row["tron_balance"]) if row else 0
+    trial_left = trial_remaining_text(row)
+
+    return f"""
+<b>◈ SALF1</b>
+<b>سیستم مدیریت و کنترل اکانت تلگرام</b>
+
+سلام <b>{name}</b>.
+از همین مینی‌بات، اکانت خودت را متصل کن و سرویس SALF1 را مدیریت کن.
+
+⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
+⛂ تست رایگان : <b>{trial_left}</b>
+⛂ موجودی : <b>{balance:,} جم ترون</b>
+⛂ مصرف فعال : 1 جم ترون / دقیقه
+"""
+
+
 async def mini_manage_text(user_id: int):
     row = await db_user(str(user_id))
     connected = bool(row["account_connected"]) if row else False
@@ -1105,12 +1156,12 @@ async def referral_text(user_id: int):
     text = f"""
 <b>◈ الماس رایگان</b>
 
-دوستانت را به SALF1 دعوت کن و برای هر رفرال معتبر <b>{REFERRAL_REWARD} جم ترون</b> بگیر.
+دوستانت را به SALF1 دعوت کن و برای هر رفرال معتبر <b>{REFERRAL_REWARD:,} جم ترون</b> بگیر.
 
 <b>لینک دعوت اختصاصی شما</b>
 <code>{html.escape(invite)}</code>
 
-⛂ پاداش هر رفرال : <b>{REFERRAL_REWARD} جم ترون</b>
+⛂ پاداش هر رفرال : <b>{REFERRAL_REWARD:,} جم ترون</b>
 ⛂ تعداد رفرال معتبر شما : <b>{summary["count"]}</b>
 ⛂ موجودی فعلی شما : <b>{summary["balance"]:,} جم ترون</b>
 
@@ -1154,7 +1205,7 @@ async def process_bot_message(message: dict):
 
         await ensure_bot_user(user_id, username, first_name, referrer)
         bot_states.pop(user_id, None)
-        await bot_send(chat["id"], mini_main_text(first_name), main_menu_markup())
+        await bot_send(chat["id"], await mini_main_text(user_id, first_name), main_menu_markup())
         return
 
     await ensure_bot_user(user_id, username, first_name)
@@ -1201,7 +1252,7 @@ async def process_bot_message(message: dict):
                 "● اکانت با موفقیت متصل شد.\
 \
 اکنون از «مدیریت سلف» می‌توانید سرویس را روشن کنید.",
-                manage_menu_markup(),
+                await user_manage_markup(user_id),
             )
         except Exception as exc:
             await bot_send(chat["id"], f"⛂ ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
@@ -1219,13 +1270,18 @@ async def process_bot_message(message: dict):
                 "● اکانت با موفقیت متصل شد.\
 \
 اکنون می‌توانید سالف را روشن کنید.",
-                manage_menu_markup(),
+                await user_manage_markup(user_id),
             )
         except Exception as exc:
             await bot_send(chat["id"], f"⛂ ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
         return
 
     normalized = normalize_text(text)
+    if normalized in {"لغو", "cancel", "انصراف"}:
+        bot_states.pop(user_id, None)
+        await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
+        return
+
     if normalized in {"مدیریت سلف", "مدیریت", "salf", "self", "panel", "پنل"}:
         await bot_send(chat["id"], await mini_manage_text(user_id), manage_menu_markup())
         return
@@ -1233,6 +1289,14 @@ async def process_bot_message(message: dict):
     if normalized in {"الماس رایگان", "الماس", "رفرال", "referral"}:
         referral_message, markup = await referral_text(user_id)
         await bot_send(chat["id"], referral_message, markup)
+        return
+
+    if normalized in {"راهنما", "help"}:
+        await bot_send(
+            chat["id"],
+            "<b>◈ راهنمای سریع SALF1</b>\\n\\n⛂ مدیریت سلف\\n⛂ الماس رایگان\\n⛂ پنل\\n⛂ موجودی\\n⛂ وضعیت سلف\\n⛂ لغو",
+            main_menu_markup(),
+        )
         return
 
 
@@ -1254,7 +1318,7 @@ async def process_callback(callback_query: dict):
         await bot_edit(
             chat_id,
             message_id,
-            mini_main_text(from_user.get("first_name")),
+            await mini_main_text(user_id, from_user.get("first_name")),
             main_menu_markup(),
         )
         return
@@ -1273,7 +1337,17 @@ async def process_callback(callback_query: dict):
 شماره تلفن اکانت تلگرام را با فرمت بین‌المللی ارسال کنید.\
 \
 مثال : <code>+98912...</code>",
-            manage_menu_markup(),
+            {"inline_keyboard": [[{"text": "‹ لغو ورود", "callback_data": "cancel_login"}], [{"text": "‹ بازگشت", "callback_data": "manage"}]]},
+        )
+        return
+
+    if data == "cancel_login":
+        bot_states.pop(user_id, None)
+        await bot_edit(
+            chat_id,
+            message_id,
+            await mini_manage_text(user_id),
+            await user_manage_markup(user_id),
         )
         return
 
@@ -1296,7 +1370,7 @@ async def process_callback(callback_query: dict):
 ⛂ تست 24 ساعته : {"● فعال" if trial_active else "○ پایان‌یافته"}
 ⛂ موجودی : <b>{balance:,} جم ترون</b>
 """,
-            manage_menu_markup(),
+            await user_manage_markup(user_id),
         )
         return
 
@@ -1307,7 +1381,7 @@ async def process_callback(callback_query: dict):
                 chat_id,
                 message_id,
                 "⛂ ابتدا اکانت خود را وارد کنید.",
-                manage_menu_markup(),
+                await user_manage_markup(user_id),
             )
             return
 
@@ -1319,7 +1393,7 @@ async def process_callback(callback_query: dict):
                 "○ <b>SALF1 خاموش شد.</b>\
 \
 تمام اجرای خودکار سرویس برای این اکانت متوقف شد.",
-                manage_menu_markup(),
+                await user_manage_markup(user_id),
             )
             return
 
@@ -1337,7 +1411,7 @@ async def process_callback(callback_query: dict):
                 "⛂ اعتبار کافی نیست.\
 \
 الماس رایگان را باز کنید و از رفرال‌ها جم ترون بگیرید.",
-                manage_menu_markup(),
+                await user_manage_markup(user_id),
             )
             return
 
@@ -1348,7 +1422,38 @@ async def process_callback(callback_query: dict):
             "● <b>SALF1 روشن شد.</b>\
 \
 سرویس فعال است و مصرف از اعتبار/تست اعمال می‌شود.",
-            manage_menu_markup(),
+            await user_manage_markup(user_id),
+        )
+        return
+
+    if data == "disconnect":
+        client = clients.get(str(user_id))
+        if client:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            clients.pop(str(user_id), None)
+
+        me_cache.pop(str(user_id), None)
+        enabled_cache[str(user_id)] = False
+        pending_phones.pop(str(user_id), None)
+        pending_codes.pop(str(user_id), None)
+        await update_account_state(str(user_id), False)
+        await set_salf_enabled(str(user_id), False)
+
+        try:
+            session_file = Path(session_path(str(user_id)) + ".session")
+            if session_file.exists():
+                session_file.unlink()
+        except OSError as exc:
+            print(f"Session cleanup warning: {exc}")
+
+        await bot_edit(
+            chat_id,
+            message_id,
+            "○ <b>اکانت از SALF1 خارج شد.\\n\\nبرای اتصال دوباره، ورود اکانت را انتخاب کنید.</b>",
+            await user_manage_markup(user_id),
         )
         return
 
