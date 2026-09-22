@@ -1841,7 +1841,7 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 <label>شماره تلفن</label>
 <form id="phoneForm">
 <input id="phone" placeholder="+98912..." autocomplete="tel" inputmode="tel" required>
-<button id="startBtn" type="submit">ارسال کد ورود</button>
+<button id="startBtn" type="button" onclick="startLogin(); return false;">ارسال کد ورود</button>
 </form>
 </section>
 
@@ -1884,8 +1884,12 @@ function msg(t,c=''){notice.textContent=t;notice.className='notice '+c}
 function showPhone(){phoneStep.classList.remove('hidden');codeStep.classList.add('hidden');passStep.classList.add('hidden');msg('شماره را وارد کنید تا یک کد جدید ارسال شود.')}
 async function api(path,body){
   if(!token) throw new Error('لینک ورود نامعتبر یا ناقص است. از داخل بات یک پنل ورود جدید باز کنید.');
-  const r=await fetch(path,{
+  const sep=path.includes('?')?'&':'?';
+  const url=path+sep+'token='+encodeURIComponent(token);
+  const r=await fetch(url,{
     method:'POST',
+    cache:'no-store',
+    credentials:'same-origin',
     headers:{'Content-Type':'application/json','X-Login-Token':token},
     body:JSON.stringify(body)
   });
@@ -1936,6 +1940,9 @@ async function verifyPassword(){
   }catch(e){msg(e.message,'err')}
   finally{setBusy(passwordBtn,false)}
 }
+window.startLogin=startLogin;
+window.verifyCode=verifyCode;
+window.verifyPassword=verifyPassword;
 function setBusy(button,busy){
   if(!button) return;
   button.disabled=busy;
@@ -1964,7 +1971,10 @@ async def login_page(request: web.Request):
 
 
 def web_token_from_request(request: web.Request) -> str:
-    return request.headers.get("X-Login-Token", "").strip()
+    header_token = request.headers.get("X-Login-Token", "").strip()
+    if header_token:
+        return header_token
+    return request.query.get("token", "").strip()
 
 
 async def web_login_start(request: web.Request):
