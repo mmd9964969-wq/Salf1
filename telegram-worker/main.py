@@ -1677,11 +1677,43 @@ def main_menu_markup():
     }
 
 def support_markup():
-    rows = []
-    if CREATOR_USERNAME:
-        rows.append([{"text": "› ارتباط با پشتیبانی", "url": f"https://t.me/{CREATOR_USERNAME}"}])
-    rows.append([{"text": "‹ بازگشت", "callback_data": "home"}])
-    return {"inline_keyboard": rows}
+    return {
+        "inline_keyboard": [
+            [{"text": "‹ پشتیبانی عمومی", "callback_data": "support_cat:general"}],
+            [{"text": "‹ مشکل اتصال اکانت", "callback_data": "support_cat:account"}],
+            [{"text": "‹ مشکل سلف", "callback_data": "support_cat:self"}],
+            [{"text": "‹ پرداخت و خرید جم", "callback_data": "support_cat:payment"}],
+            [{"text": "‹ گزارش خطا", "callback_data": "support_cat:bug"}],
+            [{"text": "‹ بازگشت", "callback_data": "home"}],
+        ]
+    }
+
+SUPPORT_CATEGORIES = {
+    "general": "پشتیبانی عمومی",
+    "account": "مشکل اتصال اکانت",
+    "self": "مشکل سلف",
+    "payment": "پرداخت و خرید جم",
+    "bug": "گزارش خطا",
+}
+
+def support_back_markup():
+    return {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "support"}]]}
+
+def support_reply_markup(request_id: int, user_id: int):
+    return {"inline_keyboard": [
+        [{"text": "‹ پاسخ به درخواست", "callback_data": f"support_reply:{request_id}"}],
+        [{"text": "‹ مشاهده کاربر", "url": f"tg://user?id={user_id}"}],
+        [{"text": "‹ بستن درخواست", "callback_data": f"support_close:{request_id}"}],
+    ]}
+
+def support_inbox_markup(rows):
+    keyboard = []
+    for row in rows:
+        rid = int(row["id"])
+        title = SUPPORT_CATEGORIES.get(str(row["category"]), "پشتیبانی")
+        keyboard.append([{"text": f"‹ #{rid} · {title}", "callback_data": f"support_view:{rid}"}])
+    keyboard.append([{"text": "‹ بازگشت", "callback_data": "admin_back"}])
+    return {"inline_keyboard": keyboard}
 
 def channel_markup():
     rows = []
@@ -2171,6 +2203,7 @@ async def admin_credit_balance(admin_user_id: int, target_user_id: int, amount: 
 
 def admin_panel_markup():
     return {"inline_keyboard": [
+        [{"text": "› درخواست‌های پشتیبانی", "callback_data": "admin_support"}],
         [{"text": "› شارژ جم", "callback_data": "admin_charge"}],
         [{"text": "› بررسی موجودی", "callback_data": "admin_balance"}],
         [{"text": "‹ بستن پنل", "callback_data": "admin_close"}],
@@ -2218,6 +2251,139 @@ def parse_admin_charge(text: str):
     return target_id, amount
 
 
+
+async def init_support_tables():
+    if db_pool is None:
+        return
+    await db_pool.execute("""
+        create table if not exists salf1_support_requests (
+            id bigserial primary key,
+            user_id bigint not null,
+            username text,
+            first_name text,
+            category text not null,
+            message text not null,
+            status text not null default 'pending' check (status in ('pending','answered','closed')),
+            admin_user_id bigint,
+            created_at timestamptz not null default now(),
+            answered_at timestamptz
+        )
+    """)
+    await db_pool.execute("""
+        create index if not exists idx_salf1_support_status
+        on salf1_support_requests (status, created_at desc)
+    """)
+
+async def create_support_request(user_id: int, username: str | None, first_name: str, category: str, message: str):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    await init_support_tables()
+    return await db_pool.fetchrow(
+        """insert into salf1_support_requests
+           (user_id, username, first_name, category, message)
+           values ($1,$2,$3,$4,$5)
+           returning *""",
+        user_id,
+        username,
+        first_name,
+        category,
+        message,
+    )
+
+async def get_support_request(request_id: int):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        "select * from salf1_support_requests where id=$1",
+        request_id,
+    )
+
+async def close_support_request(request_id: int, admin_user_id: int):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        """update salf1_support_requests
+           set status='closed', admin_user_id=$2
+           where id=$1 and status <> 'closed'
+           returning *""",
+        request_id,
+        admin_user_id,
+    )
+
+async def answer_support_request(request_id: int, admin_user_id: int, reply_text: str):
+    if db_pool is None:
+        return None
+    row = await db_pool.fetchrow(
+        """update salf1_support_requests
+           set status='answered', admin_user_id=$2, answered_at=now()
+           where id=$1 and status <> 'closed'
+           returning *""",
+        request_id,
+        admin_user_id,
+    )
+    if not row:
+        return None
+    sent = await bot_send(
+        int(row["user_id"]),
+        f"""<b>◈ Sᴀʟғ1 · پشتیبانی</b>
+
+⛂ - درخواست : #{int(row["id"])}
+⛂ - موضوع : {html.escape(SUPPORT_CATEGORIES.get(str(row["category"]), "پشتیبانی"))}
+
+پاسخ پشتیبانی:
+
+{html.escape(reply_text)}""",
+        support_markup(),
+    )
+    if not sent or not sent.get("ok"):
+        await db_pool.execute(
+            "update salf1_support_requests set status='pending' where id=$1",
+            request_id,
+        )
+        return None
+    return row
+
+async def support_request_text(row):
+    username = str(row["username"] or "").strip()
+    user_label = f"@{username.lstrip('@')}" if username else "بدون نام کاربری"
+    return f"""<b>◈ Sᴀʟғ1 · Sᴜᴘᴘᴏʀᴛ Rᴇǫᴜᴇsᴛ</b>
+
+⛂ - درخواست : <code>#{int(row["id"])}</code>
+⛂ - کاربر : {html.escape(user_label)}
+⛂ - شناسه : <code>{int(row["user_id"])}</code>
+⛂ - نام : {html.escape(str(row["first_name"] or "کاربر"))}
+⛂ - موضوع : <b>{html.escape(SUPPORT_CATEGORIES.get(str(row["category"]), "پشتیبانی"))}</b>
+⛂ - وضعیت : <b>{html.escape(str(row["status"]))}</b>
+
+─────━━───── ◈ ─────━━─────
+
+<b>متن درخواست</b>
+
+{html.escape(str(row["message"]))}"""
+
+async def support_inbox_text():
+    if db_pool is None:
+        return "<b>◈ Sᴀʟғ1 · Sᴜᴘᴘᴏʀᴛ</b>\n\n⛂ دیتابیس در دسترس نیست."
+    await init_support_tables()
+    rows = await db_pool.fetch(
+        """select * from salf1_support_requests
+           where status='pending'
+           order by created_at desc
+           limit 10"""
+    )
+    if not rows:
+        return """<b>◈ Sᴀʟғ1 · Sᴜᴘᴘᴏʀᴛ</b>
+
+⛂ درخواست جدیدی در انتظار بررسی نیست.
+
+─────━━───── ◈ ─────━━─────
+
+همه درخواست‌ها بررسی شده‌اند."""
+    return f"""<b>◈ Sᴀʟғ1 · Sᴜᴘᴘᴏʀᴛ</b>
+
+⛂ درخواست‌های در انتظار : <b>{len(rows)}</b>
+
+درخواست موردنظر را انتخاب کنید."""
 
 async def handle_payment_receipt_message(message: dict, user_id: int, chat_id: int) -> bool:
     state = bot_states.get(user_id)
@@ -2289,6 +2455,87 @@ async def process_bot_message(message: dict):
     text = str(message.get("text") or "").strip()
 
     state = bot_states.get(user_id)
+
+    if isinstance(state, dict) and state.get("state") == "support_request":
+        if not text:
+            await bot_send(chat["id"], "⛂ متن درخواست را ارسال کنید.")
+            return
+        category = str(state.get("category") or "general")
+        try:
+            row = await create_support_request(
+                user_id,
+                username,
+                first_name,
+                category,
+                text[:4000],
+            )
+        except Exception as exc:
+            print(f"Support request create failed: {type(exc).__name__}: {exc}")
+            bot_states.pop(user_id, None)
+            await bot_send(chat["id"], "⛂ ثبت درخواست انجام نشد. لطفاً دوباره تلاش کنید.", support_markup())
+            return
+
+        bot_states.pop(user_id, None)
+        admin_chat = "@" + CREATOR_USERNAME if CREATOR_USERNAME else ""
+        admin_markup = support_reply_markup(int(row["id"]), user_id)
+        admin_text = await support_request_text(row)
+        sent = await bot_send(admin_chat, admin_text, admin_markup) if admin_chat else None
+
+        if sent and sent.get("ok"):
+            await bot_send(
+                chat["id"],
+                f"""<b>◈ درخواست ثبت شد</b>
+
+⛂ - شماره درخواست : <code>#{int(row["id"])}</code>
+⛂ - موضوع : <b>{html.escape(SUPPORT_CATEGORIES.get(category, "پشتیبانی"))}</b>
+⛂ - وضعیت : در انتظار بررسی
+
+درخواست شما برای مدیریت ارسال شد.
+پس از پاسخ پشتیبانی نتیجه در همین‌جا برای شما ارسال می‌شود.""",
+                support_markup(),
+            )
+        else:
+            await bot_send(
+                chat["id"],
+                f"""<b>◈ درخواست ثبت شد</b>
+
+⛂ - شماره درخواست : <code>#{int(row["id"])}</code>
+⛂ - وضعیت : ثبت شده
+
+درخواست ذخیره شد اما ارسال مستقیم به مدیریت انجام نشد.
+درخواست از پنل مدیریت قابل مشاهده است.""",
+                support_markup(),
+            )
+        return
+
+    if isinstance(state, dict) and state.get("state") == "support_admin_reply":
+        if not await is_admin_user(user_id, username):
+            bot_states.pop(user_id, None)
+            return
+        reply_text = text[:4000]
+        if not reply_text:
+            await bot_send(chat["id"], "⛂ متن پاسخ را ارسال کنید.")
+            return
+        try:
+            request_id = int(state.get("request_id"))
+        except (TypeError, ValueError):
+            bot_states.pop(user_id, None)
+            return
+        answered = await answer_support_request(request_id, user_id, reply_text)
+        bot_states.pop(user_id, None)
+        if not answered:
+            await bot_send(chat["id"], "⛂ پاسخ ارسال نشد. درخواست بسته شده یا کاربر قابل دسترسی نیست.", admin_panel_markup())
+            return
+        await bot_send(
+            chat["id"],
+            f"""<b>✓ پاسخ ارسال شد</b>
+
+⛂ - درخواست : <code>#{request_id}</code>
+⛂ - وضعیت : پاسخ داده شد""",
+            admin_panel_markup(),
+        )
+        return
+
     if isinstance(state, dict) and state.get("state") == "payment_receipt":
         photos = message.get("photo") or []
         if not photos:
@@ -2397,7 +2644,10 @@ async def process_bot_message(message: dict):
         return
 
     if normalized in {"لغو", "cancel", "انصراف"}:
-        bot_states.pop(user_id, None)
+        state = bot_states.pop(user_id, None)
+        if isinstance(state, dict) and state.get("state") in {"support_request", "support_admin_reply"}:
+            await bot_send(chat["id"], "⛂ درخواست لغو شد.", support_markup() if state.get("state") == "support_request" else admin_panel_markup())
+            return
         await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
         return
 
@@ -3229,14 +3479,128 @@ async def process_callback(callback_query: dict):
 
     if data == "support":
         support_text = """
-<b>◈ پشتیبانی</b>
+<b>◈ Sᴀʟғ1 · Sᴜᴘᴘᴏʀᴛ</b>
 
-⛂ - برای ارتباط با پشتیبانی سلف از طریق دکمه زیر اقدام کنید.
+مرکز پشتیبانی سالف
 
-⌁ پاسخ‌گویی و پیگیری درخواست‌ها از همین مسیر انجام می‌شود.
+⛂ - پاسخ‌گویی به مشکلات سرویس
+⛂ - پیگیری پرداخت و خرید جم
+⛂ - مشکلات اتصال اکانت
+⛂ - گزارش خطا و اختلال
+
+─────━━───── ◈ ─────━━─────
+
+موضوع درخواست خود را انتخاب کنید.
+پس از انتخاب موضوع متن درخواست را ارسال کنید.
+درخواست شما مستقیماً برای پنل مدیریت ارسال می‌شود.
 """
         await bot_edit(chat_id, message_id, support_text, support_markup())
         return
+
+    if data.startswith("support_cat:"):
+        category = data.split(":", 1)[1].strip()
+        if category not in SUPPORT_CATEGORIES:
+            return
+        bot_states[user_id] = {"state": "support_request", "category": category}
+        await bot_edit(
+            chat_id,
+            message_id,
+            f"""<b>◈ Sᴀʟғ1 · Sᴜᴘᴘᴏʀᴛ</b>
+
+⛂ - موضوع : <b>{html.escape(SUPPORT_CATEGORIES[category])}</b>
+
+متن درخواست خود را در یک پیام ارسال کنید.
+
+★ اطلاعات لازم را در همان پیام بنویسید.
+★ برای لغو درخواست از «لغو» استفاده کنید.""",
+            support_back_markup(),
+        )
+        return
+
+    if data == "admin_support":
+        if not await is_admin_user(user_id, from_user.get("username")):
+            await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
+            return
+        await bot_edit(chat_id, message_id, await support_inbox_text(), support_inbox_markup(
+            await db_pool.fetch(
+                "select * from salf1_support_requests where status='pending' order by created_at desc limit 10"
+            ) if db_pool is not None else []
+        ))
+        return
+
+    if data == "admin_back":
+        if not await is_admin_user(user_id, from_user.get("username")):
+            await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
+            return
+        await bot_edit(chat_id, message_id, await admin_panel_text(), admin_panel_markup())
+        return
+
+    if data.startswith("support_view:"):
+        if not await is_admin_user(user_id, from_user.get("username")):
+            await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
+            return
+        try:
+            request_id = int(data.split(":", 1)[1])
+        except ValueError:
+            return
+        row = await get_support_request(request_id)
+        if not row:
+            await bot_edit(chat_id, message_id, "⛂ درخواست پیدا نشد.", admin_panel_markup())
+            return
+        await bot_edit(chat_id, message_id, await support_request_text(row), support_reply_markup(request_id, int(row["user_id"])))
+        return
+
+    if data.startswith("support_reply:"):
+        if not await is_admin_user(user_id, from_user.get("username")):
+            await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
+            return
+        try:
+            request_id = int(data.split(":", 1)[1])
+        except ValueError:
+            return
+        row = await get_support_request(request_id)
+        if not row or str(row["status"]) == "closed":
+            await bot_edit(chat_id, message_id, "⛂ این درخواست بسته شده است.", admin_panel_markup())
+            return
+        bot_states[user_id] = {"state": "support_admin_reply", "request_id": request_id}
+        await bot_edit(
+            chat_id,
+            message_id,
+            f"""<b>◈ پاسخ به درخواست #{request_id}</b>
+
+متن پاسخ را ارسال کنید.
+پیام شما برای کاربر ارسال می‌شود.
+
+★ برای لغو از «لغو» استفاده کنید.""",
+            {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": f"support_view:{request_id}"}]]},
+        )
+        return
+
+    if data.startswith("support_close:"):
+        if not await is_admin_user(user_id, from_user.get("username")):
+            await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
+            return
+        try:
+            request_id = int(data.split(":", 1)[1])
+        except ValueError:
+            return
+        closed = await close_support_request(request_id, user_id)
+        if not closed:
+            await bot_edit(chat_id, message_id, "⛂ درخواست پیدا نشد یا قبلاً بسته شده است.", admin_panel_markup())
+            return
+        await bot_send(
+            int(closed["user_id"]),
+            f"""<b>◈ Sᴀʟғ1 · پشتیبانی</b>
+
+⛂ - درخواست : #{request_id}
+⛂ - وضعیت : بسته شد
+
+درخواست شما توسط پشتیبانی بسته شد.""",
+            main_menu_markup(),
+        )
+        await bot_edit(chat_id, message_id, "✓ درخواست بسته شد.", admin_panel_markup())
+        return
+
 
     if data == "channel":
         channel_text = """
@@ -3313,6 +3677,7 @@ async def main():
             print("Salf1 worker database connected.")
             await init_web_login_tokens_table()
             await ensure_admin_ledger_table()
+            await init_support_tables()
             print("Salf1 web login token store ready.")
         except Exception as exc:
             print(f"WARNING: database connection failed: {exc}")
