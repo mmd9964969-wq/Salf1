@@ -4,6 +4,7 @@ import { GROK_PROVIDERS } from "@/lib/auth/providers";
 import { signIn } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { useSelfStore } from "@/lib/store";
+import "@/styles/persian-bot-auth.css";
 
 export function Onboarding() {
   const { user, isPending } = useCurrentUserState();
@@ -13,14 +14,20 @@ export function Onboarding() {
 
   if (isPending) {
     return (
-      <div className="salf-auth-page salf-auth-loading" dir="rtl">
-        <div className="salf-auth-aura" aria-hidden />
-        <div className="salf-auth-loading-card">
-          <div className="salf-auth-emblem" aria-hidden><span>S</span><i /></div>
-          <p className="salf-auth-mono">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF</p>
-          <h1>در حال بررسی نشست امن</h1>
-          <div className="salf-auth-progress"><span /></div>
-          <p>در حال تأیید وضعیت ورود شما…</p>
+      <div className="pb-auth" dir="rtl">
+        <div className="pb-auth__loading">
+          <div className="pb-auth__loading-card">
+            <div className="pb-auth__loading-mark" aria-hidden>
+              <span>P</span>
+              <i />
+            </div>
+            <p className="pb-auth__loading-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SECURE ACCESS</p>
+            <h1 className="pb-auth__loading-title">در حال بررسی نشست امن</h1>
+            <div className="pb-auth__progress" aria-hidden>
+              <span />
+            </div>
+            <p className="pb-auth__loading-copy">در حال تأیید وضعیت ورود شما…</p>
+          </div>
         </div>
       </div>
     );
@@ -29,6 +36,7 @@ export function Onboarding() {
   async function handleSignIn(providerId: string) {
     setBusy(providerId);
     setError("");
+
     try {
       await signIn(providerId, { callbackURL: "/" });
     } catch (err) {
@@ -39,6 +47,7 @@ export function Onboarding() {
 
   function enterWorkspace() {
     if (!user) return;
+
     complete(
       user.displayName || "کاربر سلف",
       user.primaryEmail?.split("@")[0] || "salf1_user",
@@ -48,125 +57,217 @@ export function Onboarding() {
 
   if (user) {
     return (
-      <div className="salf-auth-page" dir="rtl">
-        <div className="salf-auth-aura" aria-hidden />
-        <div className="salf-auth-grid" aria-hidden />
-        <main className="salf-auth-layout salf-auth-layout-confirmed">
-          <section className="salf-auth-brand">
-            <div className="salf-auth-wordmark"><span>SALF</span><b>1</b></div>
-            <p className="salf-auth-brandline">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SECURE SELF MANAGEMENT</p>
-            <div className="salf-auth-rule" />
-            <p className="salf-auth-caption">
-              محیط مدیریت اختصاصی سرویس سلف.
-              هویت شما تأیید شده و نشست امن برقرار است.
+      <div className="pb-auth" dir="rtl">
+        <header className="pb-auth__top">
+          <div className="pb-auth__brand">
+            <div className="pb-auth__mark" aria-hidden>
+              <span>P</span>
+            </div>
+            <div className="pb-auth__brand-copy">
+              <strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong>
+              <small>پنل مدیریت سلف · PRIVATE CONTROL SURFACE</small>
+            </div>
+          </div>
+
+          <div className="pb-auth__secure">
+            <i />
+            <span>SESSION VERIFIED</span>
+          </div>
+        </header>
+
+        <main className="pb-auth__body">
+          <section className="pb-auth__intro">
+            <p className="pb-auth__intro-kicker">IDENTITY CONFIRMED · PRIVATE ENVIRONMENT</p>
+            <h1 className="pb-auth__title">
+              خوش آمدید به
+              <br />
+              <em>پنل مدیریت سلف.</em>
+            </h1>
+            <p className="pb-auth__lede">
+              هویت حساب شما تأیید شده است. سطح دسترسی پس از ورود توسط سیستم تعیین می‌شود
+              و این صفحه هیچ نقش یا دسترسی‌ای را از کاربر دریافت نمی‌کند.
             </p>
+            <div className="pb-auth__signature">CRAFTED BY JAWATI · @JOWATI</div>
+
+            <div className="pb-auth__features">
+              <div className="pb-auth__feature">
+                <strong>هویت</strong>
+                <span>تشخیص حساب پیش از ورود به محیط اصلی</span>
+              </div>
+              <div className="pb-auth__feature">
+                <strong>دسترسی</strong>
+                <span>تعیین سطح دسترسی توسط سیستم</span>
+              </div>
+              <div className="pb-auth__feature">
+                <strong>نشست</strong>
+                <span>ورود در محیط محافظت‌شده و اختصاصی</span>
+              </div>
+            </div>
           </section>
 
-          <section className="salf-auth-card salf-auth-card-confirmed">
-            <div className="salf-auth-card-top">
-              <span className="salf-auth-status"><span /> VERIFIED</span>
-              <ShieldCheck className="size-5" />
+          <section className="pb-auth__card">
+            <div className="pb-auth__card-head">
+              <span className="pb-auth__eyebrow">ACCESS · 01 / 01</span>
+              <span className="pb-auth__status">
+                <i />
+                VERIFIED
+              </span>
             </div>
-            <p className="salf-auth-eyebrow">IDENTITY VERIFIED</p>
-            <h1>هویت شما تأیید شد</h1>
-            <p className="salf-auth-description">
-              پنل مدیریت سلف حساب شما را شناسایی کرد. سطح دسترسی بعد از ورود توسط سیستم تعیین می‌شود.
+
+            <h2 className="pb-auth__card-title">هویت شما تأیید شد</h2>
+            <p className="pb-auth__card-desc">
+              حساب شما شناسایی شده و می‌توانید وارد محیط مدیریت سلف شوید.
             </p>
 
-            <div className="salf-auth-identity">
-              <div className="salf-auth-avatar">
-                {user.displayName?.slice(0, 1).toUpperCase() || "S"}
+            <div className="pb-auth__identity">
+              <div className="pb-auth__avatar">
+                {user.displayName?.slice(0, 1).toUpperCase() || "P"}
               </div>
-              <div>
+              <div className="pb-auth__identity-main">
                 <strong>{user.displayName || "کاربر سلف"}</strong>
                 <span dir="ltr">{user.primaryEmail || "حساب تأییدشده"}</span>
               </div>
-              <Check className="salf-auth-check size-4" />
+              <Check className="size-4" style={{ color: "var(--pb-green)" }} />
             </div>
 
-            <button type="button" onClick={enterWorkspace} className="salf-auth-primary">
+            <button type="button" onClick={enterWorkspace} className="pb-auth__enter">
               ورود به پنل مدیریت سلف
               <ArrowUpLeft className="size-4" />
             </button>
 
-            <div className="salf-auth-security">
+            <div className="pb-auth__divider">
+              <span>SECURITY LAYER</span>
+            </div>
+
+            <div className="pb-auth__footnote">
               <LockKeyhole className="size-3.5" />
-              <span>نشست امن · تشخیص خودکار دسترسی</span>
+              <span>سطح دسترسی بعد از احراز هویت و در سمت سرور تعیین خواهد شد.</span>
             </div>
           </section>
         </main>
-        <footer className="salf-auth-footer">Pᴇʀsɪᴀɴ ᴮᵒᵗ · پنل مدیریت سلف · Crafted by Jawati · @Jowati</footer>
+
+        <footer className="pb-auth__footer">
+          <span>Pᴇʀsɪᴀɴ ᴮᵒᵗ</span>
+          <span>پنل مدیریت سلف</span>
+          <span>Jawati</span>
+        </footer>
       </div>
     );
   }
 
   return (
-    <div className="salf-auth-page" dir="rtl">
-      <div className="salf-auth-aura" aria-hidden />
-      <div className="salf-auth-grid" aria-hidden />
-      <main className="salf-auth-layout">
-        <section className="salf-auth-brand">
-          <div className="salf-auth-wordmark"><span>SALF</span><b>1</b></div>
-          <p className="salf-auth-brandline">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SECURE SELF MANAGEMENT</p>
-          <div className="salf-auth-rule" />
-          <p className="salf-auth-caption">
-            مرکز مدیریت اختصاصی سلف Pᴇʀsɪᴀɴ ᴮᵒᵗ.
-            یک محیط آرام، کنترل‌شده و امن برای مدیریت حساب و سرویس.
+    <div className="pb-auth" dir="rtl">
+      <header className="pb-auth__top">
+        <div className="pb-auth__brand">
+          <div className="pb-auth__mark" aria-hidden>
+            <span>P</span>
+          </div>
+          <div className="pb-auth__brand-copy">
+            <strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong>
+            <small>پنل مدیریت سلف · SECURE SELF MANAGEMENT</small>
+          </div>
+        </div>
+
+        <div className="pb-auth__secure">
+          <i />
+          <span>SECURE ENTRY</span>
+        </div>
+      </header>
+
+      <main className="pb-auth__body">
+        <section className="pb-auth__intro">
+          <p className="pb-auth__intro-kicker">PRIVATE SELF MANAGEMENT · 01</p>
+          <h1 className="pb-auth__title">
+            کنترل،
+            <br />
+            <em>با آرامش.</em>
+          </h1>
+          <p className="pb-auth__lede">
+            یک محیط مدیریت خصوصی برای سرویس سلف؛ با ظاهر مینیمال، ساختار دقیق
+            و تجربه‌ای که روی موبایل و دسکتاپ به یک اندازه جدی و منظم باقی می‌ماند.
           </p>
-          <div className="salf-auth-points">
-            <span><ShieldCheck className="size-3.5" /> احراز هویت امن</span>
-            <span><Sparkles className="size-3.5" /> تشخیص خودکار دسترسی</span>
-            <span><LockKeyhole className="size-3.5" /> نشست محافظت‌شده</span>
+          <div className="pb-auth__signature">Pᴇʀsɪᴀɴ ᴮᵒᵗ · JAWATI</div>
+
+          <div className="pb-auth__features">
+            <div className="pb-auth__feature">
+              <strong>احراز هویت</strong>
+              <span>ورود در یک لایه اختصاصی</span>
+            </div>
+            <div className="pb-auth__feature">
+              <strong>دسترسی</strong>
+              <span>تشخیص خودکار سطح حساب</span>
+            </div>
+            <div className="pb-auth__feature">
+              <strong>امنیت</strong>
+              <span>نشست و مسیر ورود محافظت‌شده</span>
+            </div>
           </div>
         </section>
 
-        <section className="salf-auth-card">
-          <div className="salf-auth-card-top">
-            <span className="salf-auth-status"><span /> SECURE</span>
-            <span className="salf-auth-index">01 / 01</span>
+        <section className="pb-auth__card">
+          <div className="pb-auth__card-head">
+            <span className="pb-auth__eyebrow">SECURE ACCESS · 01 / 01</span>
+            <span className="pb-auth__status">
+              <i />
+              READY
+            </span>
           </div>
 
-          <p className="salf-auth-eyebrow">WELCOME TO پنل مدیریت سلف</p>
-          <h1>ورود به پنل مدیریت سلف</h1>
-          <p className="salf-auth-description">
-            برای ادامه هویت خود را تأیید کنید.
-            پنل مدیریت سلف پس از ورود سطح دسترسی حساب را به‌صورت خودکار تشخیص می‌دهد.
+          <h2 className="pb-auth__card-title">ورود به پنل مدیریت سلف</h2>
+          <p className="pb-auth__card-desc">
+            برای ادامه هویت خود را تأیید کنید. نقش و سطح دسترسی شما از طریق سیستم
+            مشخص می‌شود؛ نیازی به انتخاب Owner یا Sudo نیست.
           </p>
 
-          <div className="salf-auth-provider-list">
+          <div className="pb-auth__provider-list">
             {GROK_PROVIDERS.map((provider) => (
               <button
                 key={provider.providerId}
                 type="button"
-                className="salf-auth-provider"
+                className="pb-auth__provider"
                 disabled={busy !== null}
                 onClick={() => handleSignIn(provider.providerId)}
               >
-                <span className="salf-provider-mark">{provider.idp === "google" ? "G" : "X"}</span>
-                <span className="salf-provider-copy">
-                  <strong>{busy === provider.providerId ? "در حال اتصال…" : ("ادامه با " + provider.label)}</strong>
-                  <small>ورود امن و انتقال به پنل مدیریت سلف</small>
+                <span className="pb-auth__provider-mark">
+                  {provider.idp === "google" ? "G" : "X"}
                 </span>
-                <ArrowUpLeft className="size-4" />
+                <span className="pb-auth__provider-copy">
+                  <strong>
+                    {busy === provider.providerId
+                      ? "در حال اتصال…"
+                      : "ادامه با " + provider.label}
+                  </strong>
+                  <small>ورود امن و انتقال به محیط اختصاصی مدیریت</small>
+                </span>
+                <ArrowUpLeft className="pb-auth__provider-arrow size-4" />
               </button>
             ))}
           </div>
 
           {error ? (
-            <div className="salf-auth-error" role="alert">
+            <div className="pb-auth__error" role="alert">
               {error}
             </div>
           ) : null}
 
-          <div className="salf-auth-divider"><span>SECURE ACCESS</span></div>
+          <div className="pb-auth__divider">
+            <span>PRIVATE ACCESS</span>
+          </div>
 
-          <div className="salf-auth-security">
-            <LockKeyhole className="size-3.5" />
-            <span>اطلاعات نقش شما در صفحه ورود نمایش داده نمی‌شود.</span>
+          <div className="pb-auth__footnote">
+            <ShieldCheck className="size-3.5" />
+            <span>
+              سیستم بعد از احراز هویت، حساب و سطح دسترسی مناسب را شناسایی می‌کند.
+            </span>
           </div>
         </section>
       </main>
-      <footer className="salf-auth-footer">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF · PRIVATE SELF MANAGEMENT · JAWATI</footer>
+
+      <footer className="pb-auth__footer">
+        <span>Pᴇʀsɪᴀɴ ᴮᵒᵗ</span>
+        <span>پنل مدیریت سلف</span>
+        <span>Crafted by Jawati · @Jowati</span>
+      </footer>
     </div>
   );
 }
