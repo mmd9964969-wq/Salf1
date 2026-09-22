@@ -42,7 +42,9 @@ TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
 pending_codes: dict[str, str] = {}
+pending_code_hashes: dict[str, str] = {}
 pending_2fa: set[str] = set()
+login_locks: dict[str, asyncio.Lock] = {}
 enabled_cache: dict[str, bool] = {}
 me_cache: dict[str, int] = {}
 bot_states: dict[int, str] = {}
@@ -356,50 +358,75 @@ async def account_status(customer_id: str):
 async def start_customer_login(customer_id: str, phone: str):
     if not configured():
         raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH are not configured")
+
+    # Never issue a second code while one login attempt is already waiting.
+    # Telegram invalidates/consumes the previous code in several concurrent-login cases.
+    if customer_id in pending_phones:
+        if pending_phones[customer_id] == phone:
+            return {"status": "code_already_sent"}
+        pending_phones.pop(customer_id, None)
+        pending_codes.pop(customer_id, None)
+        pending_code_hashes.pop(customer_id, None)
+        pending_2fa.discard(customer_id)
+
     client = client_for(customer_id)
     await client.connect()
-    await client.send_code_request(phone)
+    sent = await client.send_code_request(phone)
     pending_phones[customer_id] = phone
+    pending_code_hashes[customer_id] = str(sent.phone_code_hash)
+    pending_codes.pop(customer_id, None)
+    pending_2fa.discard(customer_id)
+    return {"status": "code_sent"}
 
 
 async def verify_customer_login(customer_id: str, code: str, password: str = ""):
-    phone = pending_phones.get(customer_id)
-    client = clients.get(customer_id)
-    if not client or not phone:
-        raise RuntimeError("start login first")
+    lock = login_locks.setdefault(customer_id, asyncio.Lock())
+    async with lock:
+        phone = pending_phones.get(customer_id)
+        client = clients.get(customer_id)
+        if not client or not phone:
+            raise RuntimeError("start login first")
 
-    try:
-        if customer_id in pending_2fa:
-            if not password:
-                return {"status": "2fa_required"}
-            await client.sign_in(password=password)
-            pending_2fa.discard(customer_id)
-        else:
-            if not code:
-                code = pending_codes.get(customer_id, "")
-            if not code:
-                raise RuntimeError("login code is required")
-            pending_codes[customer_id] = code
-            await client.sign_in(phone, code)
-    except SessionPasswordNeededError:
-        pending_2fa.add(customer_id)
-        return {"status": "2fa_required"}
-    except PasswordHashInvalidError:
-        return {"status": "2fa_invalid"}
-    except PhoneCodeInvalidError:
-        return {"status": "code_invalid"}
-    except PhoneCodeExpiredError:
-        pending_codes.pop(customer_id, None)
-        return {"status": "code_expired"}
-    except PhoneNumberInvalidError:
-        return {"status": "phone_invalid"}
-    except FloodWaitError as exc:
-        return {"status": "flood_wait", "seconds": int(exc.seconds)}
+        try:
+            if customer_id in pending_2fa:
+                if not password:
+                    return {"status": "2fa_required"}
+                await client.sign_in(password=password)
+                pending_2fa.discard(customer_id)
+            else:
+                if not code:
+                    code = pending_codes.get(customer_id, "")
+                if not code:
+                    raise RuntimeError("login code is required")
 
-    me = await client.get_me()
+                code_hash = pending_code_hashes.get(customer_id)
+                if not code_hash:
+                    raise RuntimeError("login code session expired; request a new code")
+
+                pending_codes[customer_id] = code
+                await client.sign_in(phone, code, phone_code_hash=code_hash)
+        except SessionPasswordNeededError:
+            pending_2fa.add(customer_id)
+            return {"status": "2fa_required"}
+        except PasswordHashInvalidError:
+            return {"status": "2fa_invalid"}
+        except PhoneCodeInvalidError:
+            return {"status": "code_invalid"}
+        except PhoneCodeExpiredError:
+            pending_codes.pop(customer_id, None)
+            pending_code_hashes.pop(customer_id, None)
+            return {"status": "code_expired"}
+        except PhoneNumberInvalidError:
+            return {"status": "phone_invalid"}
+        except FloodWaitError as exc:
+            return {"status": "flood_wait", "seconds": int(exc.seconds)}
+
+        me = await client.get_me()
     pending_phones.pop(customer_id, None)
     pending_codes.pop(customer_id, None)
+    pending_code_hashes.pop(customer_id, None)
     pending_2fa.discard(customer_id)
+    login_locks.pop(customer_id, None)
     me_cache[customer_id] = int(me.id)
     await update_account_state(customer_id, True)
     await set_salf_enabled(customer_id, False)
@@ -1324,8 +1351,17 @@ async def process_bot_message(message: dict):
             await bot_send(chat["id"], "⛂ شماره را با فرمت بین‌المللی ارسال کنید؛ مثال: <code>+98912...</code>")
             return
         try:
-            await start_customer_login(str(user_id), phone)
+            result = await start_customer_login(str(user_id), phone)
             bot_states[user_id] = "await_code"
+            if result.get("status") == "code_already_sent":
+                await bot_send(
+                    chat["id"],
+                    """<b>◈ کد ورود قبلاً ارسال شده است</b>
+
+⛂ - همان کد آخرین پیام تلگرام را ارسال کنید.
+⛂ - برای جلوگیری از باطل شدن کد، دوباره شماره را ارسال نکنید."""
+                )
+                return
             await bot_send(
                 chat["id"],
                 """<b>◈ تأیید اکانت</b>
@@ -1606,7 +1642,9 @@ async def process_callback(callback_query: dict):
         enabled_cache[str(user_id)] = False
         pending_phones.pop(str(user_id), None)
         pending_codes.pop(str(user_id), None)
+        pending_code_hashes.pop(str(user_id), None)
         pending_2fa.discard(str(user_id))
+        login_locks.pop(str(user_id), None)
         await update_account_state(str(user_id), False)
         await set_salf_enabled(str(user_id), False)
 
