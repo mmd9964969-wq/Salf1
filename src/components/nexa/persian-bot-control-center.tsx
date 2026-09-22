@@ -41,7 +41,7 @@ export function PersianBotControlCenter(){
   return <div className="pbx-control" dir="rtl">
     <div className="pbx-noise"/>
     <aside className={`pbx-sidebar ${mobileOpen?"is-open":""}`}>
-      <div className="pbx-side-brand"><div className="pbx-pseal">P</div><div><strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong><small>پنل مدیریت سلف</small></div></div>
+      <div className="pbx-side-brand"><div className="pbx-pseal"><span>P</span><i className="pbx-pawline"/></div><div><strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong><small>پنل مدیریت سلف</small></div></div>
       <div className="pbx-side-status"><span/> SYSTEM ONLINE <b>PRIVATE</b></div>
       <div className="pbx-side-label">CONTROL CENTER</div>
       <nav>
@@ -71,7 +71,7 @@ export function PersianBotControlCenter(){
             <div className="pbx-hero-glow"/><div className="pbx-scan-line"/>
             <div className="pbx-hero-copy"><span className="pbx-kicker">SELF ENGINE / RUNTIME</span><h2>اجرای سیستم<br/><em>پایدار و بی‌صدا.</em></h2><p>موتور سلف فعال است و سرویس‌های متصل در حال پردازش هستند.</p><div className="pbx-hero-actions"><button><Zap/> مدیریت سلف <ArrowUpLeft/></button><button className="ghost"><Activity/> مشاهده فعالیت</button></div></div>
             <div className="pbx-core"><div className="pbx-orbit o1"/><div className="pbx-orbit o2"/><div className="pbx-core-ring"><span>P</span><small>01</small></div><div className="pbx-core-status"><i/> ACTIVE</div></div>
-            <div className="pbx-panther-mark">PANTHERA</div>
+            <div className="pbx-panther-mark" aria-label="Panthera identity mark"><div className="panthera-head"><span className="panthera-ear left"/><span className="panthera-ear right"/><span className="panthera-eye left"/><span className="panthera-eye right"/><span className="panthera-nose"/><span className="panthera-jaw"/></div><div className="panthera-word">PANTHERA</div><small>BLACK PANTHER · PRIVATE IDENTITY</small></div>
           </section>
 
           <section className="pbx-stats">
