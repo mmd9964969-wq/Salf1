@@ -22,11 +22,7 @@ function SolarRealm() {
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 900);
     camera.position.set(0, 2.3, 22);
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: false,
-      powerPreference: "high-performance",
-    });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.65));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -38,34 +34,26 @@ function SolarRealm() {
     const world = new THREE.Group();
     scene.add(world);
 
-    // Deep-space star field with multiple depth layers.
     const makeStars = (count: number, radiusMin: number, radiusMax: number, size: number, opacity: number) => {
       const positions = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
         const r = radiusMin + Math.random() * (radiusMax - radiusMin);
         const a = Math.random() * Math.PI * 2;
-        const y = (Math.random() - 0.5) * radiusMax * 0.72;
         positions[i * 3] = Math.cos(a) * r;
-        positions[i * 3 + 1] = y;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * radiusMax * 0.72;
         positions[i * 3 + 2] = Math.sin(a) * r - 70;
       }
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-      const material = new THREE.PointsMaterial({
-        color: "#d6ecf8",
-        size,
-        transparent: true,
-        opacity,
-        depthWrite: false,
-      });
-      return new THREE.Points(geometry, material);
+      return new THREE.Points(geometry, new THREE.PointsMaterial({
+        color: "#d6ecf8", size, transparent: true, opacity, depthWrite: false,
+      }));
     };
 
     const starsFar = makeStars(window.innerWidth < 700 ? 900 : 2100, 70, 320, 0.055, 0.62);
     const starsNear = makeStars(window.innerWidth < 700 ? 280 : 650, 35, 130, 0.09, 0.38);
     world.add(starsFar, starsNear);
 
-    // Soft procedural galaxy disc.
     const galaxyGeometry = new THREE.BufferGeometry();
     const galaxyCount = window.innerWidth < 700 ? 9000 : 18000;
     const galaxyPositions = new Float32Array(galaxyCount * 3);
@@ -86,22 +74,14 @@ function SolarRealm() {
     }
     galaxyGeometry.setAttribute("position", new THREE.BufferAttribute(galaxyPositions, 3));
     galaxyGeometry.setAttribute("color", new THREE.BufferAttribute(galaxyColors, 3));
-    const galaxy = new THREE.Points(
-      galaxyGeometry,
-      new THREE.PointsMaterial({
-        size: 0.075,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.36,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
+    const galaxy = new THREE.Points(galaxyGeometry, new THREE.PointsMaterial({
+      size: 0.075, vertexColors: true, transparent: true, opacity: 0.36,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
     galaxy.rotation.x = 0.42;
     galaxy.position.set(0, -18, -70);
     world.add(galaxy);
 
-    // Cinematic lighting.
     scene.add(new THREE.HemisphereLight("#cfe8f5", "#020305", 0.55));
     const solarLight = new THREE.PointLight("#fff1d0", 70, 150, 2);
     solarLight.position.set(-16, 9, -40);
@@ -117,46 +97,34 @@ function SolarRealm() {
     silverRim.position.set(5, 5, 6);
     world.add(silverRim);
 
-    // Sun with layered glow.
     const solarSystem = new THREE.Group();
     solarSystem.position.set(-11, 4.7, -42);
     world.add(solarSystem);
 
     const sun = new THREE.Mesh(
       new THREE.SphereGeometry(2.45, 64, 48),
-      new THREE.MeshStandardMaterial({
-        color: "#e5a85f",
-        emissive: "#8a4614",
-        emissiveIntensity: 4.8,
-        roughness: 0.72,
-      }),
+      new THREE.MeshStandardMaterial({ color: "#e5a85f", emissive: "#8a4614", emissiveIntensity: 4.8, roughness: 0.72 }),
     );
     solarSystem.add(sun);
 
     for (let i = 0; i < 5; i++) {
-      const glow = new THREE.Mesh(
+      solarSystem.add(new THREE.Mesh(
         new THREE.SphereGeometry(2.8 + i * 0.42, 48, 32),
         new THREE.MeshBasicMaterial({
           color: i % 2 ? "#d8873c" : "#f0bb75",
-          transparent: true,
-          opacity: 0.055 - i * 0.008,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
+          transparent: true, opacity: 0.055 - i * 0.008,
+          blending: THREE.AdditiveBlending, depthWrite: false,
         }),
-      );
-      solarSystem.add(glow);
+      ));
     }
 
     const planetData = [
-      [4.3, 0.22, "#8e9aa0", 0.08],
-      [6.4, 0.34, "#b18c69", -0.05],
-      [8.6, 0.46, "#718d9e", 0.03],
-      [11.2, 0.58, "#9c8067", -0.025],
-      [14.3, 0.92, "#b4a17c", 0.012],
-      [18.1, 0.67, "#6f8898", -0.009],
+      [4.3, 0.22, "#8e9aa0", 0.08], [6.4, 0.34, "#b18c69", -0.05],
+      [8.6, 0.46, "#718d9e", 0.03], [11.2, 0.58, "#9c8067", -0.025],
+      [14.3, 0.92, "#b4a17c", 0.012], [18.1, 0.67, "#6f8898", -0.009],
     ] as const;
-
     const orbitGroups: THREE.Group[] = [];
+
     planetData.forEach(([radius, size, tint, speed], index) => {
       const orbit = new THREE.Group();
       solarSystem.add(orbit);
@@ -164,22 +132,14 @@ function SolarRealm() {
 
       const ring = new THREE.Mesh(
         new THREE.TorusGeometry(radius, 0.008 + index * 0.002, 8, 240),
-        new THREE.MeshBasicMaterial({
-          color: "#9bb6c7",
-          transparent: true,
-          opacity: 0.12,
-        }),
+        new THREE.MeshBasicMaterial({ color: "#9bb6c7", transparent: true, opacity: 0.12 }),
       );
       ring.rotation.x = Math.PI / 2.04;
       solarSystem.add(ring);
 
       const planet = new THREE.Mesh(
         new THREE.SphereGeometry(size, 36, 24),
-        new THREE.MeshStandardMaterial({
-          color: tint,
-          roughness: 0.82,
-          metalness: 0.04,
-        }),
+        new THREE.MeshStandardMaterial({ color: tint, roughness: 0.82, metalness: 0.04 }),
       );
       planet.position.x = radius;
       planet.castShadow = true;
@@ -188,21 +148,15 @@ function SolarRealm() {
       if (index === 2 || index === 4) {
         const planetRing = new THREE.Mesh(
           new THREE.TorusGeometry(size * 1.55, size * 0.045, 10, 100),
-          new THREE.MeshBasicMaterial({
-            color: "#b6c8d1",
-            transparent: true,
-            opacity: 0.32,
-          }),
+          new THREE.MeshBasicMaterial({ color: "#b6c8d1", transparent: true, opacity: 0.32 }),
         );
         planetRing.rotation.x = Math.PI / 2.3;
         planet.add(planetRing);
       }
-
       orbit.userData.speed = speed;
       orbit.rotation.y = index * 0.8;
     });
 
-    // Asteroid belt.
     const asteroidGeometry = new THREE.BufferGeometry();
     const asteroidCount = window.innerWidth < 700 ? 420 : 950;
     const asteroidPositions = new Float32Array(asteroidCount * 3);
@@ -214,19 +168,11 @@ function SolarRealm() {
       asteroidPositions[i * 3 + 2] = Math.sin(a) * radius;
     }
     asteroidGeometry.setAttribute("position", new THREE.BufferAttribute(asteroidPositions, 3));
-    solarSystem.add(
-      new THREE.Points(
-        asteroidGeometry,
-        new THREE.PointsMaterial({
-          color: "#aab4b9",
-          size: 0.075,
-          transparent: true,
-          opacity: 0.42,
-        }),
-      ),
-    );
+    solarSystem.add(new THREE.Points(
+      asteroidGeometry,
+      new THREE.PointsMaterial({ color: "#aab4b9", size: 0.075, transparent: true, opacity: 0.42 }),
+    ));
 
-    // Real model slot: the production asset must be a real, licensed, rigged GLB.
     const pantherRoot = new THREE.Group();
     pantherRoot.position.set(1.8, -1.7, 1.1);
     pantherRoot.scale.setScalar(2.55);
@@ -234,11 +180,7 @@ function SolarRealm() {
 
     const crown = new THREE.Group();
     const silver = new THREE.MeshPhysicalMaterial({
-      color: "#b8c2c8",
-      metalness: 0.98,
-      roughness: 0.16,
-      clearcoat: 0.82,
-      clearcoatRoughness: 0.12,
+      color: "#b8c2c8", metalness: 0.98, roughness: 0.16, clearcoat: 0.82, clearcoatRoughness: 0.12,
     });
     crown.add(new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.5, 0.12, 48), silver));
     for (let i = 0; i < 7; i++) {
@@ -252,8 +194,20 @@ function SolarRealm() {
 
     const loader = new GLTFLoader();
     let mixer: THREE.AnimationMixer | null = null;
+    let activeAction: THREE.AnimationAction | null = null;
     let model: THREE.Object3D | null = null;
     let loadCancelled = false;
+
+    const findClip = (clips: THREE.AnimationClip[], patterns: RegExp[]) =>
+      clips.find((clip) => patterns.some((pattern) => pattern.test(clip.name)));
+
+    const playAction = (clip: THREE.AnimationClip | undefined, fade = 0.45) => {
+      if (!mixer || !clip || activeAction?.getClip() === clip) return;
+      const next = mixer.clipAction(clip);
+      next.reset().fadeIn(fade).play();
+      activeAction?.fadeOut(fade);
+      activeAction = next;
+    };
 
     loader.load(
       "/assets/panther/panther.glb",
@@ -274,24 +228,36 @@ function SolarRealm() {
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
         model.position.sub(center);
-        const maxAxis = Math.max(size.x, size.y, size.z);
-        const normalized = 3.2 / Math.max(maxAxis, 0.001);
+        const normalized = 3.2 / Math.max(size.x, size.y, size.z, 0.001);
         model.scale.setScalar(normalized);
         pantherRoot.add(model);
 
+        // Attach the crown to the most likely head/skull bone when the rig exposes one.
+        let headBone: THREE.Object3D | null = null;
+        model.traverse((node) => {
+          if (!headBone && /head|skull|neck/i.test(node.name) && node instanceof THREE.Bone) headBone = node;
+        });
+        if (headBone) {
+          crown.position.set(0, 0.22, 0);
+          headBone.add(crown);
+        } else {
+          crown.position.set(0, 1.72, 0);
+        }
         crown.visible = true;
-        crown.position.set(0, 1.72, 0);
 
         if (gltf.animations.length) {
           mixer = new THREE.AnimationMixer(model);
-          const preferred = gltf.animations.find((clip) => /walk|idle|stand/i.test(clip.name)) ?? gltf.animations[0];
-          mixer.clipAction(preferred).play();
+          const idle = findClip(gltf.animations, [/idle/i, /stand/i, /rest/i]);
+          const walk = findClip(gltf.animations, [/walk/i, /stalk/i, /prowl/i, /roam/i]);
+          const fallback = gltf.animations[0];
+          playAction(idle ?? walk ?? fallback, 0);
+          (model.userData as { idle?: THREE.AnimationClip; walk?: THREE.AnimationClip }).idle = idle ?? fallback;
+          (model.userData as { idle?: THREE.AnimationClip; walk?: THREE.AnimationClip }).walk = walk ?? idle ?? fallback;
         }
       },
       undefined,
       () => {
-        // Do not substitute a cartoon primitive. Until the licensed GLB exists,
-        // the page intentionally keeps the panther slot empty rather than faking realism.
+        // Keep the slot empty if the licensed production GLB is not present.
       },
     );
 
@@ -315,6 +281,8 @@ function SolarRealm() {
 
     const clock = new THREE.Clock();
     let raf = 0;
+    let wasMoving = false;
+
     const animate = () => {
       raf = requestAnimationFrame(animate);
       const dt = clock.getDelta();
@@ -325,26 +293,34 @@ function SolarRealm() {
       galaxy.rotation.y = t * 0.0032;
       solarSystem.rotation.y = t * 0.005;
       solarSystem.rotation.x = Math.sin(t * 0.08) * 0.035;
-
-      orbitGroups.forEach((orbit) => {
-        orbit.rotation.y += Number(orbit.userData.speed) * 0.002;
-      });
+      orbitGroups.forEach((orbit) => { orbit.rotation.y += Number(orbit.userData.speed) * 0.002; });
 
       if (model) {
         const roamX = Math.sin(t * 0.085) * 2.8;
         const roamZ = Math.cos(t * 0.065) * 1.9;
-        pantherRoot.position.x += (1.8 + roamX - pantherRoot.position.x) * 0.012;
-        pantherRoot.position.z += (1.1 + roamZ - pantherRoot.position.z) * 0.012;
-        pantherRoot.rotation.y = Math.atan2(roamX - Math.sin((t - 0.08) * 0.085) * 2.8, roamZ - Math.cos((t - 0.08) * 0.065) * 1.9);
-        pantherRoot.rotation.y += pointer.x * 0.14;
+        const targetX = 1.8 + roamX;
+        const targetZ = 1.1 + roamZ;
+        const moving = Math.abs(roamX) + Math.abs(roamZ) > 0.65;
+
+        pantherRoot.position.x += (targetX - pantherRoot.position.x) * 0.012;
+        pantherRoot.position.z += (targetZ - pantherRoot.position.z) * 0.012;
+        pantherRoot.rotation.y = Math.atan2(
+          roamX - Math.sin((t - 0.08) * 0.085) * 2.8,
+          roamZ - Math.cos((t - 0.08) * 0.065) * 1.9,
+        ) + pointer.x * 0.14;
         pantherRoot.position.y = -1.7 + Math.sin(t * 1.9) * 0.018;
+
+        const clips = model.userData as { idle?: THREE.AnimationClip; walk?: THREE.AnimationClip };
+        if (moving !== wasMoving) {
+          playAction(moving ? clips.walk : clips.idle);
+          wasMoving = moving;
+        }
         mixer?.update(dt);
       }
 
       camera.position.x += (pointer.x * 1.15 - camera.position.x) * 0.015;
       camera.position.y += (2.3 - pointer.y * 0.55 - camera.position.y) * 0.015;
       camera.lookAt(0, 0.2, -13);
-
       renderer.render(scene, camera);
     };
 
@@ -376,11 +352,7 @@ export function Onboarding() {
 
   useEffect(() => {
     if (!user || profile) return;
-    complete(
-      user.displayName || "کاربر سلف",
-      user.primaryEmail?.split("@")[0] || "salf1_user",
-      "Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF",
-    );
+    complete(user.displayName || "کاربر سلف", user.primaryEmail?.split("@")[0] || "salf1_user", "Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF");
   }, [user, profile, complete]);
 
   async function handleSignIn(providerId: string) {
@@ -395,21 +367,7 @@ export function Onboarding() {
   }
 
   if (isPending) {
-    return (
-      <div className="pb-auth pb-auth--space" dir="rtl">
-        <SolarRealm />
-        <div className="pb-auth__space-vignette" />
-        <div className="pb-auth__loading">
-          <div className="pb-auth__loading-card">
-            <div className="pb-seal pb-seal--loading" aria-hidden><span>P</span><i /><b /></div>
-            <p className="pb-auth__loading-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · PRIVATE</p>
-            <h1 className="pb-auth__loading-title">در حال ورود به قلمرو</h1>
-            <div className="pb-auth__progress" aria-hidden><span /></div>
-            <p className="pb-auth__loading-copy">لطفاً چند لحظه صبر کنید…</p>
-          </div>
-        </div>
-      </div>
-    );
+    return <div className="pb-auth pb-auth--space" dir="rtl"><SolarRealm /><div className="pb-auth__space-vignette" /><div className="pb-auth__loading"><div className="pb-auth__loading-card"><div className="pb-seal pb-seal--loading" aria-hidden><span>P</span><i /><b /></div><p className="pb-auth__loading-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · PRIVATE</p><h1 className="pb-auth__loading-title">در حال ورود به قلمرو</h1><div className="pb-auth__progress" aria-hidden><span /></div><p className="pb-auth__loading-copy">لطفاً چند لحظه صبر کنید…</p></div></div></div>;
   }
 
   if (user && profile) {
@@ -421,16 +379,9 @@ export function Onboarding() {
       <SolarRealm />
       <div className="pb-auth__space-vignette" />
       <header className="pb-auth__top">
-        <div className="pb-auth__brand">
-          <div className="pb-auth__mini-seal" aria-hidden><span>P</span></div>
-          <div className="pb-auth__brand-copy">
-            <strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong>
-            <small>SALF1 · PRIVATE MANAGEMENT REALM</small>
-          </div>
-        </div>
+        <div className="pb-auth__brand"><div className="pb-auth__mini-seal" aria-hidden><span>P</span></div><div className="pb-auth__brand-copy"><strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong><small>SALF1 · PRIVATE MANAGEMENT REALM</small></div></div>
         <div className="pb-auth__secure"><i /><span>SECURE IDENTITY GATE</span></div>
       </header>
-
       <main className="pb-auth__body pb-auth__body--space">
         <section className="pb-auth__intro pb-auth__intro--space">
           <div className="pb-auth__intro-line"><span>01</span><i /><span>IDENTITY GATE</span></div>
@@ -439,7 +390,6 @@ export function Onboarding() {
           <p className="pb-auth__lede">درگاه ورود به قلمرو خصوصی سلف؛ یک تجربه سه‌بعدی سینمایی با منظومه شمسی، کهکشان و هویت Panthera.</p>
           <div className="pb-auth__signature">CRAFTED BY JAWATI · @JOWATI</div>
         </section>
-
         <section className="pb-auth__card pb-auth__card--space pb-auth__portal">
           <div className="pb-auth__portal-orbit" aria-hidden><span /><span /><span /></div>
           <div className="pb-auth__portal-core" aria-hidden><b>P</b><i /></div>
@@ -451,10 +401,7 @@ export function Onboarding() {
             {GROK_PROVIDERS.map((provider) => (
               <button key={provider.providerId} type="button" className="pb-auth__provider" disabled={busy !== null} onClick={() => handleSignIn(provider.providerId)}>
                 <span className="pb-auth__provider-mark">{provider.idp === "google" ? "G" : "X"}</span>
-                <span className="pb-auth__provider-copy">
-                  <strong>{busy === provider.providerId ? "در حال اتصال…" : "تأیید و ورود امن با " + provider.label}</strong>
-                  <small>ارتباط رمزنگاری‌شده · انتقال امن</small>
-                </span>
+                <span className="pb-auth__provider-copy"><strong>{busy === provider.providerId ? "در حال اتصال…" : "تأیید و ورود امن با " + provider.label}</strong><small>ارتباط رمزنگاری‌شده · انتقال امن</small></span>
                 <ArrowUpLeft className="pb-auth__provider-arrow size-4" />
               </button>
             ))}
@@ -464,7 +411,6 @@ export function Onboarding() {
           <div className="pb-auth__footnote"><ShieldCheck className="size-3.5" /><span>اطلاعات حساب فقط برای ایجاد یک ورود امن استفاده می‌شود.</span></div>
         </section>
       </main>
-
       <footer className="pb-auth__footer"><span>Pᴇʀsɪᴀɴ ᴮᵒᵗ</span><span>SALF1 · PANTHERA REALM</span><span>JAWATI · 2026</span></footer>
     </div>
   );
