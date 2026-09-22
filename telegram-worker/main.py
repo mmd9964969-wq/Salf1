@@ -1,6 +1,9 @@
 import asyncio
+import base64
 import hashlib
+import hmac
 import html
+import json
 import os
 import random
 import secrets
@@ -106,24 +109,65 @@ async def reset_customer_session(customer_id: str):
 
 
 def create_web_login_token(customer_id: str) -> str:
-    token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
+    expires_at = int((now + timedelta(seconds=LOGIN_TOKEN_TTL_SECONDS)).timestamp())
+    payload = {
+        "customer_id": str(customer_id),
+        "created_at": int(now.timestamp()),
+        "expires_at": expires_at,
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    signature = hmac.new(
+        WEBHOOK_SECRET.encode("utf-8"),
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    token = f"{encoded}.{signature}"
     web_login_tokens[token] = {
-        "customer_id": customer_id,
+        "customer_id": str(customer_id),
         "created_at": now,
-        "expires_at": now + timedelta(seconds=LOGIN_TOKEN_TTL_SECONDS),
+        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc),
         "stage": "phone",
     }
     return token
 
 
 def web_login_context(token: str):
-    ctx = web_login_tokens.get(token)
-    if not ctx:
+    token = str(token or "").strip()
+    if not token or "." not in token or not WEBHOOK_SECRET:
         return None
-    if ctx["expires_at"] <= datetime.now(timezone.utc):
+
+    encoded, signature = token.rsplit(".", 1)
+    expected = hmac.new(
+        WEBHOOK_SECRET.encode("utf-8"),
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        customer_id = str(payload["customer_id"])
+        expires_at = datetime.fromtimestamp(int(payload["expires_at"]), tz=timezone.utc)
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+
+    if expires_at <= datetime.now(timezone.utc):
         web_login_tokens.pop(token, None)
         return None
+
+    ctx = web_login_tokens.get(token)
+    if ctx is None:
+        ctx = {
+            "customer_id": customer_id,
+            "created_at": datetime.fromtimestamp(int(payload.get("created_at", 0)), tz=timezone.utc),
+            "expires_at": expires_at,
+            "stage": "phone",
+        }
+        web_login_tokens[token] = ctx
     return ctx
 
 
