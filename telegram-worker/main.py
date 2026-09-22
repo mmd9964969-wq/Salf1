@@ -1418,12 +1418,15 @@ def main_menu_markup():
     return {
         "inline_keyboard": [
             [
-                {"text": "› مدیریت سلف", "callback_data": "manage"},
-                {"text": "› الماس رایگان", "callback_data": "referral"},
+                {"text": "‹ مدیریت سلف", "callback_data": "manage"},
+                {"text": "‹ الماس رایگان", "callback_data": "referral"},
             ],
             [
-                {"text": "› پشتیبانی", "callback_data": "support"},
-                {"text": "› کانال رسمی", "callback_data": "channel"},
+                {"text": "‹ کانال رسمی", "callback_data": "channel"},
+                {"text": "‹ پشتیبانی", "callback_data": "support"},
+            ],
+            [
+                {"text": "‹ شاپ جم", "callback_data": "shop"},
             ],
         ]
     }
@@ -2310,6 +2313,18 @@ async def process_callback(callback_query: dict):
     if data == "referral":
         text, markup = await referral_text(user_id)
         await bot_edit(chat_id, message_id, text, markup)
+        return
+
+    if data == "shop":
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>◈ شاپ جم</b>
+
+⛂ - بخش خرید جم ترون از همین قسمت مدیریت می‌شود.
+⛂ - گزینه‌های خرید پس از فعال شدن شاپ نمایش داده خواهند شد.""",
+            main_menu_markup(),
+        )
         return
 
     if data == "support":
