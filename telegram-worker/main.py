@@ -1471,11 +1471,11 @@ def balance_markup():
 
 def package_markup():
     return {"inline_keyboard": [
-        [{"text": "‹ ۱ ساعت · ۶۰ جم", "callback_data": "package_60"}],
-        [{"text": "‹ تست ۲۴ ساعته · ۱٬۴۴۰ جم", "callback_data": "package_1440"}],
-        [{"text": "‹ اقتصادی · ۷ روز · ۱۰٬۰۸۰ جم", "callback_data": "package_10080"}],
-        [{"text": "‹ محبوب · ۳۰ روز · ۴۳٬۲۰۰ جم", "callback_data": "package_43200"}],
-        [{"text": "‹ ویژه · ۶۰ روز · ۸۶٬۴۰۰ جم", "callback_data": "package_86400"}],
+        [{"text": "‹ 1 ساعت · 60 جم", "callback_data": "package_60"}],
+        [{"text": "‹ تست 24 ساعته · 1,440 جم", "callback_data": "package_1440"}],
+        [{"text": "‹ اقتصادی · 7 روز · 10,080 جم", "callback_data": "package_10080"}],
+        [{"text": "‹ محبوب · 30 روز · 43,200 جم", "callback_data": "package_43200"}],
+        [{"text": "‹ ویژه · 60 روز · 86,400 جم", "callback_data": "package_86400"}],
         [{"text": "‹ بازگشت", "callback_data": "shop"}],
     ]}
 
