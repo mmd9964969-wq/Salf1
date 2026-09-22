@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events
+from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.errors import (
     PasswordHashInvalidError,
     SessionPasswordNeededError,
@@ -79,6 +80,42 @@ def render_custom_emoji(text: str) -> str:
         else:
             rendered = rendered.replace(token, html.escape(alt))
     return rendered
+
+def _utf16_len(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2
+
+
+def render_telethon_custom_emoji(text: str):
+    """
+    Convert [[emoji_key]] tokens into Telegram custom-emoji entities for
+    Telethon/MTProto messages. This is separate from Bot API HTML rendering.
+    """
+    source = str(text)
+    output = []
+    entities = []
+    cursor = 0
+    out_text = ""
+    token_re = __import__("re").compile(r"\\[\\[([a-z_]+)\\]\\]")
+    for match in token_re.finditer(source):
+        out_text += source[cursor:match.start()]
+        key = match.group(1)
+        raw_id, alt = CUSTOM_EMOJI.get(key, ("", ""))
+        emoji_id = _emoji_id(raw_id)
+        replacement = alt or match.group(0)
+        entity_offset = _utf16_len(out_text)
+        out_text += replacement
+        if emoji_id and emoji_id in VALID_CUSTOM_EMOJI_IDS:
+            entities.append(
+                MessageEntityCustomEmoji(
+                    offset=entity_offset,
+                    length=_utf16_len(replacement),
+                    document_id=int(emoji_id),
+                )
+            )
+        cursor = match.end()
+    out_text += source[cursor:]
+    return out_text, entities
+
 
 def strip_custom_emoji(text: str) -> str:
     rendered = str(text)
@@ -1102,25 +1139,26 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
     trial_left = trial_remaining_text(row)
     name = html.escape(str(row["first_name"] if row else "کاربر"))
 
-    text = f"""<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
+    text = f"""◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ
 
-⛂ - نام : {name}
-⛂ - شناسه : <code>{customer_id}</code>
+[[account]] - نام : {name}
+[[account]] - شناسه : {customer_id}
 [[account]] - اکانت : {"● متصل" if connected else "○ متصل نیست"}
 [[self]] - سلف : {"● فعال" if enabled else "○ خاموش"}
-⛂ - پلن : رایگان
-⛂ - زمان باقی‌مانده : {trial_left}
+[[system]] - پلن : رایگان
+[[system]] - زمان باقی‌مانده : {trial_left}
 [[balance]] - موجودی : {balance:,} جم
 
-⛂ - وضعیت سیستم : ● پایدار
-⛂ - وضعیت Worker : ● آنلاین
-⛂ - مصرف فعال : 1 جم / دقیقه
+[[system]] - وضعیت سیستم : ● پایدار
+[[system]] - وضعیت Worker : ● آنلاین
+[[tools]] - مصرف فعال : 1 جم / دقیقه
 
 ─────━━───── ◈ ─────━━─────
 
-⛂ - دسترسی اختصاصی برای این حساب"""
+[[protection]] - دسترسی اختصاصی برای این حساب"""
 
-    await event.respond(text, parse_mode="html")
+    rendered_text, custom_entities = render_telethon_custom_emoji(text)
+    await event.respond(rendered_text, formatting_entities=custom_entities)
 
 
 async def handle_self_command(event, customer_id: str, text: str):
