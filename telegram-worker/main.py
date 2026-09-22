@@ -1449,9 +1449,12 @@ def channel_markup():
 def shop_markup():
     return {
         "inline_keyboard": [
-            [{"text": "› خرید جم", "callback_data": "shop_buy"}],
-            [{"text": "› بسته‌های جم", "callback_data": "shop_packages"}],
-            [{"text": "› تراکنش‌های من", "callback_data": "shop_transactions"}],
+            [{"text": "‹ خرید جم", "callback_data": "shop_buy"},
+             {"text": "‹ بسته‌های جم", "callback_data": "shop_packages"}],
+            [{"text": "‹ موجودی من", "callback_data": "shop_balance"},
+             {"text": "‹ تاریخچه خرید", "callback_data": "shop_history"}],
+            [{"text": "‹ کد تخفیف", "callback_data": "shop_discount"}],
+            [{"text": "‹ پشتیبانی خرید", "callback_data": "shop_support"}],
             [{"text": "‹ بازگشت", "callback_data": "home"}],
         ]
     }
@@ -2367,14 +2370,37 @@ async def process_callback(callback_query: dict):
         )
         return
 
-    if data == "shop_transactions":
+    if data in {"shop_balance", "shop_history", "shop_discount", "shop_support"}:
+        if data == "shop_balance":
+            row = await db_user(str(user_id))
+            balance = int(row["tron_balance"]) if row else 0
+            text = f"""<b>◈ موجودی من</b>
+
+⛂ - موجودی فعلی : <b>{balance:,} جم</b>
+⛂ - مصرف فعال : 1 جم / دقیقه
+
+─────━━───── ◈ ─────━━─────
+
+⛂ - برای افزایش موجودی، از بخش خرید جم استفاده کنید."""
+        elif data == "shop_history":
+            text = """<b>◈ تاریخچه خرید</b>
+
+⛂ - تاریخچه خرید و شارژ جم در این بخش نمایش داده می‌شود.
+⛂ - هنوز تراکنشی برای نمایش ثبت نشده است."""
+        elif data == "shop_discount":
+            text = """<b>◈ کد تخفیف</b>
+
+⛂ - کد تخفیف خود را در این بخش وارد کنید.
+⛂ - سیستم بررسی و اعمال کد تخفیف در مرحله فروش فعال می‌شود."""
+        else:
+            text = """<b>◈ پشتیبانی خرید</b>
+
+⛂ - برای پیگیری خرید، پرداخت یا مشکل دریافت جم از این بخش استفاده کنید.
+⛂ - درخواست شما از مسیر پشتیبانی خرید بررسی می‌شود."""
         await bot_edit(
             chat_id,
             message_id,
-            """<b>◈ تراکنش‌های من</b>
-
-⛂ - تاریخچه خرید و شارژ جم ترون شما در این بخش نمایش داده می‌شود.
-⛂ - هنوز تراکنشی برای نمایش ثبت نشده است.""",
+            text,
             shop_markup(),
         )
         return
