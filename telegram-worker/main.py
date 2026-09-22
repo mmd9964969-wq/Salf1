@@ -60,6 +60,7 @@ CUSTOM_EMOJI = {
 # file_ids. Keep only numeric IDs here; invalid values must never be sent to
 # the Bot API as custom_emoji_id.
 VALID_CUSTOM_EMOJI_IDS: set[str] = set()
+VALID_CUSTOM_EMOJI_ALTS: dict[str, str] = {}
 
 def _emoji_id(value: str) -> str:
     value = str(value or "").strip()
@@ -100,7 +101,7 @@ def render_telethon_custom_emoji(text: str):
         key = match.group(1)
         raw_id, alt = CUSTOM_EMOJI.get(key, ("", ""))
         emoji_id = _emoji_id(raw_id)
-        replacement = alt or match.group(0)
+        replacement = VALID_CUSTOM_EMOJI_ALTS.get(emoji_id) or alt or match.group(0)
         entity_offset = _utf16_len(out_text)
         out_text += replacement
         if emoji_id and emoji_id in VALID_CUSTOM_EMOJI_IDS:
@@ -1607,7 +1608,7 @@ def _strip_invalid_button_emojis(reply_markup: dict) -> dict:
 
 
 async def validate_custom_emoji_config():
-    global VALID_CUSTOM_EMOJI_IDS
+    global VALID_CUSTOM_EMOJI_IDS, VALID_CUSTOM_EMOJI_ALTS
     configured = []
     for name, (raw_id, _) in CUSTOM_EMOJI.items():
         emoji_id = _emoji_id(raw_id)
@@ -1616,6 +1617,7 @@ async def validate_custom_emoji_config():
 
     if not configured:
         VALID_CUSTOM_EMOJI_IDS = set()
+        VALID_CUSTOM_EMOJI_ALTS = {}
         print("Custom Emoji: no numeric IDs configured.")
         return
 
@@ -1626,6 +1628,7 @@ async def validate_custom_emoji_config():
     )
     if not response or not response.get("ok"):
         VALID_CUSTOM_EMOJI_IDS = set()
+        VALID_CUSTOM_EMOJI_ALTS = {}
         print(f"Custom Emoji validation failed: {response}")
         return
 
@@ -1635,6 +1638,11 @@ async def validate_custom_emoji_config():
         if sticker.get("custom_emoji_id")
     }
     VALID_CUSTOM_EMOJI_IDS = returned
+    VALID_CUSTOM_EMOJI_ALTS = {
+        str(sticker.get("custom_emoji_id")): str(sticker.get("emoji") or "").strip()
+        for sticker in response.get("result", [])
+        if sticker.get("custom_emoji_id") and sticker.get("emoji")
+    }
     missing = [(name, emoji_id) for name, emoji_id in configured if emoji_id not in returned]
     print(
         f"Custom Emoji: configured={len(configured)}, valid={len(returned)}, "
