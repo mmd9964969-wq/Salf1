@@ -1044,49 +1044,43 @@ def normalize_text(value: str) -> str:
 
 
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
-    if is_owner:
-        text = """
-<b>◈ SALF1 · مرکز فرمان</b>
+    # Self-account panel is private to the account owner and is only callable
+    # from Saved Messages. The caller is already verified by handle_self_command.
+    if not is_owner:
+        return
 
-<b>━━ مدیریت سالف</b>
-⛂ سلف روشن | /self on
-⛂ سلف خاموش | /self off
-⛂ وضعیت سلف | /self status
-⛂ موجودی | /balance
+    row = await db_user(customer_id)
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    balance = int(row["tron_balance"]) if row else 0
+    trial_left = trial_remaining_text(row)
+    name = html.escape(str(row["first_name"] if row else "کاربر"))
 
-<b>━━ اتوماسیون</b>
-⛂ کلمه لیست | keyword list
-⛂ کلمه افزودن | keyword add
-⛂ کلمه اطلاعات | keyword info
-⛂ کلمه تست | keyword test
-⛂ کلمه شرط | keyword condition
+    text = f"""<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-<b>━━ اکانت</b>
-⛂ ورود اکانت ← از مینی‌بات SALF1
-⛂ خروج اکانت ← از مدیریت سلف
+⛂ - نام : {name}
+⛂ - شناسه : <code>{customer_id}</code>
+⛂ - اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ - سلف : {"● فعال" if enabled else "○ خاموش"}
+⛂ - پلن : رایگان
+⛂ - زمان باقی‌مانده : {trial_left}
+⛂ - موجودی : {balance:,} جم
 
-<b>━━ دسترسی سریع</b>
-⛂ پنل | /panel
-⛂ موجودی | /balance
-⛂ وضعیت سلف | /self status
+⛂ - وضعیت سیستم : ● پایدار
+⛂ - وضعیت Worker : ● آنلاین
+⛂ - مصرف فعال : 1 جم / دقیقه
 
-این پنل متنی در هر گفتگویی که اکانت در آن پیام می‌فرستد قابل فراخوانی است.
-"""
-    else:
-        text = """
-<b>◈ SALF1 · مرکز فرمان</b>
+─────━━───── ◈ ─────━━─────
 
-فقط نمایش عمومی پنل برای شما فعال است.
-تغییر وضعیت سرویس فقط توسط مالک اکانت ممکن است.
+⛂ - دسترسی اختصاصی برای این حساب"""
 
-⛂ پنل
-⛂ موجودی
-⛂ وضعیت سلف
-"""
     await event.respond(text, parse_mode="html")
 
 
 async def handle_self_command(event, customer_id: str, text: str):
+    # Self-account commands are intentionally slashless.
+    if text.lstrip().startswith("/"):
+        return False
     normalized = normalize_text(text)
     if normalized not in {
         "پنل",
@@ -1494,16 +1488,6 @@ async def salf_panel_text(user_id: int):
 ⛂ - زمان باقی‌مانده : {trial_remaining_text(row)}
 ⛂ - موجودی : {balance:,} جم
 
-<b>━━━ مدیریت سلف ━━━</b>
-
-<b>━━━ اتوماسیون ━━━</b>
-
-<b>━━━ محافظت ━━━</b>
-
-<b>━━━ ابزارها ━━━</b>
-
-<b>━━━ سیستم ━━━</b>
-
 ⛂ - وضعیت سیستم : ● پایدار
 ⛂ - وضعیت Worker : ● آنلاین
 ⛂ - مصرف فعال : 1 جم / دقیقه
@@ -1602,8 +1586,8 @@ async def process_bot_message(message: dict):
         return
 
     if normalized in {"panel", "پنل"}:
-        # Bot panel commands are handled only in the bot's private chat.
-        if chat.get("type") != "private":
+        # The panel command is slashless and private-chat only.
+        if text.startswith("/") or chat.get("type") != "private":
             return
         await bot_send(chat["id"], await salf_panel_text(user_id), salf_panel_markup())
         return
