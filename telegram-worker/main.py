@@ -1469,6 +1469,48 @@ async def mini_manage_text(user_id: int):
 """
 
 
+async def salf_panel_text(user_id: int):
+    row = await db_user(str(user_id))
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    balance = int(row["tron_balance"]) if row else 0
+    return f"""<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
+
+⛂ - نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
+⛂ - شناسه : <code>{user_id}</code>
+⛂ - اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ - سلف : {"● فعال" if enabled else "○ خاموش"}
+⛂ - پلن : FREE
+⛂ - موجودی : {balance:,} جم
+
+<b>━━━ مدیریت سلف ━━━</b>
+
+<b>━━━ اتوماسیون ━━━</b>
+
+<b>━━━ محافظت ━━━</b>
+
+<b>━━━ ابزارها ━━━</b>
+
+<b>━━━ سیستم ━━━</b>
+
+⛂ - وضعیت سیستم : ● پایدار
+⛂ - وضعیت Worker : ● آنلاین
+⛂ - مصرف فعال : 1 جم / دقیقه
+
+─────━━───── ◈ ─────━━─────
+
+⛂ - دسترسی اختصاصی برای این حساب"""
+
+
+def salf_panel_markup():
+    return {"inline_keyboard": [
+        [{"text":"› حساب کاربری","callback_data":"panel_account"},{"text":"› تنظیمات سلف","callback_data":"panel_self"}],
+        [{"text":"› اتوماسیون","callback_data":"panel_automation"},{"text":"› محافظت","callback_data":"panel_protection"}],
+        [{"text":"› ابزارها","callback_data":"panel_tools"},{"text":"› سیستم","callback_data":"panel_system"}],
+        [{"text":"‹ بازگشت","callback_data":"home"}],
+    ]}
+
+
 async def referral_text(user_id: int):
     row = await db_user(str(user_id))
     if not row:
@@ -1548,7 +1590,11 @@ async def process_bot_message(message: dict):
         await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
         return
 
-    if normalized in {"مدیریت سلف", "مدیریت", "salf", "self", "panel", "پنل"}:
+    if normalized in {"panel", "پنل"}:
+        await bot_send(chat["id"], await salf_panel_text(user_id), salf_panel_markup())
+        return
+
+    if normalized in {"مدیریت سلف", "مدیریت", "salf", "self"}:
         await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
         return
 
@@ -1579,6 +1625,18 @@ async def process_callback(callback_query: dict):
     chat_id = int(chat["id"])
     message_id = int(message.get("message_id", 0))
     await bot_answer_callback(callback_id)
+
+    if data == "panel":
+        await bot_edit(chat_id, message_id, await salf_panel_text(user_id), salf_panel_markup())
+        return
+
+    if data.startswith("panel_"):
+        section = data.removeprefix("panel_")
+        titles = {"account":"حساب کاربری","self":"تنظیمات سلف","automation":"اتوماسیون","protection":"محافظت","tools":"ابزارها","system":"سیستم"}
+        title = titles.get(section)
+        if title:
+            await bot_edit(chat_id, message_id, f"<b>◈ Sᴀʟғ1 · {html.escape(title)}</b>\\n\\n⛂ - این بخش آماده مدیریت اختصاصی است.\\n⛂ - قابلیت‌های این بخش در ادامه فعال می‌شوند.", {"inline_keyboard":[[{"text":"‹ بازگشت به Panel","callback_data":"panel"}]]})
+        return
 
     if data == "home":
         await bot_edit(
