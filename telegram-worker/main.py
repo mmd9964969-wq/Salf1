@@ -3,9 +3,10 @@ import hashlib
 import html
 import os
 import random
+import secrets
 import shutil
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
@@ -39,6 +40,8 @@ DB_POOL_MAX = max(DB_POOL_MIN, int(os.getenv("SALF1_DB_POOL_MAX", "8")))
 
 REFERRAL_REWARD = int(os.getenv("SALF1_REFERRAL_REWARD", "500"))
 TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
+LOGIN_TOKEN_TTL_SECONDS = int(os.getenv("SALF1_LOGIN_TOKEN_TTL_SECONDS", "600"))
+LOGIN_BASE_URL = os.getenv("SALF1_LOGIN_BASE_URL", "").strip().rstrip("/")
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
@@ -52,6 +55,7 @@ bot_states: dict[int, str] = {}
 http_session: ClientSession | None = None
 db_pool: asyncpg.Pool | None = None
 bot_username = ""
+web_login_tokens: dict[str, dict] = {}
 
 
 def configured():
@@ -98,6 +102,33 @@ async def reset_customer_session(customer_id: str):
 
     await update_account_state(customer_id, False)
     await set_salf_enabled(customer_id, False)
+
+
+def create_web_login_token(customer_id: str) -> str:
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    web_login_tokens[token] = {
+        "customer_id": customer_id,
+        "created_at": now,
+        "expires_at": now + timedelta(seconds=LOGIN_TOKEN_TTL_SECONDS),
+        "stage": "phone",
+    }
+    return token
+
+
+def web_login_context(token: str):
+    ctx = web_login_tokens.get(token)
+    if not ctx:
+        return None
+    if ctx["expires_at"] <= datetime.now(timezone.utc):
+        web_login_tokens.pop(token, None)
+        return None
+    return ctx
+
+
+def normalize_login_code(value: str) -> str:
+    table = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    return "".join(ch for ch in value.translate(table) if ch.isdigit())
 
 
 def get_customer_id(request: web.Request) -> str | None:
@@ -388,24 +419,30 @@ async def start_customer_login(customer_id: str, phone: str):
     if not configured():
         raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH are not configured")
 
-    # Never issue a second code while one login attempt is already waiting.
-    # Telegram invalidates/consumes the previous code in several concurrent-login cases.
-    if customer_id in pending_phones:
-        if pending_phones[customer_id] == phone:
-            return {"status": "code_already_sent"}
-        pending_phones.pop(customer_id, None)
-        pending_codes.pop(customer_id, None)
-        pending_code_hashes.pop(customer_id, None)
-        pending_2fa.discard(customer_id)
+    lock = login_locks.setdefault(customer_id, asyncio.Lock())
+    async with lock:
+        current_phone = pending_phones.get(customer_id)
+        current_hash = pending_code_hashes.get(customer_id)
 
-    client = client_for(customer_id)
-    await client.connect()
-    sent = await client.send_code_request(phone)
-    pending_phones[customer_id] = phone
-    pending_code_hashes[customer_id] = str(sent.phone_code_hash)
-    pending_codes.pop(customer_id, None)
-    pending_2fa.discard(customer_id)
-    return {"status": "code_sent"}
+        # Reuse the active request instead of generating another code.
+        if current_phone == phone and current_hash:
+            return {"status": "code_already_sent"}
+
+        # A stale/expired attempt must not block a new request.
+        if current_phone or current_hash:
+            pending_phones.pop(customer_id, None)
+            pending_codes.pop(customer_id, None)
+            pending_code_hashes.pop(customer_id, None)
+            pending_2fa.discard(customer_id)
+
+        client = client_for(customer_id)
+        await client.connect()
+        sent = await client.send_code_request(phone)
+        pending_phones[customer_id] = phone
+        pending_code_hashes[customer_id] = str(sent.phone_code_hash)
+        pending_codes.pop(customer_id, None)
+        pending_2fa.discard(customer_id)
+        return {"status": "code_sent", "timeout": int(getattr(sent, "timeout", 0) or 0)}
 
 
 async def verify_customer_login(customer_id: str, code: str, password: str = ""):
@@ -455,8 +492,10 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
             print(f"Login verify for {customer_id}: invalid or already-used login code.")
             return {"status": "code_invalid"}
         except PhoneCodeExpiredError:
+            pending_phones.pop(customer_id, None)
             pending_codes.pop(customer_id, None)
             pending_code_hashes.pop(customer_id, None)
+            pending_2fa.discard(customer_id)
             print(f"Login verify for {customer_id}: login code expired.")
             return {"status": "code_expired"}
         except PhoneNumberInvalidError:
@@ -1402,139 +1441,6 @@ async def process_bot_message(message: dict):
 
     await ensure_bot_user(user_id, username, first_name)
 
-    state = bot_states.get(user_id)
-    if state == "await_phone":
-        phone = text.replace(" ", "")
-        if not phone.startswith("+") or len(phone) < 8:
-            await bot_send(chat["id"], "⛂ شماره را با فرمت بین‌المللی ارسال کنید؛ مثال: <code>+98912...</code>")
-            return
-        try:
-            result = await start_customer_login(str(user_id), phone)
-            bot_states[user_id] = "await_code"
-            if result.get("status") == "code_already_sent":
-                await bot_send(
-                    chat["id"],
-                    """<b>◈ کد ورود قبلاً ارسال شده است</b>
-
-⛂ - همان کد آخرین پیام تلگرام را ارسال کنید.
-⛂ - برای جلوگیری از باطل شدن کد، دوباره شماره را ارسال نکنید."""
-                )
-                return
-            await bot_send(
-                chat["id"],
-                """<b>◈ تأیید اکانت</b>
-
-⛂ - کد ورود ارسال‌شده توسط تلگرام را
-ارسال کنید."""
-            )
-        except Exception as exc:
-            await bot_send(chat["id"], f"⛂ شروع ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
-        return
-
-    if state == "await_code":
-        code = "".join(ch for ch in text if ch.isdigit())
-        if len(code) < 3:
-            await bot_send(chat["id"], "⛂ کد ورود معتبر نیست.")
-            return
-        try:
-            result = await verify_customer_login(str(user_id), code)
-            if result["status"] == "2fa_required":
-                bot_states[user_id] = "await_2fa"
-                await bot_send(
-                    chat["id"],
-                    """<b>◈ تأیید دو مرحله‌ ای</b>
-
-⛂ - رمز عبور دو مرحله‌ای اکانت تلگرام را ارسال کنید."""
-                )
-                return
-
-            status = result.get("status")
-            if status == "code_invalid":
-                await bot_send(
-                    chat["id"],
-                    """<b>✘ کد ورود نامعتبر است</b>
-
-⛂ - کد واردشده نادرست یا قبلاً استفاده شده است.
-⛂ - یک کد جدید از تلگرام درخواست کنید و فقط آخرین کد را ارسال کنید.""",
-                )
-                return
-            if status == "code_expired":
-                bot_states.pop(user_id, None)
-                await bot_send(
-                    chat["id"],
-                    """<b>✘ کد ورود منقضی شده است</b>
-
-⛂ - دوباره ورود اکانت را شروع کنید تا کد جدید ارسال شود.""",
-                )
-                return
-            if status == "phone_invalid":
-                bot_states.pop(user_id, None)
-                await bot_send(chat["id"], "<b>✘ شماره تلفن نامعتبر است.</b>\\n\\n⛂ ورود را دوباره با شماره صحیح شروع کنید.")
-                return
-            if status == "flood_wait":
-                bot_states.pop(user_id, None)
-                seconds = int(result.get("seconds", 0))
-                await bot_send(
-                    chat["id"],
-                    f"<b>✘ محدودیت موقت تلگرام</b>\\n\\n⛂ لطفاً {seconds} ثانیه بعد دوباره تلاش کنید.",
-                )
-                return
-            if status != "connected":
-                await bot_send(chat["id"], "<b>✘ اتصال اکانت انجام نشد.</b>\\n\\n⛂ لطفاً دوباره تلاش کنید.")
-                return
-
-            bot_states.pop(user_id, None)
-            await bot_send(
-                chat["id"],
-                """<b>✓ اتصال اکانت موفق بود</b>
-
-⛂ - اکانت تلگرام با موفقیت متصل شد.
-⛂ - وضعیت اکانت : ● فعال
-
-◈ اکنون می‌توانید از امکانات سلف استفاده کنید.""",
-                await user_manage_markup(user_id),
-            )
-        except Exception as exc:
-            await bot_send(chat["id"], f"⛂ ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
-        return
-
-    if state == "await_2fa":
-        try:
-            result = await verify_customer_login(str(user_id), "", text)
-            if result["status"] == "2fa_invalid":
-                await bot_send(
-                    chat["id"],
-                    """<b>◈ تأیید دو مرحله‌ ای</b>
-
-⛂ - رمز عبور دو مرحله‌ای اکانت تلگرام را ارسال کنید.
-
-✘ رمز عبور وارد شده نادرست است لطفاً مجدداً تلاش کنید."""
-                )
-                return
-            if result["status"] == "2fa_required":
-                await bot_send(
-                    chat["id"],
-                    """<b>◈ تأیید دو مرحله‌ ای</b>
-
-⛂ - رمز عبور دو مرحله‌ای اکانت تلگرام را ارسال کنید."""
-                )
-                return
-
-            bot_states.pop(user_id, None)
-            await bot_send(
-                chat["id"],
-                """<b>✓ اتصال اکانت موفق بود</b>
-
-⛂ - اکانت تلگرام با موفقیت متصل شد.
-⛂ - وضعیت اکانت : ● فعال
-
-◈ اکنون می‌توانید از امکانات سلف استفاده کنید.""",
-                await user_manage_markup(user_id),
-            )
-        except Exception as exc:
-            await bot_send(chat["id"], f"⛂ ورود ناموفق بود.\\n<code>{html.escape(str(exc))}</code>")
-        return
-
     normalized = normalize_text(text)
     if normalized in {"لغو", "cancel", "انصراف"}:
         bot_states.pop(user_id, None)
@@ -1587,21 +1493,37 @@ async def process_callback(callback_query: dict):
         return
 
     if data == "login":
-        # The user explicitly requested a fresh/reconnect login.
-        # Clear any persisted authorized session so Telegram can require
-        # the complete flow: code -> 2FA password (when enabled).
+        # Telegram login codes must not be collected through a Telegram chat.
+        # Telegram/Telethon can invalidate codes that are sent through the app itself.
         await reset_customer_session(str(user_id))
-        bot_states[user_id] = "await_phone"
+        token = create_web_login_token(str(user_id))
+        if not LOGIN_BASE_URL:
+            await bot_edit(
+                chat_id,
+                message_id,
+                "⛂ پنل ورود امن هنوز تنظیم نشده است.",
+                await user_manage_markup(user_id),
+            )
+            return
+
+        login_url = f"{LOGIN_BASE_URL}/login#{token}"
         await bot_edit(
             chat_id,
             message_id,
-            """<b>◈ ورود اکـانـت</b>
+            """<b>◈ ورود امن اکانت</b>
 
-⛂ - شماره تلفن اکانت تلگرام را
-   با فرمت بین‌المللی ارسال کنید.
+⛂ - برای اتصال اکانت، پنل ورود امن را باز کنید.
+⛂ - کد ورود و رمز دو مرحله‌ای داخل چت بات دریافت نمی‌شود.
+⛂ - اعتبار لینک ورود محدود است و فقط برای همین اکانت ساخته شده.
 
-⌁ مثال : <code>+98912xxxxxxx</code>""",
-            {"inline_keyboard": [[{"text": "‹ لغو ورود", "callback_data": "cancel_login"}], [{"text": "‹ بازگشت", "callback_data": "manage"}]]},
+★ پس از تکمیل ورود، همین‌جا نتیجه اتصال نمایش داده می‌شود.""",
+            {
+                "inline_keyboard": [
+                    [{"text": "◈ باز کردن پنل ورود امن", "url": login_url}],
+                    [{"text": "‹ لغو ورود", "callback_data": "cancel_login"}],
+                    [{"text": "‹ بازگشت", "callback_data": "manage"}],
+                ]
+            },
         )
         return
 
@@ -1891,9 +1813,202 @@ async def main():
             await http_session.close()
 
 
+LOGIN_HTML = """<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Persian Self — Secure Login</title>
+<style>
+body{margin:0;background:#0b0c0f;color:#f4f4f5;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{width:min(92vw,420px);background:#15171c;border:1px solid #2a2d34;border-radius:22px;padding:28px;box-sizing:border-box;box-shadow:0 18px 60px rgba(0,0,0,.45)}
+h1{font-size:21px;margin:0 0 8px}.sub{color:#9da3ad;font-size:13px;line-height:1.8;margin-bottom:22px}
+label{display:block;font-size:13px;color:#c9cdd4;margin:12px 0 7px}
+input{width:100%;box-sizing:border-box;background:#0f1115;border:1px solid #30343d;color:#fff;border-radius:12px;padding:13px;font-size:16px;outline:none}
+button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-size:15px;cursor:pointer;background:#f4f4f5;color:#111318}
+.notice{margin-top:16px;padding:12px;border-radius:12px;background:#101218;color:#c7cbd3;font-size:13px;line-height:1.8;white-space:pre-line}
+.ok{color:#9fe3b1}.err{color:#ff9f9f}.muted{color:#8e949f}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>◈ Persian Self — ورود امن</h1>
+<div class="sub">ورود اکانت از این پنل انجام می‌شود. کد ورود و رمز دو مرحله‌ای را داخل چت تلگرام ارسال نکنید.</div>
+
+<section id="phoneStep">
+<label>شماره تلفن</label>
+<input id="phone" placeholder="+98912..." autocomplete="tel">
+<button onclick="startLogin()">ارسال کد ورود</button>
+</section>
+
+<section id="codeStep" class="hidden">
+<label>کد ورود تلگرام</label>
+<input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="12345">
+<button onclick="verifyCode()">تأیید کد</button>
+<button onclick="showPhone()" style="background:#252931;color:#fff">دریافت کد جدید</button>
+</section>
+
+<section id="passStep" class="hidden">
+<label>رمز دو مرحله‌ای تلگرام</label>
+<input id="password" type="password" autocomplete="current-password" placeholder="رمز 2FA">
+<button onclick="verifyPassword()">تکمیل اتصال</button>
+</section>
+
+<div id="notice" class="notice">در انتظار شروع ورود…</div>
+</div>
+
+<script>
+const token=location.hash.slice(1);
+const notice=document.getElementById('notice');
+const phoneStep=document.getElementById('phoneStep');
+const codeStep=document.getElementById('codeStep');
+const passStep=document.getElementById('passStep');
+
+function msg(t,c=''){notice.textContent=t;notice.className='notice '+c}
+function showPhone(){phoneStep.classList.remove('hidden');codeStep.classList.add('hidden');passStep.classList.add('hidden');msg('شماره را وارد کنید تا یک کد جدید ارسال شود.')}
+async function api(path,body){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Login-Token':token},body:JSON.stringify(body)});
+  let d={}; try{d=await r.json()}catch{}
+  if(!r.ok) throw new Error(d.error||'خطای ارتباط با سرور');
+  return d;
+}
+async function startLogin(){
+  const phone=document.getElementById('phone').value.trim();
+  try{
+    msg('در حال ارسال کد…');
+    const d=await api('/api/web-login/start',{phone});
+    phoneStep.classList.add('hidden');codeStep.classList.remove('hidden');passStep.classList.add('hidden');
+    msg('کد جدید ارسال شد. فقط همان آخرین کد را وارد کنید.','ok');
+  }catch(e){msg(e.message,'err')}
+}
+async function verifyCode(){
+  const code=document.getElementById('code').value.trim();
+  try{
+    msg('در حال تأیید کد…');
+    const d=await api('/api/web-login/verify',{code});
+    if(d.status==='2fa_required'){
+      codeStep.classList.add('hidden');passStep.classList.remove('hidden');
+      msg('کد صحیح است. رمز دو مرحله‌ای اکانت را وارد کنید.','ok'); return;
+    }
+    if(d.status==='connected'){done(d);return;}
+    if(d.status==='code_invalid'){msg('کد ورود نادرست است. کد آخرین پیام تلگرام را دقیق وارد کنید.','err');return;}
+    if(d.status==='code_expired'){showPhone();msg('کد منقضی شده؛ یک کد جدید بگیرید.','err');return;}
+    msg(d.error||'ورود انجام نشد.','err');
+  }catch(e){msg(e.message,'err')}
+}
+async function verifyPassword(){
+  const password=document.getElementById('password').value;
+  try{
+    msg('در حال تکمیل ورود…');
+    const d=await api('/api/web-login/verify',{password});
+    if(d.status==='2fa_invalid'){msg('رمز دو مرحله‌ای نادرست است. دوباره وارد کنید.','err');return;}
+    if(d.status==='connected'){done(d);return;}
+    msg(d.error||'ورود انجام نشد.','err');
+  }catch(e){msg(e.message,'err')}
+}
+function done(d){
+  phoneStep.classList.add('hidden');codeStep.classList.add('hidden');passStep.classList.add('hidden');
+  msg('✓ اتصال اکانت با موفقیت انجام شد.\nاین صفحه را می‌توانید ببندید.','ok');
+}
+</script>
+</body>
+</html>"""
+
+
+async def login_page(request: web.Request):
+    return web.Response(
+        text=LOGIN_HTML,
+        content_type="text/html",
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
+def web_token_from_request(request: web.Request) -> str:
+    return request.headers.get("X-Login-Token", "").strip()
+
+
+async def web_login_start(request: web.Request):
+    token = web_token_from_request(request)
+    ctx = web_login_context(token)
+    if not ctx:
+        return web.json_response({"ok": False, "error": "لینک ورود منقضی یا نامعتبر است."}, status=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "درخواست نامعتبر است."}, status=400)
+
+    phone = str(payload.get("phone") or "").replace(" ", "")
+    if not phone.startswith("+") or len(phone) < 8:
+        return web.json_response({"ok": False, "error": "شماره را با فرمت بین‌المللی وارد کنید."}, status=400)
+
+    try:
+        result = await start_customer_login(str(ctx["customer_id"]), phone)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    ctx["stage"] = "code"
+    return web.json_response({"ok": True, **result})
+
+
+async def web_login_verify(request: web.Request):
+    token = web_token_from_request(request)
+    ctx = web_login_context(token)
+    if not ctx:
+        return web.json_response({"ok": False, "error": "لینک ورود منقضی یا نامعتبر است."}, status=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "درخواست نامعتبر است."}, status=400)
+
+    stage = ctx.get("stage", "phone")
+    code = normalize_login_code(str(payload.get("code") or ""))
+    password = str(payload.get("password") or "")
+
+    if stage == "2fa":
+        code = ""
+    elif len(code) < 3:
+        return web.json_response({"ok": False, "error": "کد ورود معتبر نیست."}, status=400)
+
+    try:
+        result = await verify_customer_login(str(ctx["customer_id"]), code, password)
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    status = result.get("status")
+    if status == "2fa_required":
+        ctx["stage"] = "2fa"
+    elif status == "connected":
+        ctx["stage"] = "done"
+        bot_states.pop(int(ctx["customer_id"]), None)
+    elif status == "code_expired":
+        ctx["stage"] = "phone"
+    elif status == "code_invalid":
+        ctx["stage"] = "code"
+    elif status == "2fa_invalid":
+        ctx["stage"] = "2fa"
+
+    return web.json_response({"ok": status in {"2fa_required", "connected", "code_invalid", "code_expired", "2fa_invalid"}, **result})
+
+
+async def web_login_status(request: web.Request):
+    token = request.query.get("token", "").strip()
+    ctx = web_login_context(token)
+    if not ctx:
+        return web.json_response({"ok": False, "error": "لینک ورود منقضی یا نامعتبر است."}, status=401)
+    return web.json_response({"ok": True, "stage": ctx.get("stage", "phone")})
+
+
 def build_app():
     app = web.Application()
     app.router.add_get("/health", health)
+    app.router.add_get("/login", login_page)
+    app.router.add_get("/api/web-login/status", web_login_status)
+    app.router.add_post("/api/web-login/start", web_login_start)
+    app.router.add_post("/api/web-login/verify", web_login_verify)
     app.router.add_get("/api/telegram/status", status)
     app.router.add_post("/api/telegram/login/start", start_login)
     app.router.add_post("/api/telegram/login/verify", verify_login)
