@@ -209,6 +209,133 @@ function SolarRealm() {
       activeAction = next;
     };
 
+    type PantherRig = {
+      spine: THREE.Bone | null;
+      chest: THREE.Bone | null;
+      neck: THREE.Bone | null;
+      head: THREE.Bone | null;
+      jaw: THREE.Bone | null;
+      ears: THREE.Bone[];
+      tail: THREE.Bone[];
+      frontLegs: THREE.Bone[][];
+      rearLegs: THREE.Bone[][];
+      eyelids: THREE.Bone[];
+      lastRot: Map<THREE.Bone, THREE.Quaternion>;
+      lastPos: Map<THREE.Bone, THREE.Vector3>;
+    };
+
+    const buildPantherRig = (root: THREE.Object3D): PantherRig => {
+      const bones: THREE.Bone[] = [];
+      root.traverse((node) => {
+        if (node instanceof THREE.Bone) bones.push(node);
+      });
+
+      const pick = (patterns: RegExp[]) =>
+        bones.find((bone) => patterns.some((pattern) => pattern.test(bone.name))) ?? null;
+
+      const pickMany = (patterns: RegExp[]) =>
+        bones.filter((bone) => patterns.some((pattern) => pattern.test(bone.name)));
+
+      const left = (name: string) => /(^|[_ .-])l(eft)?($|[_ .-])/i.test(name) || /left|_l\b/i.test(name);
+      const right = (name: string) => /(^|[_ .-])r(ight)?($|[_ .-])/i.test(name) || /right|_r\b/i.test(name);
+
+      const front = bones.filter((bone) => /front|fore|shoulder|upperarm|forearm|wrist|paw/i.test(bone.name));
+      const rear = bones.filter((bone) => /hind|rear|thigh|calf|ankle|hock|paw/i.test(bone.name));
+
+      const groupSide = (source: THREE.Bone[], side: "left" | "right") => {
+        const matcher = side === "left" ? left : right;
+        return source.filter((bone) => matcher(bone.name));
+      };
+
+      const frontLeft = groupSide(front, "left").slice(0, 5);
+      const frontRight = groupSide(front, "right").slice(0, 5);
+      const rearLeft = groupSide(rear, "left").slice(0, 5);
+      const rearRight = groupSide(rear, "right").slice(0, 5);
+
+      return {
+        spine: pick([/spine/i, /back/i, /body/i]),
+        chest: pick([/chest/i, /rib/i, /thorax/i]),
+        neck: pick([/neck/i]),
+        head: pick([/head/i, /skull/i]),
+        jaw: pick([/jaw/i, /mandible/i, /mouth/i]),
+        ears: pickMany([/ear/i, /pinna/i]).slice(0, 2),
+        tail: pickMany([/tail/i, /caudal/i]).slice(0, 8),
+        frontLegs: [frontLeft, frontRight],
+        rearLegs: [rearLeft, rearRight],
+        eyelids: pickMany([/eyelid/i, /lid/i]).slice(0, 4),
+        lastRot: new Map(),
+        lastPos: new Map(),
+      };
+    };
+
+    const applyPantherBehavior = (rig: PantherRig, t: number, moving: boolean, stalking: boolean) => {
+      const applyRotation = (bone: THREE.Bone | undefined | null, x: number, y: number, z: number) => {
+        if (!bone) return;
+        const previous = rig.lastRot.get(bone);
+        if (previous) bone.quaternion.multiply(previous.clone().invert());
+        const delta = new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z));
+        bone.quaternion.multiply(delta);
+        rig.lastRot.set(bone, delta);
+      };
+
+      const applyPosition = (bone: THREE.Bone | undefined | null, x: number, y: number, z: number) => {
+        if (!bone) return;
+        const previous = rig.lastPos.get(bone);
+        if (previous) bone.position.sub(previous);
+        const delta = new THREE.Vector3(x, y, z);
+        bone.position.add(delta);
+        rig.lastPos.set(bone, delta);
+      };
+
+      const breathe = Math.sin(t * 1.65) * 0.028 + Math.sin(t * 0.83) * 0.012;
+      applyRotation(rig.chest ?? rig.spine, breathe, 0, 0);
+      applyPosition(rig.chest ?? rig.spine, 0, Math.sin(t * 1.65) * 0.006, 0);
+
+      const headScan = Math.sin(t * 0.31) * 0.12 + Math.sin(t * 0.77) * 0.035;
+      const headLift = stalking ? -0.065 : 0.018 + Math.sin(t * 0.23) * 0.02;
+      applyRotation(rig.neck, headLift * 0.35, headScan * 0.35, 0);
+      applyRotation(rig.head, headLift, headScan, Math.sin(t * 0.42) * 0.02);
+
+      const earTurn = Math.sin(t * 1.7) * 0.08 + Math.sin(t * 0.57) * 0.035;
+      rig.ears.forEach((ear, index) => {
+        const side = index % 2 === 0 ? 1 : -1;
+        applyRotation(ear, Math.sin(t * 1.1 + index) * 0.045, side * (earTurn * 0.35), side * 0.06);
+      });
+
+      if (rig.jaw) {
+        const jawPulse = Math.max(0, Math.sin(t * 0.21)) * 0.012;
+        applyRotation(rig.jaw, jawPulse, 0, 0);
+      }
+
+      const tailWave = Math.sin(t * (moving ? 2.2 : 1.1)) * (moving ? 0.16 : 0.09);
+      rig.tail.forEach((bone, index) => {
+        const weight = 1 - index / Math.max(1, rig.tail.length);
+        applyRotation(bone, 0, tailWave * weight, Math.sin(t * 1.3 + index * 0.7) * 0.045 * weight);
+      });
+
+      const gait = moving ? t * (stalking ? 4.7 : 6.1) : 0;
+      const gaitPhase = gait % (Math.PI * 2);
+      const stride = stalking ? 0.22 : 0.34;
+      const lift = stalking ? 0.06 : 0.11;
+      const legSets = [...rig.frontLegs, ...rig.rearLegs];
+      legSets.forEach((chain, legIndex) => {
+        const sidePhase = legIndex % 2 === 0 ? 0 : Math.PI;
+        chain.slice(0, 2).forEach((bone, jointIndex) => {
+          const phase = gaitPhase + sidePhase + jointIndex * 0.34;
+          const swing = Math.sin(phase) * stride * (jointIndex === 0 ? 0.65 : 1);
+          const raise = Math.max(0, Math.sin(phase + Math.PI * 0.12)) * lift;
+          applyRotation(bone, swing, 0, 0);
+          applyPosition(bone, 0, raise * (jointIndex === 0 ? 0.45 : 0.2), 0);
+        });
+      });
+
+      const blinkCycle = t % 5.7;
+      const blink = blinkCycle > 4.85 && blinkCycle < 5.05 ? 0.38 : 0;
+      rig.eyelids.forEach((bone, index) => {
+        applyRotation(bone, index % 2 === 0 ? -blink : blink, 0, 0);
+      });
+    };
+
     loader.load(
       "/assets/panther/panther.glb",
       (gltf) => {
@@ -245,14 +372,47 @@ function SolarRealm() {
         }
         crown.visible = true;
 
+        const pantherRig = buildPantherRig(model);
+        (model.userData as { pantherRig?: PantherRig }).pantherRig = pantherRig;
+
         if (gltf.animations.length) {
           mixer = new THREE.AnimationMixer(model);
           const idle = findClip(gltf.animations, [/idle/i, /stand/i, /rest/i]);
           const walk = findClip(gltf.animations, [/walk/i, /stalk/i, /prowl/i, /roam/i]);
+          const run = findClip(gltf.animations, [/run/i, /sprint/i, /gallop/i]);
+          const turnLeft = findClip(gltf.animations, [/left.*turn/i, /turn.*left/i]);
+          const turnRight = findClip(gltf.animations, [/right.*turn/i, /turn.*right/i]);
+          const sit = findClip(gltf.animations, [/sit/i, /sitting/i]);
+          const stand = findClip(gltf.animations, [/stand/i, /stand[- ]?up/i]);
+          const rest = findClip(gltf.animations, [/sleep/i, /rest/i, /lay/i]);
           const fallback = gltf.animations[0];
-          playAction(idle ?? walk ?? fallback, 0);
-          (model.userData as { idle?: THREE.AnimationClip; walk?: THREE.AnimationClip }).idle = idle ?? fallback;
-          (model.userData as { idle?: THREE.AnimationClip; walk?: THREE.AnimationClip }).walk = walk ?? idle ?? fallback;
+          playAction(idle ?? stand ?? walk ?? fallback, 0);
+          (model.userData as {
+            idle?: THREE.AnimationClip;
+            walk?: THREE.AnimationClip;
+            run?: THREE.AnimationClip;
+            turnLeft?: THREE.AnimationClip;
+            turnRight?: THREE.AnimationClip;
+            sit?: THREE.AnimationClip;
+            stand?: THREE.AnimationClip;
+            rest?: THREE.AnimationClip;
+          }).idle = idle ?? stand ?? fallback;
+          (model.userData as {
+            idle?: THREE.AnimationClip;
+            walk?: THREE.AnimationClip;
+            run?: THREE.AnimationClip;
+            turnLeft?: THREE.AnimationClip;
+            turnRight?: THREE.AnimationClip;
+            sit?: THREE.AnimationClip;
+            stand?: THREE.AnimationClip;
+            rest?: THREE.AnimationClip;
+          }).walk = walk ?? idle ?? fallback;
+          (model.userData as { run?: THREE.AnimationClip }).run = run ?? walk ?? idle ?? fallback;
+          (model.userData as { turnLeft?: THREE.AnimationClip; turnRight?: THREE.AnimationClip }).turnLeft = turnLeft ?? walk ?? idle ?? fallback;
+          (model.userData as { turnLeft?: THREE.AnimationClip; turnRight?: THREE.AnimationClip }).turnRight = turnRight ?? walk ?? idle ?? fallback;
+          (model.userData as { sit?: THREE.AnimationClip; stand?: THREE.AnimationClip; rest?: THREE.AnimationClip }).sit = sit ?? idle ?? fallback;
+          (model.userData as { stand?: THREE.AnimationClip }).stand = stand ?? idle ?? fallback;
+          (model.userData as { rest?: THREE.AnimationClip }).rest = rest ?? idle ?? fallback;
         }
       },
       undefined,
@@ -301,6 +461,9 @@ function SolarRealm() {
         const targetX = 1.8 + roamX;
         const targetZ = 1.1 + roamZ;
         const moving = Math.abs(roamX) + Math.abs(roamZ) > 0.65;
+        const behaviorTime = t % 32;
+        const stalking = behaviorTime > 15 && behaviorTime < 21;
+        const phase = behaviorTime < 5 ? "idle" : behaviorTime < 15 ? "walk" : behaviorTime < 21 ? "stalk" : behaviorTime < 27 ? "walk" : "idle";
 
         pantherRoot.position.x += (targetX - pantherRoot.position.x) * 0.012;
         pantherRoot.position.z += (targetZ - pantherRoot.position.z) * 0.012;
@@ -308,14 +471,33 @@ function SolarRealm() {
           roamX - Math.sin((t - 0.08) * 0.085) * 2.8,
           roamZ - Math.cos((t - 0.08) * 0.065) * 1.9,
         ) + pointer.x * 0.14;
-        pantherRoot.position.y = -1.7 + Math.sin(t * 1.9) * 0.018;
+        pantherRoot.position.y = -1.7 + Math.sin(t * (stalking ? 1.5 : 1.9)) * (stalking ? 0.009 : 0.018);
 
-        const clips = model.userData as { idle?: THREE.AnimationClip; walk?: THREE.AnimationClip };
-        if (moving !== wasMoving) {
-          playAction(moving ? clips.walk : clips.idle);
+        const clips = model.userData as {
+          idle?: THREE.AnimationClip;
+          walk?: THREE.AnimationClip;
+          run?: THREE.AnimationClip;
+          turnLeft?: THREE.AnimationClip;
+          turnRight?: THREE.AnimationClip;
+          sit?: THREE.AnimationClip;
+          stand?: THREE.AnimationClip;
+          rest?: THREE.AnimationClip;
+          pantherRig?: PantherRig;
+        };
+        const desiredClip =
+          phase === "stalk" ? clips.walk :
+          phase === "walk" ? clips.walk :
+          clips.idle;
+
+        if (moving !== wasMoving || (phase === "stalk" && wasMoving && !stalking)) {
+          playAction(desiredClip);
           wasMoving = moving;
         }
+
         mixer?.update(dt);
+        if (clips.pantherRig) {
+          applyPantherBehavior(clips.pantherRig, t, moving, stalking);
+        }
       }
 
       camera.position.x += (pointer.x * 1.15 - camera.position.x) * 0.015;
