@@ -42,6 +42,7 @@ REFERRAL_REWARD = int(os.getenv("SALF1_REFERRAL_REWARD", "500"))
 TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 LOGIN_TOKEN_TTL_SECONDS = int(os.getenv("SALF1_LOGIN_TOKEN_TTL_SECONDS", "600"))
 LOGIN_BASE_URL = os.getenv("SALF1_LOGIN_BASE_URL", "").strip().rstrip("/")
+WEBHOOK_SECRET = os.getenv("SALF1_WEBHOOK_SECRET", "").strip()
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
@@ -1723,40 +1724,39 @@ async def mini_bot_loop():
         print("Mini bot is disabled: SALF1_BOT_TOKEN and DATABASE_URL are required.")
         return
 
+    if not WEBHOOK_SECRET:
+        print("Mini bot is disabled: SALF1_WEBHOOK_SECRET is required.")
+        return
+
+    if not LOGIN_BASE_URL:
+        print("Mini bot is disabled: SALF1_LOGIN_BASE_URL is required for webhook mode.")
+        return
+
     identity = await bot_api("getMe", {}, timeout=15)
     if not identity or not identity.get("ok"):
         print("Mini bot failed to initialize with getMe.")
         return
 
     bot_username = str(identity["result"].get("username") or "").strip()
-    await bot_api("deleteWebhook", {"drop_pending_updates": False}, timeout=15)
-    offset = 0
-    print(f"SALF1 mini bot started as @{bot_username}")
+    webhook_url = f"{LOGIN_BASE_URL}/bot/webhook"
+    webhook_result = await bot_api(
+        "setWebhook",
+        {
+            "url": webhook_url,
+            "secret_token": WEBHOOK_SECRET,
+            "allowed_updates": ["message", "callback_query"],
+            "drop_pending_updates": False,
+        },
+        timeout=15,
+    )
+    if not webhook_result or not webhook_result.get("ok"):
+        print(f"Mini bot failed to configure webhook: {webhook_result}")
+        return
 
-    while True:
-        try:
-            response = await bot_api(
-                "getUpdates",
-                {
-                    "offset": offset,
-                    "timeout": 25,
-                    "allowed_updates": ["message", "callback_query"],
-                },
-                timeout=35,
-            )
-            if not response or not response.get("ok"):
-                await asyncio.sleep(3)
-                continue
+    print(f"SALF1 mini bot started as @{bot_username} via webhook")
+    print(f"Telegram webhook configured: {webhook_url}")
 
-            for update in response.get("result", []):
-                offset = max(offset, int(update["update_id"]) + 1)
-                if update.get("callback_query"):
-                    await process_callback(update["callback_query"])
-                elif update.get("message"):
-                    await process_bot_message(update["message"])
-        except Exception as exc:
-            print(f"Mini bot loop error: {exc}")
-            await asyncio.sleep(3)
+    await asyncio.Event().wait()
 
 
 async def main():
@@ -1984,6 +1984,16 @@ async def web_login_verify(request: web.Request):
     elif status == "connected":
         ctx["stage"] = "done"
         bot_states.pop(int(ctx["customer_id"]), None)
+        await bot_send(
+            int(ctx["customer_id"]),
+            """<b>✓ اتصال اکانت موفق بود</b>
+
+⛂ - اکانت تلگرام با موفقیت متصل شد.
+⛂ - وضعیت اکانت : ● فعال
+
+◈ اکنون می‌توانید از امکانات سلف استفاده کنید.""",
+            await user_manage_markup(int(ctx["customer_id"])),
+        )
     elif status == "code_expired":
         ctx["stage"] = "phone"
     elif status == "code_invalid":
@@ -1992,6 +2002,25 @@ async def web_login_verify(request: web.Request):
         ctx["stage"] = "2fa"
 
     return web.json_response({"ok": status in {"2fa_required", "connected", "code_invalid", "code_expired", "2fa_invalid"}, **result})
+
+
+async def bot_webhook(request: web.Request):
+    if not WEBHOOK_SECRET:
+        return web.Response(status=503, text="webhook not configured")
+
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != WEBHOOK_SECRET:
+        return web.Response(status=401, text="unauthorized")
+
+    try:
+        update = await request.json()
+        if update.get("callback_query"):
+            await process_callback(update["callback_query"])
+        elif update.get("message"):
+            await process_bot_message(update["message"])
+        return web.json_response({"ok": True})
+    except Exception as exc:
+        print(f"Webhook update error: {exc}")
+        return web.json_response({"ok": False}, status=500)
 
 
 async def web_login_status(request: web.Request):
@@ -2006,6 +2035,7 @@ def build_app():
     app = web.Application()
     app.router.add_get("/health", health)
     app.router.add_get("/login", login_page)
+    app.router.add_post("/bot/webhook", bot_webhook)
     app.router.add_get("/api/web-login/status", web_login_status)
     app.router.add_post("/api/web-login/start", web_login_start)
     app.router.add_post("/api/web-login/verify", web_login_verify)
