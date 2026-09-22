@@ -118,7 +118,33 @@ function SolarRealm() {
       ));
     }
 
-    const planetData = [
+    // HD procedural planet detail: layered relief, cloud shells, atmospheric rims and moons.
+    const planetDetail = (tint: string, seed: number) => {
+      const canvas = document.createElement("canvas"); canvas.width = 512; canvas.height = 256;
+      const ctx = canvas.getContext("2d"); if (!ctx) return null;
+      const image = ctx.createImageData(canvas.width, canvas.height); const data = image.data;
+      const base = new THREE.Color(tint);
+      for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+        const i = (y * canvas.width + x) * 4;
+        const n = (Math.sin(x * 0.047 + seed) + Math.sin(y * 0.083 - seed * 1.7) + Math.sin((x+y) * 0.021)) / 3;
+        const v = THREE.MathUtils.clamp(0.78 + n * 0.22, 0.45, 1.05);
+        data[i] = Math.min(255, base.r * 255 * v); data[i+1] = Math.min(255, base.g * 255 * v); data[i+2] = Math.min(255, base.b * 255 * v); data[i+3] = 255;
+      }
+      ctx.putImageData(image,0,0); const tex = new THREE.CanvasTexture(canvas); tex.colorSpace=THREE.SRGBColorSpace; tex.anisotropy=4; return tex;
+    };
+    const addAtmosphere = (planet: THREE.Mesh, radius: number, color: string, opacity: number) => {
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.055, 48, 32), new THREE.MeshBasicMaterial({color, transparent:true, opacity, side:THREE.BackSide, blending:THREE.AdditiveBlending, depthWrite:false}));
+      planet.add(shell);
+    };
+    const moonMaterial = new THREE.MeshStandardMaterial({color:"#9da5a9", roughness:0.92, metalness:0.0});
+    const moonSpecs = [[2,1.05,0.13,0.9],[4,1.25,0.17,0.65],[5,1.45,0.12,1.15]] as const;
+    moonSpecs.forEach(([parentIndex, orbitRadius, moonSize, speed]) => {
+      const parent = orbitGroups[parentIndex]; if (!parent) return;
+      const moonOrbit = new THREE.Group(); parent.add(moonOrbit); moonOrbit.userData.moonSpeed=speed;
+      const moon = new THREE.Mesh(new THREE.SphereGeometry(moonSize,24,16), moonMaterial.clone()); moon.position.x=orbitRadius; moon.castShadow=true; moonOrbit.add(moon);
+    });
+
+\n    const planetData = [
       [4.3, 0.22, "#8e9aa0", 0.08], [6.4, 0.34, "#b18c69", -0.05],
       [8.6, 0.46, "#718d9e", 0.03], [11.2, 0.58, "#9c8067", -0.025],
       [14.3, 0.92, "#b4a17c", 0.012], [18.1, 0.67, "#6f8898", -0.009],
@@ -155,32 +181,6 @@ function SolarRealm() {
       }
       if (index === 2 || index === 5) addAtmosphere(planet, size, index === 2 ? "#6ea9d8" : "#6e9bb8", 0.11);\n      orbit.userData.speed = speed;
       orbit.rotation.y = index * 0.8;
-    });
-
-    // HD procedural planet detail: layered relief, cloud shells, atmospheric rims and moons.
-    const planetDetail = (tint: string, seed: number) => {
-      const canvas = document.createElement("canvas"); canvas.width = 512; canvas.height = 256;
-      const ctx = canvas.getContext("2d"); if (!ctx) return null;
-      const image = ctx.createImageData(canvas.width, canvas.height); const data = image.data;
-      const base = new THREE.Color(tint);
-      for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
-        const i = (y * canvas.width + x) * 4;
-        const n = (Math.sin(x * 0.047 + seed) + Math.sin(y * 0.083 - seed * 1.7) + Math.sin((x+y) * 0.021)) / 3;
-        const v = THREE.MathUtils.clamp(0.78 + n * 0.22, 0.45, 1.05);
-        data[i] = Math.min(255, base.r * 255 * v); data[i+1] = Math.min(255, base.g * 255 * v); data[i+2] = Math.min(255, base.b * 255 * v); data[i+3] = 255;
-      }
-      ctx.putImageData(image,0,0); const tex = new THREE.CanvasTexture(canvas); tex.colorSpace=THREE.SRGBColorSpace; tex.anisotropy=4; return tex;
-    };
-    const addAtmosphere = (planet: THREE.Mesh, radius: number, color: string, opacity: number) => {
-      const shell = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.055, 48, 32), new THREE.MeshBasicMaterial({color, transparent:true, opacity, side:THREE.BackSide, blending:THREE.AdditiveBlending, depthWrite:false}));
-      planet.add(shell);
-    };
-    const moonMaterial = new THREE.MeshStandardMaterial({color:"#9da5a9", roughness:0.92, metalness:0.0});
-    const moonSpecs = [[2,1.05,0.13,0.9],[4,1.25,0.17,0.65],[5,1.45,0.12,1.15]] as const;
-    moonSpecs.forEach(([parentIndex, orbitRadius, moonSize, speed]) => {
-      const parent = orbitGroups[parentIndex]; if (!parent) return;
-      const moonOrbit = new THREE.Group(); parent.add(moonOrbit); moonOrbit.userData.moonSpeed=speed;
-      const moon = new THREE.Mesh(new THREE.SphereGeometry(moonSize,24,16), moonMaterial.clone()); moon.position.x=orbitRadius; moon.castShadow=true; moonOrbit.add(moon);
     });
 
     const asteroidGeometry = new THREE.BufferGeometry();
