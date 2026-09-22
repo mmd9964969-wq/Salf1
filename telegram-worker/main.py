@@ -3,6 +3,7 @@ import hashlib
 import html
 import os
 import random
+import shutil
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -69,6 +70,34 @@ def session_path(customer_id: str) -> str:
     directory = SESSION_DIR / f"customer-{customer_key(customer_id)}"
     directory.mkdir(parents=True, exist_ok=True)
     return str(directory / "telegram")
+
+
+async def reset_customer_session(customer_id: str):
+    """Explicitly start a fresh Telegram authorization flow.
+    Used only when the user presses the account-login/reconnect button.
+    """
+    client = clients.pop(customer_id, None)
+    if client is not None:
+        try:
+            if client.is_connected():
+                await client.disconnect()
+        except Exception as exc:
+            print(f"Session disconnect warning for {customer_id}: {exc}")
+
+    pending_phones.pop(customer_id, None)
+    pending_codes.pop(customer_id, None)
+    pending_code_hashes.pop(customer_id, None)
+    pending_2fa.discard(customer_id)
+    login_locks.pop(customer_id, None)
+    me_cache.pop(customer_id, None)
+    enabled_cache[customer_id] = False
+
+    session_dir = SESSION_DIR / f"customer-{customer_key(customer_id)}"
+    if session_dir.exists():
+        shutil.rmtree(session_dir, ignore_errors=True)
+
+    await update_account_state(customer_id, False)
+    await set_salf_enabled(customer_id, False)
 
 
 def get_customer_id(request: web.Request) -> str | None:
@@ -1520,6 +1549,10 @@ async def process_callback(callback_query: dict):
         return
 
     if data == "login":
+        # The user explicitly requested a fresh/reconnect login.
+        # Clear any persisted authorized session so Telegram can require
+        # the complete flow: code -> 2FA password (when enabled).
+        await reset_customer_session(str(user_id))
         bot_states[user_id] = "await_phone"
         await bot_edit(
             chat_id,
