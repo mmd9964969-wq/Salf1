@@ -498,14 +498,10 @@ async def charge_customer_minute(customer_id: str):
             user_id,
         )
 
-    enabled_cache[customer_id] = False    await bot_send(
+    enabled_cache[customer_id] = False
+    await bot_send(
         user_id,
-        "◈ سالف متوقف شد\
-\
-اعتبار مصرفی شما به پایان رسید.\
-\
-⛂ مصرف فعال : 1 جم ترون / دقیقه\
-⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
+        "◈ سالف متوقف شد\\n\\nاعتبار مصرفی شما به پایان رسید.\\n\\n⛂ مصرف فعال : 1 جم ترون / دقیقه\\n⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
     )
 
 
@@ -543,8 +539,8 @@ async def billing_loop():
                     enabled_cache[str(user_id)] = False
                     await bot_send(
                         user_id,
-                        "◈ سالف متوقف شد\n\nاعتبار مصرفی شما به پایان رسید.\n\n"
-                        "⛂ مصرف فعال : 1 جم ترون / دقیقه\n"
+                        "◈ سالف متوقف شد\\n\\nاعتبار مصرفی شما به پایان رسید.\\n\\n"
+                        "⛂ مصرف فعال : 1 جم ترون / دقیقه\\n"
                         "⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
                     )
         except Exception as exc:
@@ -997,7 +993,8 @@ async def message_event(event, customer_id: str):
 
     payload = {
         "type": "telegram.message",
-        "customer_id": customer_id,        "message": {
+        "customer_id": customer_id,
+        "message": {
             "chat_id": getattr(event.chat, "id", None),
             "sender_id": getattr(event.sender, "id", None) if event.sender else None,
             "text": text[:4000],
@@ -1563,9 +1560,7 @@ async def process_callback(callback_query: dict):
             await bot_edit(
                 chat_id,
                 message_id,
-                "○ <b>SALF1 خاموش شد.</b>\
-\
-تمام اجرای خودکار سرویس برای این اکانت متوقف شد.",
+                "○ <b>SALF1 خاموش شد.</b>\\n\\nتمام اجرای خودکار سرویس برای این اکانت متوقف شد.",
                 await user_manage_markup(user_id),
             )
             return
@@ -1584,9 +1579,7 @@ async def process_callback(callback_query: dict):
             await bot_edit(
                 chat_id,
                 message_id,
-                "⛂ اعتبار کافی نیست.\
-\
-الماس رایگان را باز کنید و از رفرال‌ها جم ترون بگیرید.",
+                "⛂ اعتبار کافی نیست.\\n\\nالماس رایگان را باز کنید و از رفرال‌ها جم ترون بگیرید.",
                 await user_manage_markup(user_id),
             )
             return
@@ -1595,5 +1588,183 @@ async def process_callback(callback_query: dict):
         await bot_edit(
             chat_id,
             message_id,
-            "● <b>SALF1 روشن شد.</b>\
-\
+            "● <b>SALF1 روشن شد.</b>\\n\\nسرویس فعال است و مصرف از اعتبار/تست اعمال می‌شود.",
+            await user_manage_markup(user_id),
+        )
+        return
+
+    if data == "disconnect":
+        client = clients.get(str(user_id))
+        if client:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            clients.pop(str(user_id), None)
+
+        me_cache.pop(str(user_id), None)
+        enabled_cache[str(user_id)] = False
+        pending_phones.pop(str(user_id), None)
+        pending_codes.pop(str(user_id), None)
+        pending_2fa.discard(str(user_id))
+        await update_account_state(str(user_id), False)
+        await set_salf_enabled(str(user_id), False)
+
+        try:
+            session_file = Path(session_path(str(user_id)) + ".session")
+            if session_file.exists():
+                session_file.unlink()
+        except OSError as exc:
+            print(f"Session cleanup warning: {exc}")
+
+        await bot_edit(
+            chat_id,
+            message_id,
+            "○ <b>اکانت از SALF1 خارج شد.\\n\\nبرای اتصال دوباره، ورود اکانت را انتخاب کنید.</b>",
+            await user_manage_markup(user_id),
+        )
+        return
+
+    if data == "referral":
+        text, markup = await referral_text(user_id)
+        await bot_edit(chat_id, message_id, text, markup)
+        return
+
+    if data == "support":
+        support_text = """
+<b>◈ پشتیبانی</b>
+
+⛂ - برای ارتباط با پشتیبانی سلف از طریق دکمه زیر اقدام کنید.
+
+⌁ پاسخ‌گویی و پیگیری درخواست‌ها از همین مسیر انجام می‌شود.
+"""
+        await bot_edit(chat_id, message_id, support_text, support_markup())
+        return
+
+    if data == "channel":
+        channel_text = """
+<b>◈ کانال پرشین سلف</b>
+
+⛂ - آخرین اخبار بروزرسانی‌ ها و اطلاعیه‌ ها را در کانال دنبال کنید.
+"""
+        await bot_edit(chat_id, message_id, channel_text, channel_markup())
+        return
+
+    if data == "channel_missing":
+        await bot_edit(
+            chat_id,
+            message_id,
+            "⛂ آدرس کانال پرشین هنوز در تنظیمات این نسخه ثبت نشده است.",
+            main_menu_markup(),
+        )
+        return
+
+
+async def mini_bot_loop():
+    global bot_username
+    if not bot_configured():
+        print("Mini bot is disabled: SALF1_BOT_TOKEN and DATABASE_URL are required.")
+        return
+
+    identity = await bot_api("getMe", {}, timeout=15)
+    if not identity or not identity.get("ok"):
+        print("Mini bot failed to initialize with getMe.")
+        return
+
+    bot_username = str(identity["result"].get("username") or "").strip()
+    await bot_api("deleteWebhook", {"drop_pending_updates": False}, timeout=15)
+    offset = 0
+    print(f"SALF1 mini bot started as @{bot_username}")
+
+    while True:
+        try:
+            response = await bot_api(
+                "getUpdates",
+                {
+                    "offset": offset,
+                    "timeout": 25,
+                    "allowed_updates": ["message", "callback_query"],
+                },
+                timeout=35,
+            )
+            if not response or not response.get("ok"):
+                await asyncio.sleep(3)
+                continue
+
+            for update in response.get("result", []):
+                offset = max(offset, int(update["update_id"]) + 1)
+                if update.get("callback_query"):
+                    await process_callback(update["callback_query"])
+                elif update.get("message"):
+                    await process_bot_message(update["message"])
+        except Exception as exc:
+            print(f"Mini bot loop error: {exc}")
+            await asyncio.sleep(3)
+
+
+async def main():
+    global http_session, db_pool
+
+    if DATABASE_URL:
+        try:
+            db_pool = await asyncpg.create_pool(
+                DATABASE_URL,
+                min_size=DB_POOL_MIN,
+                max_size=DB_POOL_MAX,
+                command_timeout=15,
+            )
+            print("Salf1 worker database connected.")
+        except Exception as exc:
+            print(f"WARNING: database connection failed: {exc}")
+            db_pool = None
+    else:
+        print("WARNING: DATABASE_URL is not configured; mini bot persistence is disabled.")
+
+    if not WORKER_API_TOKEN:
+        print("WARNING: WORKER_API_TOKEN is not configured; protected endpoints will return 401.")
+
+    if not EVENT_BRIDGE_URL:
+        print("WARNING: SALF1_EVENT_BRIDGE_URL is not configured; message events will only be logged.")
+
+    if not KEYWORD_ACK_URL:
+        print("WARNING: SALF1_KEYWORD_ACK_URL is not configured; execution counts will not be acknowledged.")
+
+    if not BOT_TOKEN:
+        print("WARNING: SALF1_BOT_TOKEN is not configured; the bot API is disabled.")
+
+    print(f"Salf1 worker role: {ROLE}; DB pool={DB_POOL_MIN}-{DB_POOL_MAX}")
+
+    http_session = ClientSession()
+    try:
+        await init_loaded_sessions()
+        runner = web.AppRunner(build_app())
+        await runner.setup()
+        site = web.TCPSite(runner, HOST, PORT)
+        await site.start()
+        print(f"Salf1 Telegram Worker listening on {HOST}:{PORT}")
+
+        tasks = []
+        if ROLE in {"bot", "all"}:
+            tasks.append(asyncio.create_task(mini_bot_loop()))
+        if ROLE in {"billing", "all"}:
+            tasks.append(asyncio.create_task(billing_loop()))
+        await asyncio.Event().wait()
+    finally:
+        if db_pool is not None:
+            await db_pool.close()
+        if http_session is not None:
+            await http_session.close()
+
+
+def build_app():
+    app = web.Application()
+    app.router.add_get("/health", health)
+    app.router.add_get("/api/telegram/status", status)
+    app.router.add_post("/api/telegram/login/start", start_login)
+    app.router.add_post("/api/telegram/login/verify", verify_login)
+    app.router.add_post("/api/telegram/disconnect", disconnect)
+    return app
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
