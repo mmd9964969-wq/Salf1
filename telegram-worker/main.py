@@ -1950,7 +1950,8 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 
 <section id="codeStep" class="hidden">
 <label>کد ورود تلگرام</label>
-<form id="codeForm">
+<form id="codeForm" method="post" action="/login/verify" enctype="application/x-www-form-urlencoded">
+<input type="hidden" name="token" value="">
 <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="12345">
 <button id="verifyBtn" type="submit">تأیید کد</button>
 </form>
@@ -1959,7 +1960,8 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 
 <section id="passStep" class="hidden">
 <label>رمز دو مرحله‌ای تلگرام</label>
-<form id="passwordForm">
+<form id="passwordForm" method="post" action="/login/verify" enctype="application/x-www-form-urlencoded">
+<input type="hidden" name="token" value="">
 <input id="password" type="password" autocomplete="current-password" placeholder="رمز 2FA">
 <button id="passwordBtn" type="submit">تکمیل اتصال</button>
 </form>
@@ -2073,10 +2075,16 @@ async def login_page(request: web.Request):
     page = LOGIN_HTML
     if token:
         page = page.replace('<input type="hidden" name="token" value="">', f'<input type="hidden" name="token" value="{html.escape(token, quote=True)}">', 1)
-    if stage == "code" and await web_login_context(token):
+    if stage in {"code", "2fa", "done"} and await web_login_context(token):
         page = page.replace('<section id="phoneStep">', '<section id="phoneStep" class="hidden">', 1)
-        page = page.replace('<section id="codeStep" class="hidden">', '<section id="codeStep">', 1)
-        page = page.replace('در انتظار شروع ورود…', 'کد ورود ارسال شد؛ کد آخرین پیام تلگرام را وارد کنید.', 1)
+        if stage == "code":
+            page = page.replace('<section id="codeStep" class="hidden">', '<section id="codeStep">', 1)
+            page = page.replace('در انتظار شروع ورود…', 'کد ورود ارسال شد؛ کد آخرین پیام تلگرام را وارد کنید.', 1)
+        elif stage == "2fa":
+            page = page.replace('<section id="passStep" class="hidden">', '<section id="passStep">', 1)
+            page = page.replace('در انتظار شروع ورود…', 'کد صحیح است؛ رمز دو مرحله‌ای را وارد کنید.', 1)
+        else:
+            page = page.replace('در انتظار شروع ورود…', '✓ اتصال اکانت با موفقیت انجام شد. این صفحه را می‌توانید ببندید.', 1)
     response = web.Response(
         text=page,
         content_type="text/html",
@@ -2164,6 +2172,54 @@ async def web_login_start(request: web.Request):
     return web.json_response({"ok": True, **result})
 
 
+async def web_login_verify_form(request: web.Request):
+    token = request.query.get("token", "").strip()
+    try:
+        form = await request.post()
+    except Exception:
+        return web.Response(text="درخواست نامعتبر است.", content_type="text/plain", status=400)
+    if not token:
+        token = str(form.get("token") or "").strip()
+    ctx = await web_login_context(token)
+    if not ctx:
+        return web.Response(text="لینک ورود منقضی یا نامعتبر است.", content_type="text/plain", status=401)
+    stage = ctx.get("stage", "phone")
+    code = normalize_login_code(str(form.get("code") or ""))
+    password = str(form.get("password") or "")
+    if stage == "2fa":
+        code = ""
+        if not password:
+            return web.Response(text="رمز دو مرحله‌ای را وارد کنید.", content_type="text/plain", status=400)
+    elif len(code) < 3:
+        return web.Response(text="کد ورود معتبر نیست.", content_type="text/plain", status=400)
+    try:
+        result = await verify_customer_login(str(ctx["customer_id"]), code, password)
+    except Exception as exc:
+        return web.Response(text=str(exc), content_type="text/plain", status=400)
+    status = result.get("status")
+    if status == "2fa_required":
+        await web_login_set_stage(token, "2fa")
+        raise web.HTTPFound("/login?token=" + token + "&stage=2fa")
+    if status == "connected":
+        await web_login_set_stage(token, "done")
+        bot_states.pop(int(ctx["customer_id"]), None)
+        await bot_send(
+            int(ctx["customer_id"]),
+            "✓ اتصال اکانت موفق بود\n\n⛂ - اکانت تلگرام با موفقیت متصل شد.\n⛂ - وضعیت اکانت : ● فعال\n\n◈ اکنون می‌توانید از امکانات سلف استفاده کنید.",
+            await user_manage_markup(int(ctx["customer_id"])),
+        )
+        raise web.HTTPFound("/login?token=" + token + "&stage=done")
+    if status == "code_expired":
+        await web_login_set_stage(token, "phone")
+        raise web.HTTPFound("/login?token=" + token + "&stage=phone")
+    if status == "code_invalid":
+        await web_login_set_stage(token, "code")
+        raise web.HTTPFound("/login?token=" + token + "&stage=code")
+    if status == "2fa_invalid":
+        await web_login_set_stage(token, "2fa")
+        raise web.HTTPFound("/login?token=" + token + "&stage=2fa")
+    return web.Response(text="ورود انجام نشد.", content_type="text/plain", status=400)
+
 async def web_login_verify(request: web.Request):
     token = web_token_from_request(request)
     ctx = await web_login_context(token)
@@ -2249,6 +2305,7 @@ def build_app():
     app.router.add_post("/bot/webhook", bot_webhook)
     app.router.add_get("/api/web-login/status", web_login_status)
     app.router.add_post("/login/start", web_login_start_form)
+    app.router.add_post("/login/verify", web_login_verify_form)
     app.router.add_post("/api/web-login/start", web_login_start)
     app.router.add_post("/api/web-login/verify", web_login_verify)
     app.router.add_get("/api/telegram/status", status)
