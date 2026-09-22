@@ -384,7 +384,33 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     async with lock:
         phone = pending_phones.get(customer_id)
         client = clients.get(customer_id)
-        if not client or not phone:
+        if not client:
+            raise RuntimeError("start login first")
+
+        # Idempotency guard: if a previous request already completed the
+        # authorization, never call sign_in again with the same one-time code.
+        await client.connect()
+        if await client.is_user_authorized():
+            me = await client.get_me()
+            pending_phones.pop(customer_id, None)
+            pending_codes.pop(customer_id, None)
+            pending_code_hashes.pop(customer_id, None)
+            pending_2fa.discard(customer_id)
+            login_locks.pop(customer_id, None)
+            me_cache[customer_id] = int(me.id)
+            await update_account_state(customer_id, True)
+            await set_salf_enabled(customer_id, False)
+            return {
+                "status": "connected",
+                "user": {
+                    "id": me.id,
+                    "username": me.username,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                },
+            }
+
+        if not phone:
             raise RuntimeError("start login first")
 
         try:
