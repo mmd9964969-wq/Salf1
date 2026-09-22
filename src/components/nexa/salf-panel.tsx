@@ -27,64 +27,46 @@ type Section = {
 };
 
 const sections: Section[] = [
-  { id: "account", title: "حساب کاربری", icon: UserRound, desc: "هویت، وضعیت و نشست‌های اکانت", items: [
-    { id:"profile", title:"اطلاعات پروفایل", icon:UserRound, desc:"نمایش مشخصات کامل اکانت", commands:["/account info","/profile","حساب اطلاعات"] },
-    { id:"profile-edit", title:"ویرایش پروفایل", icon:Pencil, desc:"مدیریت نام، بیو و نام کاربری", commands:["/profile name","/profile bio"] },
-    { id:"sessions", title:"نشست‌های فعال", icon:LockKeyhole, desc:"مشاهده و مدیریت نشست‌های فعال", commands:["/security sessions","امنیت نشست"] },
-    { id:"contacts", title:"مخاطبین", icon:UserPlus, desc:"جستجو و مدیریت مخاطبین", commands:["/contacts list","/contacts search"] },
-    { id:"special", title:"کاربران ویژه", icon:Users, desc:"اعمال قوانین اختصاصی برای کاربران", commands:["/user special add @username"] },
-    { id:"blocked", title:"مسدودشده‌ها", icon:Ban, desc:"مدیریت فهرست کاربران مسدود", commands:["/blocked list"] },
+  { id: "account", title: "حساب کاربری", icon: UserRound, desc: "هویت، وضعیت و مدیریت اکانت اختصاصی", items: [
+    { id:"profile", title:"اطلاعات حساب", icon:UserRound, desc:"نمایش مشخصات و وضعیت اکانت", commands:["/profile","/account info","پروفایل"] },
+    { id:"profile-edit", title:"ویرایش پروفایل", icon:Pencil, desc:"مدیریت نام، بیو و نام کاربری", commands:["/profile name","/profile bio","پروفایل ویرایش"] },
+    { id:"sessions", title:"نشست‌های فعال", icon:LockKeyhole, desc:"مشاهده و مدیریت نشست‌های اکانت", commands:["/security sessions","امنیت نشست"] },
   ]},
   { id: "self-settings", title: "تنظیمات سلف", icon: Settings2, desc: "کنترل وضعیت، رفتار و اجرای Salf1", items: [
-    { id:"self-status", title:"وضعیت سلف", icon:Power, desc:"نمایش وضعیت و آماده‌به‌کاری سلف", commands:["/self status","سلف وضعیت"] },
-    { id:"self-mode", title:"حالت اجرا", icon:Play, desc:"انتخاب و مدیریت حالت اجرای سلف", commands:["/self mode","سلف حالت"] },
+    { id:"self-status", title:"وضعیت سلف", icon:Power, desc:"نمایش وضعیت فعلی و آماده‌به‌کاری سلف", commands:["/self status","سلف وضعیت"] },
+    { id:"self-mode", title:"حالت اجرا", icon:Play, desc:"انتخاب و مدیریت شیوه اجرای سلف", commands:["/self mode","سلف حالت"] },
     { id:"worker", title:"وضعیت Worker", icon:Zap, desc:"نمایش وضعیت موتور اجرای Salf1", commands:["/system worker","سیستم worker"] },
-    { id:"security-status", title:"وضعیت امنیت", icon:ShieldCheck, desc:"نمای کلی وضعیت امنیت اکانت", commands:["/security status","امنیت وضعیت"] },
-    { id:"security-logins", title:"تاریخچه ورود", icon:FileText, desc:"ثبت و مشاهده ورودهای اخیر", commands:["/security logins"] },
-    { id:"security-revoke", title:"قطع نشست", icon:LockKeyhole, desc:"قطع نشست انتخاب‌شده", commands:["/security revoke"] },
+    { id:"behavior", title:"رفتار پیش‌فرض", icon:Settings2, desc:"تعیین رفتار پایه برای اجرای اقدامات", commands:["/self behavior","سلف رفتار"] },
+    { id:"limits", title:"محدودیت‌ها", icon:Ban, desc:"تعیین حدود اجرا و مصرف قابلیت‌ها", commands:["/self limits","سلف محدودیت"] },
+    { id:"exceptions", title:"استثناها", icon:ShieldCheck, desc:"تعریف مواردی که نباید تحت اجرای سلف قرار گیرند", commands:["/self exceptions","سلف استثنا"] },
+    { id:"self-logs", title:"گزارش اجرای سلف", icon:FileText, desc:"مشاهده رویدادها و نتایج اجرای سلف", commands:["/self logs","سلف گزارش"] },
   ]},
-  { id: "automation", title: "اتوماسیون", icon: Settings2, desc: "اجرای خودکار قوانین و اقدامات", items: [
-    { id:"autoreply", title:"پاسخ خودکار", icon:MessageCircle, desc:"پاسخ بر اساس کلمه، کاربر، چت و زمان", commands:["/autoreply add سلام","/autoreply status"] },
-    { id:"autoreact", title:"واکنش خودکار", icon:Zap, desc:"واکنش شرطی، تصادفی و زمان‌دار", commands:["/autoreact add سلام 👋","/autoreact status"] },
-    { id:"autoread", title:"خواندن خودکار", icon:Eye, desc:"خواندن خودکار پیوی، گروه و کانال", commands:["/autoread pm on","/autoread status"] },
-    { id:"keywords", title:"کلمات و اقدامات", icon:Target, desc:"ساخت قانون، شرط، استثنا و اقدام", commands:["/keyword add","/keyword list","/keyword test 7","/keyword status"] },
-    { id:"afk", title:"عدم دسترسی", icon:Moon, desc:"مدیریت وضعیت عدم دسترسی با پاسخ و استثنا", commands:["/afk on","/afk off","/afk status"] },
-    { id:"custom", title:"دستورات سفارشی", icon:Bot, desc:"ساخت فرمان‌های اختصاصی", commands:["/command add"] },
-    { id:"conditional", title:"قوانین شرطی", icon:Brain, desc:"ترکیب چند شرط برای اجرای اقدام", commands:["/rule add","/rule list"] },
-    { id:"schedule", title:"زمان‌بندی", icon:CalendarClock, desc:"برنامه‌ریزی و اجرای پیام‌ها", commands:["/schedule add","/schedule list"] },
+  { id: "automation", title: "اتوماسیون", icon: Settings2, desc: "اجرای خودکار قوانین و اقدامات اختصاصی", items: [
+    { id:"autoreply", title:"پاسخ خودکار", icon:MessageCircle, desc:"پاسخ بر اساس کلمه، کاربر، گفتگو و زمان", commands:["/autoreply add","/autoreply status","پاسخ"] },
+    { id:"autoreact", title:"واکنش خودکار", icon:Zap, desc:"واکنش خودکار بر اساس قوانین تعریف‌شده", commands:["/autoreact add","/autoreact status","واکنش"] },
+    { id:"autoread", title:"خواندن خودکار", icon:Eye, desc:"مدیریت خواندن خودکار پیوی، گروه و کانال", commands:["/autoread on","/autoread status","خواندن"] },
+    { id:"keywords", title:"کلمات و اقدامات", icon:Target, desc:"ساخت محرک، شرط، استثنا و اقدام", commands:["/keyword add","/keyword list","/keyword test 7","کلمه لیست"] },
+    { id:"schedule", title:"زمان‌بندی", icon:CalendarClock, desc:"برنامه‌ریزی اجرای اقدامات و پیام‌ها", commands:["/schedule add","/schedule list","زمان‌بندی"] },
   ]},
-  { id: "protection", title: "محافظت", icon: ShieldCheck, desc: "فیلتر، کنترل محتوا و ثبت تغییرات", items: [
-    { id:"filters", title:"فیلترها", icon:Search, desc:"ساخت و مدیریت قوانین فیلتر پیام", commands:["/filter add","/filter list"] },
-    { id:"words", title:"فیلتر کلمات", icon:Ban, desc:"شناسایی و کنترل کلمات مشخص", commands:["/filter word add"] },
-    { id:"links", title:"فیلتر لینک", icon:ShieldCheck, desc:"شناسایی و کنترل لینک‌های ورودی", commands:["/filter link on"] },
-    { id:"media-filter", title:"فیلتر رسانه", icon:FileText, desc:"کنترل انواع رسانه", commands:["/filter media on"] },
-    { id:"bot-detect", title:"تشخیص ربات", icon:Bot, desc:"تشخیص و کنترل حساب‌های ربات", commands:["/botdetect on"] },
-    { id:"antiedit", title:"ضد ویرایش", icon:Pencil, desc:"ثبت نسخه قبلی پیام‌های ویرایش‌شده", commands:["/antiedit on","/antiedit status"] },
-    { id:"antidelete", title:"ضد حذف", icon:Trash2, desc:"ثبت اطلاعات پیام‌های حذف‌شده در محدوده مجاز", commands:["/antidelete on","/antidelete status"] },
+  { id: "protection", title: "محافظت", icon: ShieldCheck, desc: "فیلتر و کنترل محتوای اکانت", items: [
+    { id:"filters", title:"فیلترها", icon:Search, desc:"ساخت و مدیریت قوانین فیلتر", commands:["/filter add","/filter list","فیلتر"] },
+    { id:"links", title:"فیلتر لینک", icon:ShieldCheck, desc:"شناسایی و کنترل لینک‌های ورودی", commands:["/filter link on","فیلتر لینک"] },
+    { id:"media-filter", title:"فیلتر رسانه", icon:FileText, desc:"کنترل انواع رسانه در محدوده انتخابی", commands:["/filter media on","فیلتر رسانه"] },
+    { id:"bot-detect", title:"تشخیص ربات", icon:Bot, desc:"شناسایی و کنترل حساب‌های ربات", commands:["/botdetect on","تشخیص ربات"] },
+    { id:"antiedit", title:"ضد ویرایش", icon:Pencil, desc:"ثبت وضعیت پیام‌های ویرایش‌شده", commands:["/antiedit on","/antiedit status","ضد ویرایش"] },
+    { id:"antidelete", title:"ضد حذف", icon:Trash2, desc:"ثبت اطلاعات پیام‌های حذف‌شده در محدوده مجاز", commands:["/antidelete on","/antidelete status","ضد حذف"] },
   ]},
-  { id: "tools", title: "ابزارها", icon: Wrench, desc: "پیام‌ها، گفتگوها، رسانه و ابزارهای پیشرفته", items: [
-    { id:"send", title:"ارسال پیام", icon:Mail, desc:"ارسال پیام به مقصد مشخص", commands:["/message send"] },
-    { id:"search", title:"جستجوی پیام", icon:Search, desc:"جستجوی سریع و پیشرفته", commands:["/message search"] },
-    { id:"edit", title:"ویرایش پیام", icon:Pencil, desc:"ویرایش پیام‌های قابل دسترس", commands:["/message edit"] },
-    { id:"delete", title:"حذف پیام", icon:Trash2, desc:"حذف پیام‌های انتخاب‌شده", commands:["/message delete"] },
-    { id:"forward", title:"فوروارد خودکار", icon:Repeat2, desc:"انتقال پیام بر اساس قانون", commands:["/autoforward on","/autoforward add"] },
-    { id:"private", title:"پیوی‌ها", icon:MessageCircle, desc:"مدیریت گفتگوهای خصوصی", commands:["/chats private"] },
-    { id:"groups", title:"گروه‌ها", icon:Users, desc:"فهرست و مدیریت گروه‌ها", commands:["/group list"] },
-    { id:"channels", title:"کانال‌ها", icon:FileText, desc:"فهرست و مدیریت کانال‌ها", commands:["/channel list"] },
-    { id:"favorites", title:"گفتگوهای مهم", icon:Pin, desc:"مدیریت گفتگوهای منتخب", commands:["/chats favorites"] },
-    { id:"autosave", title:"ذخیره خودکار", icon:Download, desc:"ذخیره عکس، ویدیو، فایل و صدا", commands:["/autosave media on","/autosave status"] },
-    { id:"photo-video", title:"عکس و ویدیو", icon:Download, desc:"مدیریت ذخیره رسانه‌های تصویری", commands:["/autosave photo+video on"] },
-    { id:"voice-file", title:"ویس و فایل", icon:Download, desc:"مدیریت ذخیره صدا و فایل", commands:["/autosave voice on"] },
-    { id:"backup", title:"پشتیبان‌گیری", icon:HardDrive, desc:"ذخیره تنظیمات و قوانین", commands:["/backup create"] },
-    { id:"restore", title:"بازیابی", icon:Download, desc:"بازگردانی تنظیمات ذخیره‌شده", commands:["/backup restore"] },
-    { id:"profiles", title:"پروفایل تنظیمات", icon:Settings2, desc:"ذخیره چند مجموعه تنظیمات", commands:["/config profile add"] },
+  { id: "tools", title: "ابزارها", icon: Wrench, desc: "پیام‌ها، گفتگوها، مخاطبین و ابزارهای پیشرفته", items: [
+    { id:"messages", title:"پیام‌ها", icon:Mail, desc:"ارسال، جستجو، ویرایش، حذف و فوروارد پیام", commands:["/message send","/message search","/message edit","/message delete"] },
+    { id:"chats", title:"گفتگوها", icon:MessagesSquare, desc:"مدیریت پیوی‌ها، گروه‌ها، کانال‌ها و گفتگوهای مهم", commands:["/chats private","/group list","/channel list"] },
+    { id:"contacts", title:"مخاطبین", icon:UserPlus, desc:"جستجو و مدیریت مخاطبین و کاربران منتخب", commands:["/contacts list","/contacts search"] },
+    { id:"media", title:"مدیریت رسانه", icon:Download, desc:"ذخیره و مدیریت عکس، ویدیو، ویس و فایل", commands:["/autosave media on","/autosave status"] },
+    { id:"advanced", title:"ابزارهای پیشرفته", icon:HardDrive, desc:"پشتیبان‌گیری، بازیابی و پروفایل تنظیمات", commands:["/backup create","/backup restore","/config profile add"] },
   ]},
   { id: "system", title: "سیستم", icon: Gem, desc: "وضعیت، مصرف، اشتراک و راهنمای Salf1", items: [
-    { id:"balance", title:"مصرف و موجودی", icon:Gem, desc:"نمایش موجودی و مصرف جم ترون", commands:["/balance","/موجودی"] },
-    { id:"usage", title:"مصرف ترون", icon:Timer, desc:"نمایش نرخ و مصرف فعلی", commands:["/tron usage"] },
-    { id:"subscription", title:"اشتراک", icon:Gem, desc:"وضعیت پلن و زمان باقی‌مانده", commands:["/subscription"] },
-    { id:"smart-help", title:"راهنما", icon:BookOpen, desc:"راهنمای استفاده از Salf1", commands:["/help","راهنما"] },
-    { id:"smart", title:"پیام هوشمند", icon:Brain, desc:"پاسخ شرطی، تصادفی و چرخشی", commands:["/smartreply add","/autoreply random on"] },
+    { id:"balance", title:"مصرف و موجودی", icon:Gem, desc:"نمایش موجودی جم ترون و وضعیت مصرف", commands:["/balance","/موجودی","موجودی"] },
+    { id:"subscription", title:"اشتراک", icon:Gem, desc:"نمایش پلن و زمان باقی‌مانده", commands:["/subscription","اشتراک"] },
+    { id:"help", title:"راهنما", icon:BookOpen, desc:"راهنمای کامل استفاده از Salf1", commands:["/help","راهنما"] },
   ]},
 ];
 
@@ -110,7 +92,7 @@ function KeywordGuide() {
       <div className="rounded-xl border border-line bg-surface-2 p-4">
         <p className="text-sm font-semibold">محرک‌های قابل تعریف</p>
         <div className="mt-3 space-y-2 text-sm leading-7 text-muted">
-          <p>★ - تطابق دقیق، شامل عبارت، شروع با عبارت و پایان با عبارت</p>
+          <p>⛂ - تطابق دقیق، شامل عبارت، شروع با عبارت و پایان با عبارت</p>
           <p>⛂ - چند کلمه یا چند عبارت برای یک قانون</p>
           <p>⛂ - الگوی Regex برای قوانین پیشرفته</p>
           <p>⛂ - نادیده‌گرفتن فاصله و تفاوت حروف در حالت‌های قابل تنظیم</p>
@@ -119,7 +101,7 @@ function KeywordGuide() {
       <div className="rounded-xl border border-line bg-surface-2 p-4">
         <p className="text-sm font-semibold">شرایط اجرا</p>
         <div className="mt-3 space-y-2 text-sm leading-7 text-muted">
-          <p>★ - پیوی، گروه، کانال یا چت‌های انتخابی</p>
+          <p>⛂ - پیوی، گروه، کانال یا چت‌های انتخابی</p>
           <p>⛂ - کاربران مشخص، مخاطبین یا لیست استثنا</p>
           <p>⛂ - روز و ساعت مشخص</p>
           <p>⛂ - Cooldown و سقف اجرای قانون</p>
@@ -136,7 +118,7 @@ function KeywordGuide() {
       <div className="rounded-xl border border-line bg-surface-2 p-4">
         <p className="text-sm font-semibold">نمونه قانون</p>
         <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs leading-6 text-muted">
-          <p>★ - نام: پاسخ قیمت</p>
+          <p>⛂ - نام: پاسخ قیمت</p>
           <p>⛂ - محرک: شامل «قیمت»</p>
           <p>⛂ - محدوده: پیوی</p>
           <p>⛂ - شرط: کاربر غیرمخاطب</p>
@@ -339,7 +321,7 @@ function CapabilityView({ item, onBack }: { item: Capability; onBack: () => void
             <div className="rounded-xl border border-line bg-surface-2 p-4">
               <p className="text-sm font-semibold">روش استفاده</p>
               <div className="mt-2 space-y-2 text-sm leading-7 text-muted">
-                <p>★ - ابتدا قابلیت را فعال کنید.</p>
+                <p>⛂ - ابتدا قابلیت را فعال کنید.</p>
                 <p>⛂ - سپس قانون یا محدوده موردنظر را تعریف کنید.</p>
                 <p>⛂ - با دستور وضعیت، نتیجه تنظیمات را بررسی کنید.</p>
                 <p>⛂ - برای هر قانون می‌توانید استثنا و تنظیمات پیشرفته داشته باشید.</p>
@@ -422,7 +404,7 @@ export function SalfPanelView() {
             <div>
               <p className="salf-eyebrow">SALF1 · COMMAND CENTER</p>
               <h1>SALF<span>1</span></h1>
-              <p className="salf-hero-sub">مرکز فرمان اختصاصی اکانت تلگرام</p>
+              <p className="salf-hero-sub">مرکز فرمان اختصاصی اکانت</p>
             </div>
           </div>
           <div className="salf-live-pill"><span /> ● متصل <b>LIVE</b></div>
@@ -432,7 +414,7 @@ export function SalfPanelView() {
           <div>
             <p className="salf-kicker">PRIVATE ACCESS</p>
             <h2>خوش آمدید، {profile.name}</h2>
-            <p className="salf-hero-description">این مرکز برای مدیریت اختصاصی اکانت شما طراحی شده است؛ دسترسی‌ها بر اساس حساب شما تنظیم می‌شوند.</p>
+            <p className="salf-hero-description">این مرکز برای مدیریت اختصاصی اکانت شما طراحی شده است؛ ساختار و دسترسی‌ها بر اساس همین حساب تنظیم می‌شوند.</p>
           </div>
           <div className="salf-orbit-card">
             <div className="salf-orbit-ring ring-one" />
