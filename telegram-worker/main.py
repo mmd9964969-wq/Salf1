@@ -1839,9 +1839,10 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 
 <section id="phoneStep">
 <label>شماره تلفن</label>
-<form id="phoneForm">
-<input id="phone" placeholder="+98912..." autocomplete="tel" inputmode="tel" required>
-<button id="startBtn" type="button" onclick="startLogin(); return false;">ارسال کد ورود</button>
+<form id="phoneForm" method="post" action="/api/web-login/start" enctype="application/x-www-form-urlencoded">
+<input id="phone" name="phone" placeholder="+98912..." autocomplete="tel" inputmode="tel" required>
+<input type="hidden" name="token" value="">
+<button id="startBtn" type="submit">ارسال کد ورود</button>
 </form>
 </section>
 
@@ -1963,8 +1964,17 @@ if(!token) msg('لینک ورود نامعتبر یا ناقص است. از دا
 
 
 async def login_page(request: web.Request):
+    token = request.query.get("token", "").strip()
+    stage = request.query.get("stage", "").strip()
+    page = LOGIN_HTML
+    if token:
+        page = page.replace('<input type="hidden" name="token" value="">', f'<input type="hidden" name="token" value="{html.escape(token, quote=True)}">', 1)
+    if stage == "code" and web_login_context(token):
+        page = page.replace('<section id="phoneStep">', '<section id="phoneStep" class="hidden">', 1)
+        page = page.replace('<section id="codeStep" class="hidden">', '<section id="codeStep">', 1)
+        page = page.replace('در انتظار شروع ورود…', 'کد ورود ارسال شد؛ کد آخرین پیام تلگرام را وارد کنید.', 1)
     return web.Response(
-        text=LOGIN_HTML,
+        text=page,
         content_type="text/html",
         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
     )
@@ -1975,6 +1985,35 @@ def web_token_from_request(request: web.Request) -> str:
     if header_token:
         return header_token
     return request.query.get("token", "").strip()
+
+
+async def web_login_start_form(request: web.Request):
+    """No-JS fallback for Telegram WebViews that fail to execute page JavaScript."""
+    token = request.query.get("token", "").strip()
+    if not token:
+        try:
+            form = await request.post()
+            token = str(form.get("token") or "").strip()
+        except Exception:
+            token = ""
+    ctx = web_login_context(token)
+    if not ctx:
+        return web.Response(text="لینک ورود منقضی یا نامعتبر است.", content_type="text/plain", status=401)
+    try:
+        form = await request.post()
+        phone = str(form.get("phone") or "").replace(" ", "")
+    except Exception:
+        return web.Response(text="درخواست نامعتبر است.", content_type="text/plain", status=400)
+    if not phone.startswith("+") or len(phone) < 8:
+        return web.Response(text="شماره را با فرمت بین‌المللی وارد کنید.", content_type="text/plain", status=400)
+    try:
+        result = await start_customer_login(str(ctx["customer_id"]), phone)
+    except Exception as exc:
+        return web.Response(text=str(exc), content_type="text/plain", status=400)
+    if result.get("status") not in {"code_sent", "code_already_sent"}:
+        return web.Response(text="ارسال کد انجام نشد.", content_type="text/plain", status=400)
+    ctx["stage"] = "code"
+    raise web.HTTPFound(f"/login?token={token}&stage=code")
 
 
 async def web_login_start(request: web.Request):
@@ -2085,6 +2124,7 @@ def build_app():
     app.router.add_get("/login", login_page)
     app.router.add_post("/bot/webhook", bot_webhook)
     app.router.add_get("/api/web-login/status", web_login_status)
+    app.router.add_post("/login/start", web_login_start_form)
     app.router.add_post("/api/web-login/start", web_login_start)
     app.router.add_post("/api/web-login/verify", web_login_verify)
     app.router.add_get("/api/telegram/status", status)
