@@ -716,3 +716,52 @@ body{
 .salf-mobile-dock button{font-family:"Vazirmatn",sans-serif!important;font-size:8px!important}
 .salf-command-bar{box-shadow:0 8px 28px rgb(0 0 0/.16)}
 @media(min-width:801px){.salf-sidebar-scroll{overflow-y:auto}.salf-sidebar-scroll nav{padding-bottom:10px}}
+
+
+/* SALF1 STADIUM — Phase 01 / Obsidian Classic Luxury Login */
+.salf-auth-page{position:relative;min-height:100dvh;overflow:hidden;display:flex;flex-direction:column;background:radial-gradient(circle at 18% 12%,rgb(184 164 124/.045),transparent 30rem),radial-gradient(circle at 84% 82%,rgb(255 255 255/.025),transparent 34rem),#070706;color:#eeeae2}
+.salf-auth-page::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(115deg,transparent 18%,rgb(255 255 255/.018) 50%,transparent 82%);opacity:.7}
+.salf-auth-aura{position:absolute;width:520px;height:520px;border-radius:50%;right:-230px;top:-260px;border:1px solid rgb(184 164 124/.055);box-shadow:0 0 140px rgb(184 164 124/.025)}
+.salf-auth-grid{position:absolute;inset:0;pointer-events:none;opacity:.11;background-image:linear-gradient(rgb(255 255 255/.035) 1px,transparent 1px),linear-gradient(90deg,rgb(255 255 255/.035) 1px,transparent 1px);background-size:72px 72px;mask-image:radial-gradient(circle at center,black,transparent 78%)}
+.salf-auth-layout{position:relative;z-index:1;flex:1;width:min(1120px,calc(100% - 40px));margin:auto;display:grid;grid-template-columns:minmax(0,1fr) 470px;gap:90px;align-items:center;padding:70px 0}
+.salf-auth-layout-confirmed{grid-template-columns:minmax(0,1fr) 470px}
+.salf-auth-brand{padding:20px 0}
+.salf-auth-wordmark{display:flex;align-items:baseline;gap:2px;font:500 50px "Newsreader",Georgia,serif;letter-spacing:-.04em;color:#f1ede5}
+.salf-auth-wordmark b{font:600 21px "Manrope",sans-serif;color:#b8a47c;letter-spacing:.08em}
+.salf-auth-brandline{margin-top:8px;color:#625e57;font:500 8px "IBM Plex Mono",monospace;letter-spacing:.2em}
+.salf-auth-rule{width:90px;height:1px;margin:28px 0;background:linear-gradient(90deg,rgb(184 164 124/.65),transparent)}
+.salf-auth-caption{max-width:430px;color:#888177;font-size:12px;line-height:2.2}
+.salf-auth-points{display:flex;flex-direction:column;gap:11px;margin-top:32px;color:#706a61;font-size:10px}
+.salf-auth-points span{display:flex;align-items:center;gap:9px}.salf-auth-points svg{color:#a99878}
+.salf-auth-card{position:relative;overflow:hidden;padding:31px;border:1px solid rgb(235 232 224/.10);border-radius:22px;background:linear-gradient(145deg,rgb(255 255 255/.035),transparent 48%),rgb(15 15 14/.94);box-shadow:0 34px 90px rgb(0 0 0/.48),inset 0 1px rgb(255 255 255/.055);backdrop-filter:blur(24px)}
+.salf-auth-card::before{content:"";position:absolute;inset:0 0 auto;height:1px;background:linear-gradient(90deg,transparent,rgb(184 164 124/.42),transparent)}
+.salf-auth-card-top{display:flex;align-items:center;justify-content:space-between;color:#777168}
+.salf-auth-status{display:inline-flex;align-items:center;gap:7px;color:#8c9b8e;font:500 8px "IBM Plex Mono",monospace;letter-spacing:.14em}
+.salf-auth-status>span{width:5px;height:5px;border-radius:50%;background:#8fa28f;box-shadow:0 0 10px rgb(143 162 143/.5)}
+.salf-auth-index{font:8px "IBM Plex Mono",monospace;color:#504c46}
+.salf-auth-eyebrow{margin-top:34px;color:#776f65;font:500 8px "IBM Plex Mono",monospace;letter-spacing:.16em}
+.salf-auth-card h1{margin-top:8px;font:500 30px "Newsreader","Vazirmatn",serif;letter-spacing:-.02em;color:#eeeae2}
+.salf-auth-description{margin-top:10px;color:#817b72;font-size:11px;line-height:2}
+.salf-auth-provider-list{display:flex;flex-direction:column;gap:9px;margin-top:27px}
+.salf-auth-provider{display:flex;align-items:center;gap:12px;width:100%;min-height:64px;padding:10px 12px;border:1px solid rgb(235 232 224/.075);border-radius:13px;background:linear-gradient(135deg,rgb(255 255 255/.035),rgb(255 255 255/.012)),#11110f;color:#ddd8cf;text-align:right;transition:transform .2s ease,border-color .2s ease,background .2s ease,box-shadow .2s ease}
+.salf-auth-provider:hover:not(:disabled){transform:translateY(-2px);border-color:rgb(235 232 224/.16);background:#161613;box-shadow:0 15px 30px rgb(0 0 0/.22)}
+.salf-auth-provider:active:not(:disabled){transform:translateY(0) scale(.99)}.salf-auth-provider:disabled{opacity:.55;cursor:wait}
+.salf-provider-mark{display:grid;place-items:center;width:38px;height:38px;flex:0 0 auto;border:1px solid rgb(235 232 224/.09);border-radius:10px;background:#191917;color:#d8d1c4;font:600 15px "Manrope",sans-serif}
+.salf-provider-copy{min-width:0;flex:1}.salf-provider-copy strong{display:block;font-size:11px;font-weight:600}.salf-provider-copy small{display:block;margin-top:4px;color:#666158;font-size:8px}
+.salf-auth-provider>svg{color:#777067}
+.salf-auth-divider{display:flex;align-items:center;gap:10px;margin:25px 0 14px;color:#4f4b45;font:8px "IBM Plex Mono",monospace;letter-spacing:.13em}
+.salf-auth-divider::before,.salf-auth-divider::after{content:"";height:1px;flex:1;background:rgb(235 232 224/.065)}
+.salf-auth-security{display:flex;align-items:center;gap:8px;color:#5f5a52;font-size:8px;line-height:1.8}.salf-auth-security svg{color:#827866;flex:0 0 auto}
+.salf-auth-error{margin-top:14px;padding:10px 12px;border:1px solid rgb(192 122 114/.20);border-radius:10px;background:rgb(192 122 114/.055);color:#bd948e;font-size:9px;line-height:1.8}
+.salf-auth-identity{display:flex;align-items:center;gap:11px;margin-top:23px;padding:12px;border:1px solid rgb(235 232 224/.07);border-radius:13px;background:#11110f}
+.salf-auth-avatar{display:grid;place-items:center;width:39px;height:39px;border-radius:11px;background:linear-gradient(145deg,#24221d,#121211);border:1px solid rgb(235 232 224/.10);color:#c4b79f;font:600 15px "Manrope",sans-serif}
+.salf-auth-identity>div:nth-child(2){min-width:0;flex:1}.salf-auth-identity strong{display:block;font-size:11px;color:#e4dfd6}.salf-auth-identity span{display:block;margin-top:3px;color:#625d55;font:8px "IBM Plex Mono",monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.salf-auth-check{color:#8fa28f}
+.salf-auth-primary{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:45px;margin-top:12px;border:1px solid rgb(255 255 255/.22);border-radius:12px;background:linear-gradient(135deg,#ece7dc,#b4aa98);color:#11100e;font-size:10px;font-weight:700;box-shadow:0 12px 30px rgb(0 0 0/.25);transition:transform .18s ease,filter .18s ease}.salf-auth-primary:hover{transform:translateY(-2px);filter:brightness(1.05)}
+.salf-auth-loading{align-items:center;justify-content:center}.salf-auth-loading-card{position:relative;z-index:1;width:min(390px,calc(100% - 40px));text-align:center;padding:40px 28px;border:1px solid rgb(235 232 224/.08);border-radius:20px;background:#10100f;box-shadow:0 30px 80px rgb(0 0 0/.42)}
+.salf-auth-emblem{position:relative;display:grid;place-items:center;width:58px;height:58px;margin:0 auto 22px;border:1px solid rgb(235 232 224/.13);border-radius:17px;background:linear-gradient(145deg,#1a1a18,#0e0e0d);box-shadow:inset 0 1px rgb(255 255 255/.06)}.salf-auth-emblem span{font:italic 31px "Newsreader",serif}.salf-auth-emblem i{position:absolute;width:36px;height:13px;border:1px solid rgb(184 164 124/.35);border-radius:50%;transform:rotate(-25deg)}
+.salf-auth-mono{color:#625d55;font:8px "IBM Plex Mono",monospace;letter-spacing:.16em}.salf-auth-loading-card h1{margin-top:12px;font:500 24px "Newsreader","Vazirmatn",serif}.salf-auth-loading-card>p:last-child{margin-top:12px;color:#716b63;font-size:9px}
+.salf-auth-progress{height:2px;margin-top:22px;overflow:hidden;background:#24221e}.salf-auth-progress span{display:block;width:38%;height:100%;background:linear-gradient(90deg,transparent,#b8a47c,transparent);animation:salf-auth-progress 1.4s ease-in-out infinite}
+@keyframes salf-auth-progress{0%{transform:translateX(-180%)}100%{transform:translateX(330%)}}
+.salf-auth-footer{position:relative;z-index:1;padding:0 20px 22px;text-align:center;color:#47433e;font:7px "IBM Plex Mono",monospace;letter-spacing:.12em}
+@media(max-width:850px){.salf-auth-layout{grid-template-columns:1fr;gap:34px;width:min(520px,calc(100% - 28px));padding:42px 0 35px}.salf-auth-brand{padding:0 5px;text-align:center}.salf-auth-rule{margin:22px auto}.salf-auth-caption{margin:auto}.salf-auth-points{align-items:center}}
+@media(max-width:520px){.salf-auth-layout{width:calc(100% - 22px);padding-top:28px}.salf-auth-card{padding:23px;border-radius:18px}.salf-auth-card h1{font-size:27px}.salf-auth-wordmark{font-size:42px}.salf-auth-points{display:none}.salf-auth-footer{font-size:6px;padding-bottom:15px}}
