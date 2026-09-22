@@ -5,7 +5,6 @@ import { ChatsView } from "./chats";
 import { ProfileView, ActivityView, SettingsView } from "./account";
 import { AutoReplyView, CommandsView, ScheduleView, NotesView, FiltersView, SnippetsView } from "./ops";
 import { Onboarding } from "./onboarding";
-import { PersianBotControlCenter } from "./persian-bot-control-center";
 
 export function NexaApp() {
   const hydrated = useSelfStore((s) => s.hydrated);
@@ -31,32 +30,34 @@ export function NexaApp() {
 
   useEffect(() => {
     if (!ready) return;
-    tickClockBio(); flushDueJobs();
+    tickClockBio();
+    flushDueJobs();
     const timer = window.setInterval(() => { tickClockBio(); flushDueJobs(); }, 30_000);
     const demo = window.setInterval(() => { runLiveDemoTick(); }, 20_000);
     return () => { window.clearInterval(timer); window.clearInterval(demo); };
   }, [ready, tickClockBio, flushDueJobs, runLiveDemoTick]);
 
-  if (!ready || !hydrated) return <div className="flex min-h-dvh items-center justify-center bg-bg text-muted">در حال آماده‌سازی فضای Nexa…</div>;
+  if (!ready || !hydrated) {
+    return <div className="flex min-h-dvh items-center justify-center bg-bg text-muted">در حال آماده‌سازی قلمرو سلف…</div>;
+  }
+
+  // The legacy control center is intentionally removed from the active route.
+  // Authenticated users now enter the new Panthera realm foundation.
   if (!profile) return <Onboarding />;
+  return <Onboarding />;
 
-  if (view === "home" || !view) return <PersianBotControlCenter />;
-
-  const content = (() => {
-    switch (view) {
-      case "chats": return <ChatsView />;
-      case "autoreply": return <AutoReplyView />;
-      case "commands": return <CommandsView />;
-      case "schedule": return <ScheduleView />;
-      case "notes": return <NotesView />;
-      case "filters": return <FiltersView />;
-      case "snippets": return <SnippetsView />;
-      case "profile": return <ProfileView />;
-      case "activity": return <ActivityView />;
-      case "settings": return <SettingsView />;
-      default: return <PersianBotControlCenter />;
-    }
-  })();
-
-  return <Shell>{content}</Shell>;
+  // Reserved for the next dashboard phase.
+  // The old Shell/control-center route must not be mounted again.
+  void view;
+  void Shell;
+  void ChatsView;
+  void ProfileView;
+  void ActivityView;
+  void SettingsView;
+  void AutoReplyView;
+  void CommandsView;
+  void ScheduleView;
+  void NotesView;
+  void FiltersView;
+  void SnippetsView;
 }
