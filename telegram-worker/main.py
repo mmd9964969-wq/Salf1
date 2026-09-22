@@ -2114,13 +2114,13 @@ async def web_login_start_form(request: web.Request):
         return web.Response(text=str(exc), content_type="text/plain", status=400)
     if result.get("status") not in {"code_sent", "code_already_sent"}:
         return web.Response(text="ارسال کد انجام نشد.", content_type="text/plain", status=400)
-    ctx["stage"] = "code"
+    await web_login_set_stage(token, "code")
     raise web.HTTPFound(f"/login?token={token}&stage=code")
 
 
 async def web_login_start(request: web.Request):
     token = web_token_from_request(request)
-    ctx = web_login_context(token)
+    ctx = await web_login_context(token)
     if not ctx:
         return web.json_response({"ok": False, "error": "لینک ورود منقضی یا نامعتبر است."}, status=401)
 
@@ -2144,7 +2144,7 @@ async def web_login_start(request: web.Request):
 
 async def web_login_verify(request: web.Request):
     token = web_token_from_request(request)
-    ctx = web_login_context(token)
+    ctx = await web_login_context(token)
     if not ctx:
         return web.json_response({"ok": False, "error": "لینک ورود منقضی یا نامعتبر است."}, status=401)
 
@@ -2214,7 +2214,7 @@ async def bot_webhook(request: web.Request):
 
 async def web_login_status(request: web.Request):
     token = request.query.get("token", "").strip()
-    ctx = web_login_context(token)
+    ctx = await web_login_context(token)
     if not ctx:
         return web.json_response({"ok": False, "error": "لینک ورود منقضی یا نامعتبر است."}, status=401)
     return web.json_response({"ok": True, "stage": ctx.get("stage", "phone")})
