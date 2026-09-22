@@ -416,8 +416,21 @@ function SpaceRealm() {
 export function Onboarding() {
   const { user, isPending } = useCurrentUserState();
   const complete = useSelfStore((s) => s.completeOnboarding);
+  const profile = useSelfStore((s) => s.profile);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  // Once authentication has completed, enter the workspace directly.
+  // The verified screen is intentionally skipped so a successful login
+  // cannot leave the visitor parked on the identity gate.
+  useEffect(() => {
+    if (!user || profile) return;
+    complete(
+      user.displayName || "کاربر سلف",
+      user.primaryEmail?.split("@")[0] || "salf1_user",
+      "Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF",
+    );
+  }, [user, profile, complete]);
 
   if (isPending) return <div className="pb-auth pb-auth--space" dir="rtl"><SpaceRealm /><div className="pb-auth__space-vignette" /><div className="pb-auth__loading"><div className="pb-auth__loading-card"><div className="pb-seal pb-seal--loading" aria-hidden><span>P</span><i /><b /></div><p className="pb-auth__loading-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · PRIVATE</p><h1 className="pb-auth__loading-title">در حال بررسی هویت</h1><div className="pb-auth__progress" aria-hidden><span /></div><p className="pb-auth__loading-copy">لطفاً چند لحظه صبر کنید…</p></div></div></div>;
 
@@ -427,15 +440,11 @@ export function Onboarding() {
     catch (err) { setError(err instanceof Error ? err.message : "ورود انجام نشد. دوباره تلاش کنید."); setBusy(null); }
   }
 
-  function enterWorkspace() {
-    if (!user) return;
-    complete(user.displayName || "کاربر سلف", user.primaryEmail?.split("@")[0] || "salf1_user", "Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF");
-  }
 
-  if (user) return (
+  if (user && profile) return (
     <div className="pb-auth" dir="rtl">
       <header className="pb-auth__top"><div className="pb-auth__brand"><div className="pb-auth__mini-seal" aria-hidden><span>P</span></div><div className="pb-auth__brand-copy"><strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong><small>پنل مدیریت سلف · PRIVATE</small></div></div><div className="pb-auth__secure"><i /><span>IDENTITY VERIFIED</span></div></header>
-      <main className="pb-auth__verified"><section className="pb-auth__verified-visual"><div className="pb-seal pb-seal--verified" aria-hidden><span>P</span><i /><b /></div><p>IDENTITY VERIFIED</p></section><section className="pb-auth__card pb-auth__card--verified"><span className="pb-auth__eyebrow">AUTHENTICATION · COMPLETE</span><h1 className="pb-auth__card-title">هویت شما تأیید شد</h1><p className="pb-auth__card-desc">حساب شما با موفقیت شناسایی شد. اکنون می‌توانید وارد پنل مدیریت سلف شوید.</p><div className="pb-auth__identity"><div className="pb-auth__avatar">{user.displayName?.slice(0,1).toUpperCase() || "P"}</div><div className="pb-auth__identity-main"><strong>{user.displayName || "کاربر سلف"}</strong><span dir="ltr">{user.primaryEmail || "حساب تأییدشده"}</span></div><Check className="size-4" style={{color:"var(--pbx-green)"}} /></div><button type="button" onClick={enterWorkspace} className="pb-auth__enter">ورود به پنل مدیریت سلف<ArrowUpLeft className="size-4" /></button></section></main>
+      <main className="pb-auth__verified"><section className="pb-auth__verified-visual"><div className="pb-seal pb-seal--verified" aria-hidden><span>P</span><i /><b /></div><p>IDENTITY VERIFIED</p></section><section className="pb-auth__card pb-auth__card--verified"><span className="pb-auth__eyebrow">AUTHENTICATION · COMPLETE</span><h1 className="pb-auth__card-title">هویت شما تأیید شد</h1><p className="pb-auth__card-desc">حساب شما با موفقیت شناسایی شد. اکنون می‌توانید وارد پنل مدیریت سلف شوید.</p><div className="pb-auth__identity"><div className="pb-auth__avatar">{user.displayName?.slice(0,1).toUpperCase() || "P"}</div><div className="pb-auth__identity-main"><strong>{user.displayName || "کاربر سلف"}</strong><span dir="ltr">{user.primaryEmail || "حساب تأییدشده"}</span></div><Check className="size-4" style={{color:"var(--pbx-green)"}} /></div><button type="button" className="pb-auth__enter">ورود به پنل مدیریت سلف<ArrowUpLeft className="size-4" /></button></section></main>
       <footer className="pb-auth__footer"><span>Pᴇʀsɪᴀɴ ᴮᵒᵗ</span><span>پنل مدیریت سلف</span><span>Jawati · 2026</span></footer>
     </div>
   );
