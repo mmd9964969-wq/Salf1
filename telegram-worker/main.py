@@ -165,6 +165,7 @@ PAYMENT_PACKAGES = {
 }
 PAYMENT_CARD = os.getenv("SALF1_PAYMENT_CARD", "").strip()
 PAYMENT_CARD_HOLDER = os.getenv("SALF1_PAYMENT_CARD_HOLDER", "").strip()
+PAYMENT_GATEWAY_URL = os.getenv("SALF1_PAYMENT_GATEWAY_URL", "").strip()
 
 REFERRAL_REWARD = int(os.getenv("SALF1_REFERRAL_REWARD", "500"))
 TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
@@ -398,6 +399,74 @@ async def notify_payment_admins(order, chat_id: int):
         except Exception as exc:
             print(f"Payment admin notification error: {type(exc).__name__}: {exc}")
 
+
+
+async def mark_order_receipt(order_id: str, user_id: int, receipt_file_id: str):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        """update salf1_payment_orders
+           set status='awaiting_receipt', receipt_file_id=$3, payment_method='card_to_card',
+               updated_at=now()
+           where order_id=$1 and user_id=$2
+             and status in ('pending','awaiting_receipt')
+             and expires_at > now()
+           returning *""",
+        order_id, user_id, receipt_file_id,
+    )
+
+async def payment_admin_ids():
+    return [int(value) for value in ADMIN_USER_IDS if str(value).isdigit()]
+
+async def credit_paid_order(order_id: str, admin_user_id: int):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    await init_payment_tables()
+    await ensure_admin_ledger_table()
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            order = await conn.fetchrow("select * from salf1_payment_orders where order_id=$1 for update", order_id)
+            if not order:
+                raise LookupError("سفارش پیدا نشد.")
+            if str(order["status"]) == "paid":
+                return order, False
+            if str(order["status"]) != "awaiting_receipt":
+                raise ValueError("این سفارش در وضعیت قابل تأیید نیست.")
+            user = await conn.fetchrow(
+                "select tron_balance from salf1_bot_users where telegram_user_id=$1 for update",
+                int(order["user_id"]),
+            )
+            if not user:
+                raise LookupError("حساب کاربر پیدا نشد.")
+            new_balance = int(user["tron_balance"]) + int(order["gem_amount"])
+            await conn.execute(
+                "update salf1_bot_users set tron_balance=$2, updated_at=now() where telegram_user_id=$1",
+                int(order["user_id"]), new_balance,
+            )
+            await conn.execute(
+                """insert into salf1_balance_ledger
+                   (admin_user_id,target_user_id,amount,balance_after,action)
+                   values ($1,$2,$3,$4,'payment_credit')""",
+                admin_user_id, int(order["user_id"]), int(order["gem_amount"]), new_balance,
+            )
+            paid = await conn.fetchrow(
+                """update salf1_payment_orders
+                   set status='paid', payment_method='card_to_card', paid_at=now(), updated_at=now()
+                   where order_id=$1 returning *""",
+                order_id,
+            )
+            return paid, True
+
+async def reject_payment_order(order_id: str):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    return await db_pool.fetchrow(
+        """update salf1_payment_orders
+           set status='failed', updated_at=now()
+           where order_id=$1 and status='awaiting_receipt'
+           returning *""",
+        order_id,
+    )
 
 async def init_web_login_tokens_table():
     if db_pool is None:
@@ -2216,7 +2285,48 @@ async def process_bot_message(message: dict):
     user_id = int(user["id"])
     username = user.get("username")
     first_name = user.get("first_name") or "کاربر"
+
     text = str(message.get("text") or "").strip()
+
+    state = bot_states.get(user_id)
+    if isinstance(state, dict) and state.get("state") == "payment_receipt":
+        photos = message.get("photo") or []
+        if not photos:
+            if message.get("document"):
+                await bot_send(chat["id"], "⛂ لطفاً تصویر رسید را به‌صورت عکس ارسال کنید.")
+            return
+        order_id = str(state.get("order_id") or "")
+        file_id = str(photos[-1].get("file_id") or "")
+        order = await mark_order_receipt(order_id, user_id, file_id)
+        bot_states.pop(user_id, None)
+        if not order:
+            await bot_send(chat["id"], "⛂ سفارش منقضی شده یا دیگر قابل دریافت نیست.")
+            return
+        await bot_send(chat["id"],
+            f"""<b>◈ درخواست پرداخت ثبت شد</b>
+
+⛂ - سفارش : <code>{order_id}</code>
+⛂ - مبلغ : <b>{int(order["price_toman"]):,} تومان</b>
+⛂ - بسته : <b>{html.escape(str(order["package_title"]))}</b>
+⛂ - جم : <b>{int(order["gem_amount"]):,}</b>
+
+رسید برای بررسی ادمین ارسال شد.
+تا زمان تأیید، موجودی حساب شما تغییر نمی‌کند.""")
+        caption=f"""<b>◈ درخواست پرداخت</b>
+
+⛂ - کاربر : @{html.escape(str(username or "بدون‌نام‌کاربری"))}
+⛂ - شناسه : <code>{user_id}</code>
+⛂ - سفارش : <code>{order_id}</code>
+⛂ - مبلغ : <b>{int(order["price_toman"]):,} تومان</b>
+⛂ - بسته : <b>{html.escape(str(order["package_title"]))}</b>
+⛂ - جم : <b>{int(order["gem_amount"]):,}</b>"""
+        admin_markup={"inline_keyboard":[
+            [{"text":"‹ تایید پرداخت","callback_data":f"payment_approve:{order_id}"}],
+            [{"text":"‹ رد پرداخت","callback_data":f"payment_reject:{order_id}"}],
+        ]}
+        for admin_id in await payment_admin_ids():
+            await bot_api("sendPhoto",{"chat_id":admin_id,"photo":file_id,"caption":caption,"parse_mode":"HTML","reply_markup":admin_markup})
+        return
 
     payload = ""
     if text.lower().startswith("/start"):
@@ -2437,6 +2547,38 @@ async def process_callback(callback_query: dict):
 ⛂ - موجودی جدید : <b>{new_balance:,}</b> جم""",
             admin_panel_markup(),
         )
+        return
+
+
+    if data.startswith("payment_approve:") or data.startswith("payment_reject:"):
+        if not await is_admin_user(user_id, from_user.get("username")):
+            await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
+            return
+        order_id=data.split(":",1)[1]
+        try:
+            if data.startswith("payment_approve:"):
+                order,changed=await credit_paid_order(order_id,user_id)
+                if changed:
+                    await bot_send(int(order["user_id"]),
+                        f"""<b>◈ Pᴀʏᴍᴇɴᴛ · Sᴜᴄᴄᴇss</b>
+
+⛂ - وضعیت : <b>پرداخت موفق</b>
+⛂ - مبلغ : <b>{int(order["price_toman"]):,} تومان</b>
+⛂ - جم اضافه‌شده : <b>{int(order["gem_amount"]):,}</b>
+
+موجودی شما با موفقیت افزایش یافت.""")
+                await bot_edit(chat_id,message_id,
+                    f"<b>✓ درخواست پرداخت تأیید شد</b>\n\n⛂ سفارش : <code>{order_id}</code>\n⛂ جم : <b>{int(order['gem_amount']):,}</b>",
+                    admin_panel_markup())
+            else:
+                order=await reject_payment_order(order_id)
+                if order:
+                    await bot_send(int(order["user_id"]),
+                        f"<b>◈ رد پرداخت</b>\n\n⛂ سفارش : <code>{order_id}</code>\n⛂ رسید پرداخت تأیید نشد.\n\nبرای پیگیری با پشتیبانی تماس بگیرید.")
+                await bot_edit(chat_id,message_id,"<b>× درخواست پرداخت رد شد.</b>",admin_panel_markup())
+        except Exception as exc:
+            print(f"Payment admin action failed: {type(exc).__name__}: {exc}")
+            await bot_edit(chat_id,message_id,"⛂ عملیات پرداخت انجام نشد.",admin_panel_markup())
         return
 
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
