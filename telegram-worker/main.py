@@ -476,6 +476,16 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
         except FloodWaitError as exc:
             return {"status": "flood_wait", "seconds": int(exc.seconds)}
 
+        # Telegram only considers the account connected after the authorization
+        # state is confirmed and the Telethon session is persisted.
+        authorized_now = await client.is_user_authorized()
+        print(f"Login authorization check for {customer_id}: authorized={authorized_now}; 2fa_pending={customer_id in pending_2fa}")
+        if not authorized_now:
+            raise RuntimeError("Telegram authorization did not complete; account was not connected")
+        try:
+            client.session.save()
+        except Exception as exc:
+            print(f"Session save warning for {customer_id}: {exc}")
         me = await client.get_me()
     pending_phones.pop(customer_id, None)
     pending_codes.pop(customer_id, None)
