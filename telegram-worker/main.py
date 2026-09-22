@@ -416,28 +416,12 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
         if not client:
             raise RuntimeError("start login first")
 
-        # Idempotency guard: if a previous request already completed the
-        # authorization, never call sign_in again with the same one-time code.
         await client.connect()
-        if await client.is_user_authorized():
-            me = await client.get_me()
-            pending_phones.pop(customer_id, None)
-            pending_codes.pop(customer_id, None)
-            pending_code_hashes.pop(customer_id, None)
-            pending_2fa.discard(customer_id)
-            login_locks.pop(customer_id, None)
-            me_cache[customer_id] = int(me.id)
-            await update_account_state(customer_id, True)
-            await set_salf_enabled(customer_id, False)
-            return {
-                "status": "connected",
-                "user": {
-                    "id": me.id,
-                    "username": me.username,
-                    "first_name": me.first_name,
-                    "last_name": me.last_name,
-                },
-            }
+        print(
+            f"Login verify for {customer_id}: "
+            f"pending_2fa={customer_id in pending_2fa}, "
+            f"authorized_before={await client.is_user_authorized()}"
+        )
 
         if not phone:
             raise RuntimeError("start login first")
@@ -462,31 +446,41 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
                 await client.sign_in(phone, code, phone_code_hash=code_hash)
         except SessionPasswordNeededError:
             pending_2fa.add(customer_id)
+            print(f"Login verify for {customer_id}: Telegram requires 2FA password.")
             return {"status": "2fa_required"}
         except PasswordHashInvalidError:
+            print(f"Login verify for {customer_id}: invalid 2FA password.")
             return {"status": "2fa_invalid"}
         except PhoneCodeInvalidError:
+            print(f"Login verify for {customer_id}: invalid or already-used login code.")
             return {"status": "code_invalid"}
         except PhoneCodeExpiredError:
             pending_codes.pop(customer_id, None)
             pending_code_hashes.pop(customer_id, None)
+            print(f"Login verify for {customer_id}: login code expired.")
             return {"status": "code_expired"}
         except PhoneNumberInvalidError:
             return {"status": "phone_invalid"}
         except FloodWaitError as exc:
             return {"status": "flood_wait", "seconds": int(exc.seconds)}
 
-        # Telegram only considers the account connected after the authorization
-        # state is confirmed and the Telethon session is persisted.
         authorized_now = await client.is_user_authorized()
-        print(f"Login authorization check for {customer_id}: authorized={authorized_now}; 2fa_pending={customer_id in pending_2fa}")
+        print(
+            f"Login authorization check for {customer_id}: "
+            f"authorized={authorized_now}; 2fa_pending={customer_id in pending_2fa}"
+        )
         if not authorized_now:
-            raise RuntimeError("Telegram authorization did not complete; account was not connected")
+            raise RuntimeError(
+                "Telegram authorization did not complete; account was not connected"
+            )
+
         try:
             client.session.save()
         except Exception as exc:
             print(f"Session save warning for {customer_id}: {exc}")
+
         me = await client.get_me()
+
     pending_phones.pop(customer_id, None)
     pending_codes.pop(customer_id, None)
     pending_code_hashes.pop(customer_id, None)
@@ -531,7 +525,6 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
             "last_name": me.last_name,
         },
     }
-
 
 async def charge_customer_minute(customer_id: str):
     if db_pool is None:
