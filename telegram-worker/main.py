@@ -2424,10 +2424,7 @@ async def process_callback(callback_query: dict):
 بسته موردنظر خود را انتخاب کنید.
 
 ─────━━───── ◈ ─────━━─────""",
-            {"inline_keyboard": [
-                [{"text": "‹ پرداخت", "callback_data": f"pay_{data.removeprefix('package_')}"}],
-                [{"text": "‹ بازگشت", "callback_data": "packages"}],
-            ]})
+            package_markup())
         return
 
     if data.startswith("package_"):
@@ -2465,7 +2462,10 @@ async def process_callback(callback_query: dict):
 [ ‹ پرداخت ]
 
 [ ‹ بازگشت ]""",
-                package_markup())
+                {"inline_keyboard": [
+                    [{"text": "‹ پرداخت", "callback_data": f"pay_{data.removeprefix('package_')}"}],
+                    [{"text": "‹ بازگشت", "callback_data": "shop_packages"}],
+                ]})
             return
 
     if data == "shop_balance":
