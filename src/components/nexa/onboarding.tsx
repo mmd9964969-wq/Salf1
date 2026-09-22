@@ -17,8 +17,8 @@ export function Onboarding() {
         <div className="salf-auth-aura" aria-hidden />
         <div className="salf-auth-loading-card">
           <div className="salf-auth-emblem" aria-hidden><span>S</span><i /></div>
-          <p className="salf-auth-mono">SALF1 · STADIUM</p>
-          <h1>در حال بررسی نشست</h1>
+          <p className="salf-auth-mono">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF</p>
+          <h1>در حال بررسی نشست امن</h1>
           <div className="salf-auth-progress"><span /></div>
           <p>در حال تأیید وضعیت ورود شما…</p>
         </div>
@@ -40,9 +40,9 @@ export function Onboarding() {
   function enterWorkspace() {
     if (!user) return;
     complete(
-      user.displayName || "کاربر SALF1",
+      user.displayName || "کاربر سلف",
       user.primaryEmail?.split("@")[0] || "salf1_user",
-      "SALF1 · STADIUM",
+      "Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF",
     );
   }
 
@@ -54,10 +54,10 @@ export function Onboarding() {
         <main className="salf-auth-layout salf-auth-layout-confirmed">
           <section className="salf-auth-brand">
             <div className="salf-auth-wordmark"><span>SALF</span><b>1</b></div>
-            <p className="salf-auth-brandline">STADIUM · SECURE MANAGEMENT</p>
+            <p className="salf-auth-brandline">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SECURE SELF MANAGEMENT</p>
             <div className="salf-auth-rule" />
             <p className="salf-auth-caption">
-              محیط مدیریت اختصاصی سرویس SALF1.
+              محیط مدیریت اختصاصی سرویس سلف.
               هویت شما تأیید شده و نشست امن برقرار است.
             </p>
           </section>
@@ -70,7 +70,7 @@ export function Onboarding() {
             <p className="salf-auth-eyebrow">IDENTITY VERIFIED</p>
             <h1>هویت شما تأیید شد</h1>
             <p className="salf-auth-description">
-              Stadium حساب شما را شناسایی کرد. سطح دسترسی بعد از ورود توسط سیستم تعیین می‌شود.
+              پنل مدیریت سلف حساب شما را شناسایی کرد. سطح دسترسی بعد از ورود توسط سیستم تعیین می‌شود.
             </p>
 
             <div className="salf-auth-identity">
@@ -78,14 +78,14 @@ export function Onboarding() {
                 {user.displayName?.slice(0, 1).toUpperCase() || "S"}
               </div>
               <div>
-                <strong>{user.displayName || "کاربر SALF1"}</strong>
+                <strong>{user.displayName || "کاربر سلف"}</strong>
                 <span dir="ltr">{user.primaryEmail || "حساب تأییدشده"}</span>
               </div>
               <Check className="salf-auth-check size-4" />
             </div>
 
             <button type="button" onClick={enterWorkspace} className="salf-auth-primary">
-              ورود به STADIUM
+              ورود به پنل مدیریت سلف
               <ArrowUpLeft className="size-4" />
             </button>
 
@@ -95,7 +95,7 @@ export function Onboarding() {
             </div>
           </section>
         </main>
-        <footer className="salf-auth-footer">SALF1 · STADIUM · PRIVATE MANAGEMENT ENVIRONMENT</footer>
+        <footer className="salf-auth-footer">Pᴇʀsɪᴀɴ ᴮᵒᵗ · پنل مدیریت سلف · Crafted by Jawati · @Jowati</footer>
       </div>
     );
   }
@@ -107,10 +107,10 @@ export function Onboarding() {
       <main className="salf-auth-layout">
         <section className="salf-auth-brand">
           <div className="salf-auth-wordmark"><span>SALF</span><b>1</b></div>
-          <p className="salf-auth-brandline">STADIUM · SECURE MANAGEMENT</p>
+          <p className="salf-auth-brandline">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SECURE SELF MANAGEMENT</p>
           <div className="salf-auth-rule" />
           <p className="salf-auth-caption">
-            مرکز مدیریت اختصاصی سرویس SALF1.
+            مرکز مدیریت اختصاصی سلف Pᴇʀsɪᴀɴ ᴮᵒᵗ.
             یک محیط آرام، کنترل‌شده و امن برای مدیریت حساب و سرویس.
           </p>
           <div className="salf-auth-points">
@@ -126,11 +126,11 @@ export function Onboarding() {
             <span className="salf-auth-index">01 / 01</span>
           </div>
 
-          <p className="salf-auth-eyebrow">WELCOME TO STADIUM</p>
-          <h1>ورود به مرکز فرمان</h1>
+          <p className="salf-auth-eyebrow">WELCOME TO پنل مدیریت سلف</p>
+          <h1>ورود به پنل مدیریت سلف</h1>
           <p className="salf-auth-description">
             برای ادامه هویت خود را تأیید کنید.
-            Stadium پس از ورود سطح دسترسی حساب را به‌صورت خودکار تشخیص می‌دهد.
+            پنل مدیریت سلف پس از ورود سطح دسترسی حساب را به‌صورت خودکار تشخیص می‌دهد.
           </p>
 
           <div className="salf-auth-provider-list">
@@ -145,7 +145,7 @@ export function Onboarding() {
                 <span className="salf-provider-mark">{provider.idp === "google" ? "G" : "X"}</span>
                 <span className="salf-provider-copy">
                   <strong>{busy === provider.providerId ? "در حال اتصال…" : ("ادامه با " + provider.label)}</strong>
-                  <small>ورود امن و انتقال به Stadium</small>
+                  <small>ورود امن و انتقال به پنل مدیریت سلف</small>
                 </span>
                 <ArrowUpLeft className="size-4" />
               </button>
@@ -166,7 +166,7 @@ export function Onboarding() {
           </div>
         </section>
       </main>
-      <footer className="salf-auth-footer">SALF1 · STADIUM · PRIVATE MANAGEMENT ENVIRONMENT</footer>
+      <footer className="salf-auth-footer">Pᴇʀsɪᴀɴ ᴮᵒᵗ · SELF · PRIVATE SELF MANAGEMENT · JAWATI</footer>
     </div>
   );
 }
