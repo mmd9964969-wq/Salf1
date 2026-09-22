@@ -252,3 +252,29 @@
  .pb-auth__portal-orbit{top:50px;width:225px;height:92px}
  .pb-auth--space .pb-auth__portal .pb-auth__card-head{margin-top:88px}
 }
+
+
+/* PANTHERA REALM · bilingual system */
+.pb-auth--fa{font-family:"Vazirmatn","Tahoma",sans-serif}
+.pb-auth--en{font-family:"Space Grotesk","IBM Plex Mono",sans-serif}
+.pb-auth--fa .pb-auth__brand-copy strong,.pb-auth--fa .pb-auth__title,.pb-auth--fa .pb-auth__card-title{font-family:"Vazirmatn","Tahoma",sans-serif}
+.pb-auth--en .pb-auth__brand-copy strong,.pb-auth--en .pb-auth__title,.pb-auth--en .pb-auth__card-title{font-family:"Space Grotesk","IBM Plex Mono",sans-serif}
+.pb-auth__language{display:flex;align-items:center;gap:4px;margin-inline-start:10px;padding:3px;border:1px solid rgb(255 255 255 / .10);border-radius:999px;background:rgb(4 5 6 / .58);backdrop-filter:blur(14px);box-shadow:0 10px 30px rgb(0 0 0 / .25)}
+.pb-auth__language button{border:0;background:transparent;color:#7f8588;padding:7px 10px;border-radius:999px;font:600 8px "IBM Plex Mono",monospace;letter-spacing:.08em;cursor:pointer;transition:.25s}
+.pb-auth__language button.active{color:#eef5f8;background:linear-gradient(135deg,rgb(170 188 198 / .18),rgb(96 113 123 / .08));box-shadow:inset 0 0 0 1px rgb(190 220 232 / .13),0 0 18px rgb(115 180 210 / .07)}
+.pb-auth__top{gap:14px}
+.pb-auth--en .pb-auth__intro{text-align:left}
+.pb-auth--en .pb-auth__card{text-align:left}
+.pb-auth--en .pb-auth__provider-copy{text-align:left}
+.pb-auth--en .pb-auth__footnote{direction:ltr}
+.pb-auth--en .pb-auth__footer{direction:ltr}
+.pb-auth--fa .pb-auth__provider-copy{text-align:right}
+.pb-auth--fa .pb-auth__footnote{direction:rtl}
+.pb-auth--fa .pb-auth__footer{direction:rtl}
+.pb-auth--space .pb-space3d{filter:saturate(1.08) contrast(1.05)}
+@media(max-width:760px){
+  .pb-auth__top{width:calc(100% - 28px);padding-top:16px;flex-wrap:wrap}
+  .pb-auth__secure{display:none}
+  .pb-auth__language{margin-inline-start:auto}
+  .pb-auth__body{width:calc(100% - 28px);padding-top:24px}
+}
