@@ -1446,6 +1446,17 @@ def channel_markup():
     return {"inline_keyboard": rows}
 
 
+def shop_markup():
+    return {
+        "inline_keyboard": [
+            [{"text": "› خرید جم", "callback_data": "shop_buy"}],
+            [{"text": "› بسته‌های جم", "callback_data": "shop_packages"}],
+            [{"text": "› تراکنش‌های من", "callback_data": "shop_transactions"}],
+            [{"text": "‹ بازگشت", "callback_data": "home"}],
+        ]
+    }
+
+
 def manage_menu_markup(connected: bool = False, enabled: bool = False):
     keyboard = [
         [
@@ -2321,9 +2332,50 @@ async def process_callback(callback_query: dict):
             message_id,
             """<b>◈ شاپ جم</b>
 
-⛂ - بخش خرید جم ترون از همین قسمت مدیریت می‌شود.
-⛂ - گزینه‌های خرید پس از فعال شدن شاپ نمایش داده خواهند شد.""",
-            main_menu_markup(),
+⛂ - خرید و مدیریت جم ترون
+⛂ - انتخاب بسته، خرید و مشاهده تراکنش‌ها
+
+─────━━───── ◈ ─────━━─────
+
+⛂ - یک گزینه را انتخاب کنید.""",
+            shop_markup(),
+        )
+        return
+
+    if data == "shop_buy":
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>◈ خرید جم</b>
+
+⛂ - خرید جم ترون برای افزایش اعتبار Salf1.
+
+⛂ - بسته‌های قابل خرید از بخش «بسته‌های جم» نمایش داده می‌شوند.""",
+            shop_markup(),
+        )
+        return
+
+    if data == "shop_packages":
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>◈ بسته‌های جم</b>
+
+⛂ - بسته‌های جم ترون در این بخش قرار می‌گیرند.
+⛂ - انتخاب بسته بعد از فعال شدن سیستم فروش انجام می‌شود.""",
+            shop_markup(),
+        )
+        return
+
+    if data == "shop_transactions":
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>◈ تراکنش‌های من</b>
+
+⛂ - تاریخچه خرید و شارژ جم ترون شما در این بخش نمایش داده می‌شود.
+⛂ - هنوز تراکنشی برای نمایش ثبت نشده است.""",
+            shop_markup(),
         )
         return
 
