@@ -1618,7 +1618,51 @@ async def process_bot_message(message: dict):
 
     await ensure_bot_user(user_id, username, first_name)
 
+    # Custom Emoji ID extractor.
+    entities = message.get("entities") or []
+    custom_emoji_ids = [
+        str(entity.get("custom_emoji_id"))
+        for entity in entities
+        if entity.get("type") == "custom_emoji" and entity.get("custom_emoji_id")
+    ]
+
+    if bot_states.get(user_id) == "emojiid" and custom_emoji_ids:
+        bot_states.pop(user_id, None)
+        unique_ids = list(dict.fromkeys(custom_emoji_ids))
+        lines = [
+            "<b>◈ SALF1 · Custom Emoji ID</b>",
+            "",
+            "⛂ تعداد : <b>" + str(len(unique_ids)) + "</b>",
+            "",
+        ]
+        for index, emoji_id in enumerate(unique_ids, 1):
+            lines.append(f"⛂ {index:02d} › <code>{html.escape(emoji_id)}</code>")
+        lines.extend([
+            "",
+            "─────━━───── ◈ ─────━━─────",
+            "",
+            "✓ شناسه با موفقیت دریافت شد.",
+            "⛂ این ID را می‌توانیم در Railway برای Custom Emoji سیستم SALF1 قرار دهیم.",
+        ])
+        await bot_send(chat["id"], "\n".join(lines))
+        return
+
     normalized = normalize_text(text)
+    if normalized in {"/emojiid", "emojiid", "آیدی ایموجی", "شناسه ایموجی"}:
+        bot_states[user_id] = "emojiid"
+        await bot_send(
+            chat["id"],
+            """<b>◈ SALF1 · Custom Emoji ID</b>
+
+⛂ حالت دریافت ID فعال شد.
+⛂ حالا یک یا چند Custom Emoji پرمیوم را در یک پیام بفرست.
+⛂ ID واقعی Telegram را از همان پیام استخراج می‌کنم.
+
+★ فقط Custom Emoji ارسال کن؛ ایموجی معمولی ID ندارد.
+★ برای لغو، /cancel را بفرست."""
+        )
+        return
+
     if normalized in {"لغو", "cancel", "انصراف"}:
         bot_states.pop(user_id, None)
         await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
