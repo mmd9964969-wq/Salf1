@@ -41,6 +41,33 @@ ROLE = os.getenv("SALF1_ROLE", "all").strip().lower()
 DB_POOL_MIN = max(1, int(os.getenv("SALF1_DB_POOL_MIN", "1")))
 DB_POOL_MAX = max(DB_POOL_MIN, int(os.getenv("SALF1_DB_POOL_MAX", "8")))
 
+# Central Custom Emoji System.
+# Configure Telegram custom_emoji_id values in Railway variables.
+CUSTOM_EMOJI = {
+    "account": (os.getenv("SALF1_EMOJI_ACCOUNT", "").strip(), os.getenv("SALF1_EMOJI_ACCOUNT_ALT", "👤").strip() or "👤"),
+    "self": (os.getenv("SALF1_EMOJI_SELF", "").strip(), os.getenv("SALF1_EMOJI_SELF_ALT", "⚡").strip() or "⚡"),
+    "automation": (os.getenv("SALF1_EMOJI_AUTOMATION", "").strip(), os.getenv("SALF1_EMOJI_AUTOMATION_ALT", "⚙️").strip() or "⚙️"),
+    "protection": (os.getenv("SALF1_EMOJI_PROTECTION", "").strip(), os.getenv("SALF1_EMOJI_PROTECTION_ALT", "🛡️").strip() or "🛡️"),
+    "tools": (os.getenv("SALF1_EMOJI_TOOLS", "").strip(), os.getenv("SALF1_EMOJI_TOOLS_ALT", "🧰").strip() or "🧰"),
+    "system": (os.getenv("SALF1_EMOJI_SYSTEM", "").strip(), os.getenv("SALF1_EMOJI_SYSTEM_ALT", "⚙️").strip() or "⚙️"),
+    "balance": (os.getenv("SALF1_EMOJI_BALANCE", "").strip(), os.getenv("SALF1_EMOJI_BALANCE_ALT", "💎").strip() or "💎"),
+    "warning": (os.getenv("SALF1_EMOJI_WARNING", "").strip(), os.getenv("SALF1_EMOJI_WARNING_ALT", "⚠️").strip() or "⚠️"),
+    "success": (os.getenv("SALF1_EMOJI_SUCCESS", "").strip(), os.getenv("SALF1_EMOJI_SUCCESS_ALT", "✅").strip() or "✅"),
+}
+
+def render_custom_emoji(text: str) -> str:
+    rendered = str(text)
+    for name, (emoji_id, alt) in CUSTOM_EMOJI.items():
+        token = f"[[{name}]]"
+        if emoji_id:
+            safe_id = html.escape(emoji_id, quote=True)
+            safe_alt = html.escape(alt)
+            rendered = rendered.replace(token, f'<tg-emoji emoji-id="{safe_id}">{safe_alt}</tg-emoji>')
+        else:
+            rendered = rendered.replace(token, html.escape(alt))
+    return rendered
+
+
 REFERRAL_REWARD = int(os.getenv("SALF1_REFERRAL_REWARD", "500"))
 TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 LOGIN_TOKEN_TTL_SECONDS = int(os.getenv("SALF1_LOGIN_TOKEN_TTL_SECONDS", "600"))
@@ -1060,11 +1087,11 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 
 ⛂ - نام : {name}
 ⛂ - شناسه : <code>{customer_id}</code>
-⛂ - اکانت : {"● متصل" if connected else "○ متصل نیست"}
-⛂ - سلف : {"● فعال" if enabled else "○ خاموش"}
+[[account]] - اکانت : {"● متصل" if connected else "○ متصل نیست"}
+[[self]] - سلف : {"● فعال" if enabled else "○ خاموش"}
 ⛂ - پلن : رایگان
 ⛂ - زمان باقی‌مانده : {trial_left}
-⛂ - موجودی : {balance:,} جم
+[[balance]] - موجودی : {balance:,} جم
 
 ⛂ - وضعیت سیستم : ● پایدار
 ⛂ - وضعیت Worker : ● آنلاین
@@ -1370,7 +1397,7 @@ async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
         "sendMessage",
         {
             "chat_id": chat_id,
-            "text": text,
+            "text": render_custom_emoji(text),
             "parse_mode": "HTML",
             **({"reply_markup": reply_markup} if reply_markup else {}),
         },
@@ -1435,7 +1462,7 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
 
 ─────━━───── ◈ ─────━━─────
 
-<b>◈ وضـعیـت سـرویـس</b>
+<b>[[system]] وضـعیـت سـرویـس</b>
 
 ★ - برای شروع، اکانت خود را متصل کنید.
 """
