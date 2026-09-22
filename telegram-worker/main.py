@@ -35,6 +35,7 @@ WORKER_API_TOKEN = os.getenv("WORKER_API_TOKEN", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 BOT_TOKEN = os.getenv("SALF1_BOT_TOKEN", "").strip()
 CREATOR_USERNAME = os.getenv("SALF1_CREATOR_USERNAME", "Jowati").strip().lstrip("@")
+ADMIN_USER_IDS = {value.strip() for value in os.getenv("SALF1_ADMIN_IDS", "").split(",") if value.strip().isdigit()}
 CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "Pers3anSelf").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
@@ -169,7 +170,7 @@ pending_2fa: set[str] = set()
 login_locks: dict[str, asyncio.Lock] = {}
 enabled_cache: dict[str, bool] = {}
 me_cache: dict[str, int] = {}
-bot_states: dict[int, str] = {}
+bot_states: dict[int, object] = {}
 http_session: ClientSession | None = None
 db_pool: asyncpg.Pool | None = None
 bot_username = ""
@@ -1761,6 +1762,110 @@ async def referral_text(user_id: int):
     return text, {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "home"}]]}
 
 
+
+async def is_admin_user(user_id: int, username: str | None = None) -> bool:
+    if str(int(user_id)) in ADMIN_USER_IDS:
+        return True
+    return bool(CREATOR_USERNAME and username and username.lstrip("@").casefold() == CREATOR_USERNAME.casefold())
+
+
+async def ensure_admin_ledger_table():
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        create table if not exists salf1_balance_ledger (
+            id bigserial primary key,
+            admin_user_id bigint not null,
+            target_user_id bigint not null,
+            amount bigint not null,
+            balance_after bigint not null,
+            action text not null,
+            created_at timestamptz not null default now()
+        )
+        """
+    )
+
+
+async def admin_credit_balance(admin_user_id: int, target_user_id: int, amount: int):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    if amount < 1 or amount > 1000000:
+        raise ValueError("مقدار شارژ باید بین 1 تا 1,000,000 جم باشد.")
+    await ensure_admin_ledger_table()
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "select tron_balance from salf1_bot_users where telegram_user_id = $1 for update",
+                target_user_id,
+            )
+            if not row:
+                raise LookupError("کاربر موردنظر در دیتابیس پیدا نشد.")
+            new_balance = int(row["tron_balance"]) + amount
+            await conn.execute(
+                "update salf1_bot_users set tron_balance = $2, updated_at = now() where telegram_user_id = $1",
+                target_user_id, new_balance,
+            )
+            await conn.execute(
+                """
+                insert into salf1_balance_ledger
+                    (admin_user_id, target_user_id, amount, balance_after, action)
+                values ($1, $2, $3, $4, 'admin_credit')
+                """,
+                admin_user_id, target_user_id, amount, new_balance,
+            )
+            return new_balance
+
+
+def admin_panel_markup():
+    return {"inline_keyboard": [
+        [{"text": "› شارژ جم", "callback_data": "admin_charge"}],
+        [{"text": "› بررسی موجودی", "callback_data": "admin_balance"}],
+        [{"text": "‹ بستن پنل", "callback_data": "admin_close"}],
+    ]}
+
+
+async def admin_panel_text():
+    return """<b>◈ SALF1 · ADMIN CENTER</b>
+
+⛂ مدیریت موجودی کاربران
+⛂ ثبت تمام شارژها در Ledger
+⛂ تراکنش اتمیک برای جلوگیری از دوباره‌کاری
+
+─────━━───── ◈ ─────━━─────
+
+برای شارژ مستقیم:
+<code>شارژ شناسه مقدار</code>
+
+مثال:
+<code>شارژ 7253338062 1000</code>
+
+یا:
+<code>/charge 7253338062 1000</code>"""
+
+
+def parse_admin_charge(text: str):
+    raw = str(text or "").strip()
+    parts = raw.split()
+    if not parts:
+        return None
+    command = parts[0].lstrip("/").casefold()
+    if command not in {"شارژ", "charge", "credit", "افزایش"}:
+        return None
+    if len(parts) != 3:
+        raise ValueError("فرمت صحیح: شارژ شناسه مقدار")
+    try:
+        target_id = int(parts[1])
+        amount = int(parts[2].replace(",", "").replace("٬", ""))
+    except ValueError:
+        raise ValueError("شناسه و مقدار باید عددی باشند.")
+    if target_id <= 0:
+        raise ValueError("شناسه کاربر معتبر نیست.")
+    if amount < 1 or amount > 1000000:
+        raise ValueError("مقدار شارژ باید بین 1 تا 1,000,000 جم باشد.")
+    return target_id, amount
+
+
 async def process_bot_message(message: dict):
     user = message.get("from") or {}
     chat = message.get("chat") or {}
@@ -1842,6 +1947,45 @@ async def process_bot_message(message: dict):
         await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
         return
 
+
+    if await is_admin_user(user_id, username):
+        try:
+            charge = parse_admin_charge(text)
+        except ValueError as exc:
+            first = text.strip().split(maxsplit=1)[0].lstrip("/").casefold() if text.strip() else ""
+            if first in {"شارژ", "charge", "credit", "افزایش"}:
+                await bot_send(chat["id"], f"<b>◈ خطای شارژ</b>\\n\\n⛂ {html.escape(str(exc))}\\n\\nمثال: <code>شارژ 7253338062 1000</code>")
+                return
+            charge = None
+        if charge:
+            target_id, amount = charge
+            target_row = await db_user(str(target_id))
+            if not target_row:
+                await bot_send(chat["id"], "⛂ کاربر موردنظر در دیتابیس پیدا نشد.")
+                return
+            bot_states[user_id] = {"state": "admin_charge_confirm", "target_id": target_id, "amount": amount}
+            current = int(target_row["tron_balance"])
+            await bot_send(
+                chat["id"],
+                f"""<b>◈ تأیید شارژ</b>
+
+⛂ شناسه : <code>{target_id}</code>
+⛂ موجودی فعلی : <b>{current:,}</b> جم
+⛂ مقدار شارژ : <b>+{amount:,}</b> جم
+⛂ موجودی پس از شارژ : <b>{current + amount:,}</b> جم
+
+★ شارژ فقط بعد از تأیید شما ثبت می‌شود.""",
+                {"inline_keyboard": [
+                    [{"text": "✓ تأیید شارژ", "callback_data": "admin_charge_confirm"}],
+                    [{"text": "× لغو", "callback_data": "admin_charge_cancel"}],
+                ]},
+            )
+            return
+        normalized_admin = normalize_text(text)
+        if normalized_admin in {"مدیریت", "مدیریت اصلی", "پنل مدیریت", "admin", "admin panel"}:
+            await bot_send(chat["id"], await admin_panel_text(), admin_panel_markup())
+            return
+
     if normalized in {"panel", "پنل"}:
         # The panel command is slashless and private-chat only.
         if text.startswith("/") or chat.get("type") != "private":
@@ -1880,6 +2024,73 @@ async def process_callback(callback_query: dict):
     chat_id = int(chat["id"])
     message_id = int(message.get("message_id", 0))
     await bot_answer_callback(callback_id)
+
+
+    if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
+        if not await is_admin_user(user_id, from_user.get("username")):
+            await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
+            return
+        if data == "admin_close":
+            await bot_edit(chat_id, message_id, "<b>◈ ADMIN CENTER</b>\\n\\nپنل بسته شد.")
+            return
+        if data == "admin_balance":
+            await bot_edit(chat_id, message_id, await admin_panel_text(), admin_panel_markup())
+            return
+        if data == "admin_charge":
+            await bot_edit(
+                chat_id, message_id,
+                """<b>◈ شارژ جم</b>
+
+فرمت:
+<code>شارژ شناسه مقدار</code>
+
+مثال:
+<code>شارژ 7253338062 1000</code>""",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "home"}]]},
+            )
+            return
+        pending = bot_states.get(user_id)
+        if not isinstance(pending, dict) or pending.get("state") != "admin_charge_confirm":
+            await bot_edit(chat_id, message_id, "⛂ درخواست شارژ منقضی شده است.", admin_panel_markup())
+            return
+        target_id = int(pending["target_id"])
+        amount = int(pending["amount"])
+        if data == "admin_charge_cancel":
+            bot_states.pop(user_id, None)
+            await bot_edit(chat_id, message_id, "<b>× شارژ لغو شد.</b>", admin_panel_markup())
+            return
+        try:
+            new_balance = await admin_credit_balance(user_id, target_id, amount)
+        except LookupError:
+            bot_states.pop(user_id, None)
+            await bot_edit(chat_id, message_id, "⛂ کاربر موردنظر دیگر در دیتابیس وجود ندارد.", admin_panel_markup())
+            return
+        except Exception as exc:
+            print(f"Admin credit failed for {user_id}: {type(exc).__name__}: {exc}")
+            bot_states.pop(user_id, None)
+            await bot_edit(chat_id, message_id, "⛂ شارژ انجام نشد. تغییر موجودی ثبت نشده است.", admin_panel_markup())
+            return
+        bot_states.pop(user_id, None)
+        notify = await bot_send(
+            target_id,
+            f"""<b>◈ شارژ حساب SALF1</b>
+
+⛂ مبلغ شارژ : <b>+{amount:,} جم ترون</b>
+⛂ موجودی جدید : <b>{new_balance:,} جم ترون</b>
+
+✓ شارژ با موفقیت در حساب شما ثبت شد."""
+        )
+        await bot_edit(
+            chat_id, message_id,
+            f"""<b>✓ شارژ با موفقیت انجام شد</b>
+
+⛂ کاربر : <code>{target_id}</code>
+⛂ مقدار : <b>+{amount:,} جم</b>
+⛂ موجودی جدید : <b>{new_balance:,} جم</b>
+⛂ پیام کاربر : {"● ارسال شد" if notify and notify.get("ok") else "○ ارسال نشد"}""",
+            admin_panel_markup(),
+        )
+        return
 
     if data == "panel":
         await bot_edit(chat_id, message_id, await salf_panel_text(user_id), salf_panel_markup())
