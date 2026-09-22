@@ -1507,7 +1507,7 @@ async def process_callback(callback_query: dict):
             )
             return
 
-        login_url = f"{LOGIN_BASE_URL}/login#{token}"
+        login_url = f"{LOGIN_BASE_URL}/login?token={token}"
         await bot_edit(
             chat_id,
             message_id,
@@ -1839,52 +1839,76 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 
 <section id="phoneStep">
 <label>شماره تلفن</label>
-<input id="phone" placeholder="+98912..." autocomplete="tel">
-<button onclick="startLogin()">ارسال کد ورود</button>
+<form id="phoneForm">
+<input id="phone" placeholder="+98912..." autocomplete="tel" inputmode="tel" required>
+<button id="startBtn" type="submit">ارسال کد ورود</button>
+</form>
 </section>
 
 <section id="codeStep" class="hidden">
 <label>کد ورود تلگرام</label>
+<form id="codeForm">
 <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="12345">
-<button onclick="verifyCode()">تأیید کد</button>
-<button onclick="showPhone()" style="background:#252931;color:#fff">دریافت کد جدید</button>
+<button id="verifyBtn" type="submit">تأیید کد</button>
+</form>
+<button id="newCodeBtn" type="button" style="background:#252931;color:#fff">دریافت کد جدید</button>
 </section>
 
 <section id="passStep" class="hidden">
 <label>رمز دو مرحله‌ای تلگرام</label>
+<form id="passwordForm">
 <input id="password" type="password" autocomplete="current-password" placeholder="رمز 2FA">
-<button onclick="verifyPassword()">تکمیل اتصال</button>
+<button id="passwordBtn" type="submit">تکمیل اتصال</button>
+</form>
 </section>
 
 <div id="notice" class="notice">در انتظار شروع ورود…</div>
 </div>
 
 <script>
-const token=location.hash.slice(1);
+const params=new URLSearchParams(location.search);
+const token=(params.get('token')||location.hash.slice(1)).trim();
 const notice=document.getElementById('notice');
 const phoneStep=document.getElementById('phoneStep');
 const codeStep=document.getElementById('codeStep');
 const passStep=document.getElementById('passStep');
+const phoneForm=document.getElementById('phoneForm');
+const codeForm=document.getElementById('codeForm');
+const passwordForm=document.getElementById('passwordForm');
+const newCodeBtn=document.getElementById('newCodeBtn');
+const startBtn=document.getElementById('startBtn');
+const verifyBtn=document.getElementById('verifyBtn');
+const passwordBtn=document.getElementById('passwordBtn');
 
 function msg(t,c=''){notice.textContent=t;notice.className='notice '+c}
 function showPhone(){phoneStep.classList.remove('hidden');codeStep.classList.add('hidden');passStep.classList.add('hidden');msg('شماره را وارد کنید تا یک کد جدید ارسال شود.')}
 async function api(path,body){
-  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Login-Token':token},body:JSON.stringify(body)});
+  if(!token) throw new Error('لینک ورود نامعتبر یا ناقص است. از داخل بات یک پنل ورود جدید باز کنید.');
+  const r=await fetch(path,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Login-Token':token},
+    body:JSON.stringify(body)
+  });
   let d={}; try{d=await r.json()}catch{}
   if(!r.ok) throw new Error(d.error||'خطای ارتباط با سرور');
   return d;
 }
 async function startLogin(){
   const phone=document.getElementById('phone').value.trim();
+  if(!phone) return msg('شماره تلفن را وارد کنید.','err');
+  setBusy(startBtn,true);
   try{
     msg('در حال ارسال کد…');
     const d=await api('/api/web-login/start',{phone});
     phoneStep.classList.add('hidden');codeStep.classList.remove('hidden');passStep.classList.add('hidden');
     msg('کد جدید ارسال شد. فقط همان آخرین کد را وارد کنید.','ok');
   }catch(e){msg(e.message,'err')}
+  finally{setBusy(startBtn,false)}
 }
 async function verifyCode(){
   const code=document.getElementById('code').value.trim();
+  if(!code) return msg('کد ورود را وارد کنید.','err');
+  setBusy(verifyBtn,true);
   try{
     msg('در حال تأیید کد…');
     const d=await api('/api/web-login/verify',{code});
@@ -1897,9 +1921,12 @@ async function verifyCode(){
     if(d.status==='code_expired'){showPhone();msg('کد منقضی شده؛ یک کد جدید بگیرید.','err');return;}
     msg(d.error||'ورود انجام نشد.','err');
   }catch(e){msg(e.message,'err')}
+  finally{setBusy(verifyBtn,false)}
 }
 async function verifyPassword(){
-  const password=document.getElementById('password').value;
+  const password=document.getElementById('password').value.trim();
+  if(!password) return msg('رمز دو مرحله‌ای را وارد کنید.','err');
+  setBusy(passwordBtn,true);
   try{
     msg('در حال تکمیل ورود…');
     const d=await api('/api/web-login/verify',{password});
@@ -1907,11 +1934,22 @@ async function verifyPassword(){
     if(d.status==='connected'){done(d);return;}
     msg(d.error||'ورود انجام نشد.','err');
   }catch(e){msg(e.message,'err')}
+  finally{setBusy(passwordBtn,false)}
+}
+function setBusy(button,busy){
+  if(!button) return;
+  button.disabled=busy;
+  button.style.opacity=busy?'0.65':'1';
 }
 function done(d){
   phoneStep.classList.add('hidden');codeStep.classList.add('hidden');passStep.classList.add('hidden');
   msg('✓ اتصال اکانت با موفقیت انجام شد.\nاین صفحه را می‌توانید ببندید.','ok');
 }
+phoneForm.addEventListener('submit',e=>{e.preventDefault();startLogin()});
+codeForm.addEventListener('submit',e=>{e.preventDefault();verifyCode()});
+passwordForm.addEventListener('submit',e=>{e.preventDefault();verifyPassword()});
+newCodeBtn.addEventListener('click',showPhone);
+if(!token) msg('لینک ورود نامعتبر یا ناقص است. از داخل بات یک پنل ورود جدید باز کنید.','err');
 </script>
 </body>
 </html>"""
