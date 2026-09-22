@@ -55,16 +55,35 @@ CUSTOM_EMOJI = {
     "success": (os.getenv("SALF1_EMOJI_SUCCESS", "").strip(), os.getenv("SALF1_EMOJI_SUCCESS_ALT", "✅").strip() or "✅"),
 }
 
+# IDs are Telegram custom-emoji identifiers, not Unicode emoji and not sticker
+# file_ids. Keep only numeric IDs here; invalid values must never be sent to
+# the Bot API as custom_emoji_id.
+VALID_CUSTOM_EMOJI_IDS: set[str] = set()
+
+def _emoji_id(value: str) -> str:
+    value = str(value or "").strip()
+    return value if value.isdigit() else ""
+
 def render_custom_emoji(text: str) -> str:
     rendered = str(text)
-    for name, (emoji_id, alt) in CUSTOM_EMOJI.items():
+    for name, (raw_id, alt) in CUSTOM_EMOJI.items():
         token = f"[[{name}]]"
+        emoji_id = _emoji_id(raw_id)
         if emoji_id:
             safe_id = html.escape(emoji_id, quote=True)
             safe_alt = html.escape(alt)
-            rendered = rendered.replace(token, f'<tg-emoji emoji-id="{safe_id}">{safe_alt}</tg-emoji>')
+            rendered = rendered.replace(
+                token,
+                f'<tg-emoji emoji-id="{safe_id}">{safe_alt}</tg-emoji>',
+            )
         else:
             rendered = rendered.replace(token, html.escape(alt))
+    return rendered
+
+def strip_custom_emoji(text: str) -> str:
+    rendered = str(text)
+    for name, (_, alt) in CUSTOM_EMOJI.items():
+        rendered = rendered.replace(f"[[{name}]]", html.escape(alt))
     return rendered
 
 
@@ -1393,28 +1412,46 @@ async def bot_api(method: str, payload: dict | None = None, timeout: int = 35):
 
 
 async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
-    return await bot_api(
-        "sendMessage",
-        {
-            "chat_id": chat_id,
-            "text": render_custom_emoji(text),
-            "parse_mode": "HTML",
-            **({"reply_markup": reply_markup} if reply_markup else {}),
-        },
-    )
+    payload = {
+        "chat_id": chat_id,
+        "text": render_custom_emoji(text),
+        "parse_mode": "HTML",
+        **({"reply_markup": reply_markup} if reply_markup else {}),
+    }
+    result = await bot_api("sendMessage", payload)
+    if result and result.get("ok"):
+        return result
+
+    # If Telegram rejects custom-emoji entities (for example when the bot
+    # owner lacks the required Premium entitlement), retry with the Unicode
+    # fallback so the panel itself never breaks.
+    if "[[" in str(text):
+        fallback = dict(payload)
+        fallback["text"] = strip_custom_emoji(text)
+        if reply_markup:
+            fallback["reply_markup"] = _strip_invalid_button_emojis(reply_markup)
+        return await bot_api("sendMessage", fallback)
+    return result
 
 
 async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
-    return await bot_api(
-        "editMessageText",
-        {
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "text": render_custom_emoji(text),
-            "parse_mode": "HTML",
-            **({"reply_markup": reply_markup} if reply_markup else {}),
-        },
-    )
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": render_custom_emoji(text),
+        "parse_mode": "HTML",
+        **({"reply_markup": reply_markup} if reply_markup else {}),
+    }
+    result = await bot_api("editMessageText", payload)
+    if result and result.get("ok"):
+        return result
+    if "[[" in str(text):
+        fallback = dict(payload)
+        fallback["text"] = strip_custom_emoji(text)
+        if reply_markup:
+            fallback["reply_markup"] = _strip_invalid_button_emojis(reply_markup)
+        return await bot_api("editMessageText", fallback)
+    return result
 
 
 async def bot_answer_callback(callback_id: str):
@@ -1524,11 +1561,60 @@ async def salf_panel_text(user_id: int):
 [[account]] - دسترسی اختصاصی برای این حساب"""
 
 
+def _strip_invalid_button_emojis(reply_markup: dict) -> dict:
+    markup = json.loads(json.dumps(reply_markup))
+    for row in markup.get("inline_keyboard", []):
+        for button in row:
+            button.pop("icon_custom_emoji_id", None)
+    return markup
+
+
+async def validate_custom_emoji_config():
+    global VALID_CUSTOM_EMOJI_IDS
+    configured = []
+    for name, (raw_id, _) in CUSTOM_EMOJI.items():
+        emoji_id = _emoji_id(raw_id)
+        if emoji_id:
+            configured.append((name, emoji_id))
+
+    if not configured:
+        VALID_CUSTOM_EMOJI_IDS = set()
+        print("Custom Emoji: no numeric IDs configured.")
+        return
+
+    response = await bot_api(
+        "getCustomEmojiStickers",
+        {"custom_emoji_ids": [emoji_id for _, emoji_id in configured]},
+        timeout=15,
+    )
+    if not response or not response.get("ok"):
+        VALID_CUSTOM_EMOJI_IDS = set()
+        print(f"Custom Emoji validation failed: {response}")
+        return
+
+    returned = {
+        str(sticker.get("custom_emoji_id"))
+        for sticker in response.get("result", [])
+        if sticker.get("custom_emoji_id")
+    }
+    VALID_CUSTOM_EMOJI_IDS = returned
+    missing = [(name, emoji_id) for name, emoji_id in configured if emoji_id not in returned]
+    print(
+        f"Custom Emoji: configured={len(configured)}, valid={len(returned)}, "
+        f"missing={len(missing)}"
+    )
+    if missing:
+        print(
+            "Custom Emoji missing IDs: "
+            + ", ".join(f"{name}={emoji_id}" for name, emoji_id in missing)
+        )
+
+
 def custom_emoji_button(text: str, callback_data: str, emoji_key: str | None = None):
     button = {"text": text, "callback_data": callback_data}
     if emoji_key:
-        emoji_id = CUSTOM_EMOJI.get(emoji_key, ("", ""))[0]
-        if emoji_id:
+        emoji_id = _emoji_id(CUSTOM_EMOJI.get(emoji_key, ("", ""))[0])
+        if emoji_id and emoji_id in VALID_CUSTOM_EMOJI_IDS:
             button["icon_custom_emoji_id"] = emoji_id
     return button
 
@@ -1977,6 +2063,7 @@ async def mini_bot_loop():
         return
 
     bot_username = str(identity["result"].get("username") or "").strip()
+    await validate_custom_emoji_config()
     webhook_url = f"{LOGIN_BASE_URL}/bot/webhook"
     webhook_result = await bot_api(
         "setWebhook",
