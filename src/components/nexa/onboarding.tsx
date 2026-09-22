@@ -450,7 +450,9 @@ export function Onboarding() {
   );
 
   return (
-    <div className="pb-auth" dir="rtl">
+    <div className="pb-auth pb-auth--space" dir="rtl">
+      <SpaceRealm />
+      <div className="pb-auth__space-vignette" />
       <header className="pb-auth__top"><div className="pb-auth__brand"><div className="pb-auth__mini-seal" aria-hidden><span>P</span></div><div className="pb-auth__brand-copy"><strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong><small>پنل مدیریت سلف · PRIVATE SELF MANAGEMENT</small></div></div><div className="pb-auth__secure"><i /><span>PRIVATE · SECURE</span></div></header>
       <main className="pb-auth__body pb-auth__body--space">
         <section className="pb-auth__intro pb-auth__intro--space"><div className="pb-auth__intro-line"><span>01</span><i /><span>IDENTITY GATE</span></div><div className="pb-auth__hero-seal"><div className="pb-seal" aria-hidden><span>P</span><i /><b /></div></div><p className="pb-auth__intro-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · PRIVATE ENVIRONMENT</p><h1 className="pb-auth__title">هویت،<br /><em>پیش از ورود.</em></h1><p className="pb-auth__lede">ورود به یک محیط خصوصی و دقیق؛ طراحی‌شده برای مدیریت سلف با تمرکز بر اصالت هویت، آرامش بصری و تجربه‌ای یکپارچه.</p><div className="pb-auth__signature">CRAFTED BY JAWATI · @JOWATI</div></section>
