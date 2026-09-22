@@ -2425,8 +2425,8 @@ async def process_callback(callback_query: dict):
 
 مـرکـز خـریـد و مـدیـریـت جـم
 
-⛂ موجودی حساب : 0 جم
-⛂ مصرف سرویس : 1 جم در دقیقه
+⛂ - موجودی حساب : 0 جم
+⛂ - مصرف سرویس : 1 جم در دقیقه
 
 ─────━━───── ◈ ─────━━─────
 
@@ -2442,11 +2442,11 @@ async def process_callback(callback_query: dict):
 
 بـسـتـه مـوردنـظـر خـود را انـتـخـاب کـنـیـد.
 
-⛂ 1 ساعت
-⛂ 24 ساعت
-⛂ 7 روز
-⛂ 30 روز
-⛂ 60 روز
+⛂ - 1 ساعت
+⛂ - 24 ساعت
+⛂ - 7 روز
+⛂ - 30 روز
+⛂ - 60 روز
 
 ─────━━───── ◈ ─────━━─────
 
@@ -2530,7 +2530,7 @@ async def process_callback(callback_query: dict):
 نکته :
 مدت قابل استفاده به میزان مصرف سلف بستگی دارد. فعال بودن مداوم سلف، مصرف مداوم جم را به همراه دارد.""",
                 {"inline_keyboard": [
-                    [{"text": "‹ پرداخت", "callback_data": f"pay_{data.removeprefix('package_')}"}],
+                    [{"text": "‹ پرداخت", "callback_data": "shop_buy"}],
                     [{"text": "‹ بازگشت", "callback_data": "shop_packages"}],
                 ]})
             return
