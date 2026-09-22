@@ -1678,15 +1678,27 @@ def trial_remaining_text(row) -> str:
 
 
 async def mini_main_text(user_id: int, user_first_name: str | None):
-    name = html.escape(user_first_name or "کاربر")
+    row = await db_user(str(user_id))
+    name = html.escape((row["first_name"] if row else None) or user_first_name or "کاربر")
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    balance = int(row["tron_balance"]) if row else 0
     return f"""
-<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
+<b>◈ مـدیـریـت اکـانـت سـلـف</b>
 
-سلام <b>[ {name} ]</b> 🌹
+- خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
-به مرکز SALF1 خوش آمدید.
+⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
+⛂ تست رایگان 24 ساعت : {trial_remaining_text(row)}
+⛂ موجودی : {balance:,} جم ترون
+⛂ مصرف فعال : 1 جم ترون در دقیقه
 
 ─────━━───── ◈ ─────━━─────
+
+<b>◈ وضـعیـت سـرویـس</b>
+
+★ - برای شروع، اکانت خود را متصل کنید.
 """
     
 
