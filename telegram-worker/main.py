@@ -1188,8 +1188,20 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 
 [[protection]] - دسترسی اختصاصی برای این حساب"""
 
+    client = client_for(customer_id)
     rendered_text, custom_entities = await render_telethon_custom_emoji(client, text)
-    await event.respond(rendered_text, formatting_entities=custom_entities)
+    print({
+        "type": "custom_emoji.panel_send",
+        "customer_id": customer_id,
+        "entities": len(custom_entities),
+        "document_ids": [int(getattr(entity, "document_id", 0)) for entity in custom_entities],
+    })
+    await client.send_message(
+        "me",
+        rendered_text,
+        formatting_entities=custom_entities,
+        parse_mode=None,
+    )
 
 
 async def handle_self_command(event, customer_id: str, text: str):
