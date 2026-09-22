@@ -2014,23 +2014,21 @@ async def salf_panel_text(user_id: int):
     balance = int(row["tron_balance"]) if row else 0
     return f"""<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
-شناسه : <code>{user_id}</code>
-اکانت : {"● متصل" if connected else "○ متصل نیست"}
-سلف : {"● روشن" if enabled else "○ خاموش"}
-پلن : رایگان
-زمان باقی‌مانده : {trial_remaining_text(row)}
-موجودی : {balance:,} جم
+⛂ - نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
+⛂ - شناسه : <code>{user_id}</code>
+⛂ - اکانت : {"○ متصل نیست" if not connected else "● متصل"}
+⛂ - سلف : {"○ خاموش" if not enabled else "● روشن"}
+⛂ - پلن : رایگان
+⛂ - زمان باقی‌مانده : {trial_remaining_text(row)}
+⛂ - موجودی : {balance:,} جم
+
+⛂ - وضعیت سیستم : ● پایدار
+⛂ - وضعیت Worker : ● آنلاین
+⛂ - مصرف فعال : 1 جم / دقیقه
 
 ─────━━───── ◈ ─────━━─────
 
-وضعیت سیستم : ● پایدار
-وضعیت Worker : ● آنلاین
-مصرف فعال : 1 جم / دقیقه
-
-─────━━───── ◈ ─────━━─────
-
-دسترسی اختصاصی برای این حساب"""
+⛂ - دسترسی اختصاصی برای این حساب"""
 
 
 def _strip_invalid_button_emojis(reply_markup: dict) -> dict:
