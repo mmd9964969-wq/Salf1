@@ -1378,7 +1378,7 @@ def attach_events(client: TelegramClient, customer_id: str):
         except Exception as exc:
             print(f"Telegram event handler error: {exc}")
 
-    client.add_event_handler(handler, events.NewMessage)
+    client.add_event_handler(handler, events.NewMessage(incoming=True, outgoing=True))
 
 
 async def init_loaded_sessions():
