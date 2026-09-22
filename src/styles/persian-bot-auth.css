@@ -216,3 +216,39 @@
   .pb-auth--space .pb-auth__provider-copy strong{font-size:9px}
   .pb-auth--space .pb-auth__provider{min-height:61px}
 }
+
+
+/* 3D LOGIN PORTAL — REALM GATE */
+.pb-auth--space .pb-auth__portal{
+  transform:translateZ(0);
+  border-color:rgba(155,205,235,.24);
+  background:
+    radial-gradient(circle at 50% 18%,rgba(124,194,232,.10),transparent 34%),
+    linear-gradient(145deg,rgba(17,29,38,.78),rgba(2,7,11,.86));
+}
+.pb-auth--space .pb-auth__portal-label{
+  position:relative;z-index:4;margin-top:12px;color:#8fa8b8;
+  font:8px "IBM Plex Mono",monospace;letter-spacing:.18em;text-align:center;
+}
+.pb-auth__portal-core{
+  position:absolute;z-index:1;left:50%;top:19px;width:82px;height:82px;
+  transform:translateX(-50%);display:grid;place-items:center;border-radius:50%;
+  border:1px solid rgba(170,216,240,.28);
+  background:radial-gradient(circle,#203440 0 18%,#071017 42%,rgba(0,0,0,.1) 70%);
+  box-shadow:0 0 45px rgba(105,190,232,.16),inset 0 0 28px rgba(142,208,238,.08);
+  animation:pb-portal-core 3.2s ease-in-out infinite;
+}
+.pb-auth__portal-core b{font:italic 38px "Newsreader",Georgia,serif;color:#e6f4fc;text-shadow:0 0 22px rgba(150,216,243,.65)}
+.pb-auth__portal-core i{position:absolute;inset:-7px;border:1px dashed rgba(153,205,231,.24);border-radius:50%;animation:pb-portal-spin 9s linear infinite}
+.pb-auth__portal-orbit{position:absolute;z-index:0;left:50%;top:60px;width:270px;height:112px;transform:translateX(-50%) rotate(-13deg);border:1px solid rgba(145,201,229,.16);border-radius:50%;pointer-events:none;box-shadow:0 0 45px rgba(90,167,204,.07)}
+.pb-auth__portal-orbit span{position:absolute;width:5px;height:5px;border-radius:50%;background:#b8e5fa;box-shadow:0 0 13px #8ed6f5}
+.pb-auth__portal-orbit span:nth-child(1){left:18%;top:13%}.pb-auth__portal-orbit span:nth-child(2){right:10%;top:47%}.pb-auth__portal-orbit span:nth-child(3){left:48%;bottom:3%}
+.pb-auth--space .pb-auth__portal .pb-auth__card-head{margin-top:108px}
+.pb-auth--space .pb-auth__portal .pb-auth__provider-list{margin-top:26px}
+@keyframes pb-portal-core{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.06)}}
+@keyframes pb-portal-spin{to{transform:rotate(360deg)}}
+@media(max-width:640px){
+ .pb-auth__portal-core{top:16px;width:68px;height:68px}.pb-auth__portal-core b{font-size:31px}
+ .pb-auth__portal-orbit{top:50px;width:225px;height:92px}
+ .pb-auth--space .pb-auth__portal .pb-auth__card-head{margin-top:88px}
+}
