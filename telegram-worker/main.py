@@ -4,12 +4,19 @@ import html
 import os
 import random
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events
-from telethon.errors import PasswordHashInvalidError, SessionPasswordNeededError
+from telethon.errors import (
+    PasswordHashInvalidError,
+    SessionPasswordNeededError,
+    PhoneCodeInvalidError,
+    PhoneCodeExpiredError,
+    PhoneNumberInvalidError,
+    FloodWaitError,
+)
 
 HOST = "0.0.0.0"
 PORT = int(os.getenv("PORT", "8080"))
@@ -25,7 +32,7 @@ CREATOR_USERNAME = os.getenv("SALF1_CREATOR_USERNAME", "Jowati").strip().lstrip(
 CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "Pers3anSelf").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
-ROLE = os.getenv("SALF1_ROLE", "bot").strip().lower()
+ROLE = os.getenv("SALF1_ROLE", "all").strip().lower()
 DB_POOL_MIN = max(1, int(os.getenv("SALF1_DB_POOL_MIN", "1")))
 DB_POOL_MAX = max(DB_POOL_MIN, int(os.getenv("SALF1_DB_POOL_MAX", "8")))
 
@@ -34,7 +41,7 @@ TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
-pending_codes: dict[str, str] = {}
+pending_codes: dict[str, str] = {}\npending_2fa: set[str] = set()
 enabled_cache: dict[str, bool] = {}
 me_cache: dict[str, int] = {}
 bot_states: dict[int, str] = {}
@@ -361,24 +368,37 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
         raise RuntimeError("start login first")
 
     try:
-        if code:
+        if customer_id in pending_2fa:
+            if not password:
+                return {"status": "2fa_required"}
+            await client.sign_in(password=password)
+            pending_2fa.discard(customer_id)
+        else:
+            if not code:
+                code = pending_codes.get(customer_id, "")
+            if not code:
+                raise RuntimeError("login code is required")
             pending_codes[customer_id] = code
             await client.sign_in(phone, code)
-        else:
-            stored_code = pending_codes.get(customer_id)
-            if stored_code:
-                await client.sign_in(phone, stored_code)
     except SessionPasswordNeededError:
-        if not password:
-            return {"status": "2fa_required"}
-        try:
-            await client.sign_in(password=password)
-        except PasswordHashInvalidError:
-            return {"status": "2fa_invalid"}
+        pending_2fa.add(customer_id)
+        return {"status": "2fa_required"}
+    except PasswordHashInvalidError:
+        return {"status": "2fa_invalid"}
+    except PhoneCodeInvalidError:
+        return {"status": "code_invalid"}
+    except PhoneCodeExpiredError:
+        pending_codes.pop(customer_id, None)
+        return {"status": "code_expired"}
+    except PhoneNumberInvalidError:
+        return {"status": "phone_invalid"}
+    except FloodWaitError as exc:
+        return {"status": "flood_wait", "seconds": int(exc.seconds)}
 
     me = await client.get_me()
     pending_phones.pop(customer_id, None)
     pending_codes.pop(customer_id, None)
+    pending_2fa.discard(customer_id)
     me_cache[customer_id] = int(me.id)
     await update_account_state(customer_id, True)
     await set_salf_enabled(customer_id, False)
@@ -929,7 +949,7 @@ async def handle_self_command(event, customer_id: str, text: str):
                 parse_mode="html",
             )
             return True
-        trial_active = row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
+        trial_active = bool(row and row["trial_expires_at"] is not None and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo))
         balance = int(row["tron_balance"])
         if not trial_active and balance <= 0:
             await event.respond(
@@ -1511,7 +1531,7 @@ async def process_callback(callback_query: dict):
         balance = int(row["tron_balance"]) if row else 0
         trial_active = bool(
             row
-            and row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+            and row["trial_expires_at"] is not None and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
         )
         enabled = bool(row["salf_enabled"]) if row else False
         await bot_edit(
@@ -1596,6 +1616,7 @@ async def process_callback(callback_query: dict):
         enabled_cache[str(user_id)] = False
         pending_phones.pop(str(user_id), None)
         pending_codes.pop(str(user_id), None)
+        pending_2fa.discard(str(user_id))
         await update_account_state(str(user_id), False)
         await set_salf_enabled(str(user_id), False)
 
@@ -1661,6 +1682,7 @@ async def mini_bot_loop():
         return
 
     bot_username = str(identity["result"].get("username") or "").strip()
+    await bot_api("deleteWebhook", {"drop_pending_updates": False}, timeout=15)
     offset = 0
     print(f"SALF1 mini bot started as @{bot_username}")
 
