@@ -136,15 +136,7 @@ function SolarRealm() {
       const shell = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.055, 48, 32), new THREE.MeshBasicMaterial({color, transparent:true, opacity, side:THREE.BackSide, blending:THREE.AdditiveBlending, depthWrite:false}));
       planet.add(shell);
     };
-    const moonMaterial = new THREE.MeshStandardMaterial({color:"#9da5a9", roughness:0.92, metalness:0.0});
-    const moonSpecs = [[2,1.05,0.13,0.9],[4,1.25,0.17,0.65],[5,1.45,0.12,1.15]] as const;
-    moonSpecs.forEach(([parentIndex, orbitRadius, moonSize, speed]) => {
-      const parent = orbitGroups[parentIndex]; if (!parent) return;
-      const moonOrbit = new THREE.Group(); parent.add(moonOrbit); moonOrbit.userData.moonSpeed=speed;
-      const moon = new THREE.Mesh(new THREE.SphereGeometry(moonSize,24,16), moonMaterial.clone()); moon.position.x=orbitRadius; moon.castShadow=true; moonOrbit.add(moon);
-    });
-
-\n    const planetData = [
+    const planetData = [
       [4.3, 0.22, "#8e9aa0", 0.08], [6.4, 0.34, "#b18c69", -0.05],
       [8.6, 0.46, "#718d9e", 0.03], [11.2, 0.58, "#9c8067", -0.025],
       [14.3, 0.92, "#b4a17c", 0.012], [18.1, 0.67, "#6f8898", -0.009],
@@ -179,8 +171,17 @@ function SolarRealm() {
         planetRing.rotation.x = Math.PI / 2.3;
         planet.add(planetRing);
       }
-      if (index === 2 || index === 5) addAtmosphere(planet, size, index === 2 ? "#6ea9d8" : "#6e9bb8", 0.11);\n      orbit.userData.speed = speed;
+      if (index === 2 || index === 5) addAtmosphere(planet, size, index === 2 ? "#6ea9d8" : "#6e9bb8", 0.11);
+      orbit.userData.speed = speed;
       orbit.rotation.y = index * 0.8;
+    });
+
+    const moonMaterial = new THREE.MeshStandardMaterial({color:"#9da5a9", roughness:0.92, metalness:0.0});
+    const moonSpecs = [[2,1.05,0.13,0.9],[4,1.25,0.17,0.65],[5,1.45,0.12,1.15]] as const;
+    moonSpecs.forEach(([parentIndex, orbitRadius, moonSize, speed]) => {
+      const parent = orbitGroups[parentIndex]; if (!parent) return;
+      const moonOrbit = new THREE.Group(); parent.add(moonOrbit); moonOrbit.userData.moonSpeed=speed;
+      const moon = new THREE.Mesh(new THREE.SphereGeometry(moonSize,24,16), moonMaterial.clone()); moon.position.x=orbitRadius; moon.castShadow=true; moonOrbit.add(moon);
     });
 
     const asteroidGeometry = new THREE.BufferGeometry();
@@ -556,7 +557,8 @@ export function Onboarding() {
   const complete = useSelfStore((s) => s.completeOnboarding);
   const profile = useSelfStore((s) => s.profile);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");\n  const [language, setLanguage] = useState<"fa" | "en">("fa");
+  const [error, setError] = useState("");
+  const [language, setLanguage] = useState<"fa" | "en">("fa");
 
   useEffect(() => {
     if (!user || profile) return;
