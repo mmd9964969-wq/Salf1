@@ -153,8 +153,34 @@ function SolarRealm() {
         planetRing.rotation.x = Math.PI / 2.3;
         planet.add(planetRing);
       }
-      orbit.userData.speed = speed;
+      if (index === 2 || index === 5) addAtmosphere(planet, size, index === 2 ? "#6ea9d8" : "#6e9bb8", 0.11);\n      orbit.userData.speed = speed;
       orbit.rotation.y = index * 0.8;
+    });
+
+    // HD procedural planet detail: layered relief, cloud shells, atmospheric rims and moons.
+    const planetDetail = (tint: string, seed: number) => {
+      const canvas = document.createElement("canvas"); canvas.width = 512; canvas.height = 256;
+      const ctx = canvas.getContext("2d"); if (!ctx) return null;
+      const image = ctx.createImageData(canvas.width, canvas.height); const data = image.data;
+      const base = new THREE.Color(tint);
+      for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+        const i = (y * canvas.width + x) * 4;
+        const n = (Math.sin(x * 0.047 + seed) + Math.sin(y * 0.083 - seed * 1.7) + Math.sin((x+y) * 0.021)) / 3;
+        const v = THREE.MathUtils.clamp(0.78 + n * 0.22, 0.45, 1.05);
+        data[i] = Math.min(255, base.r * 255 * v); data[i+1] = Math.min(255, base.g * 255 * v); data[i+2] = Math.min(255, base.b * 255 * v); data[i+3] = 255;
+      }
+      ctx.putImageData(image,0,0); const tex = new THREE.CanvasTexture(canvas); tex.colorSpace=THREE.SRGBColorSpace; tex.anisotropy=4; return tex;
+    };
+    const addAtmosphere = (planet: THREE.Mesh, radius: number, color: string, opacity: number) => {
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.055, 48, 32), new THREE.MeshBasicMaterial({color, transparent:true, opacity, side:THREE.BackSide, blending:THREE.AdditiveBlending, depthWrite:false}));
+      planet.add(shell);
+    };
+    const moonMaterial = new THREE.MeshStandardMaterial({color:"#9da5a9", roughness:0.92, metalness:0.0});
+    const moonSpecs = [[2,1.05,0.13,0.9],[4,1.25,0.17,0.65],[5,1.45,0.12,1.15]] as const;
+    moonSpecs.forEach(([parentIndex, orbitRadius, moonSize, speed]) => {
+      const parent = orbitGroups[parentIndex]; if (!parent) return;
+      const moonOrbit = new THREE.Group(); parent.add(moonOrbit); moonOrbit.userData.moonSpeed=speed;
+      const moon = new THREE.Mesh(new THREE.SphereGeometry(moonSize,24,16), moonMaterial.clone()); moon.position.x=orbitRadius; moon.castShadow=true; moonOrbit.add(moon);
     });
 
     const asteroidGeometry = new THREE.BufferGeometry();
@@ -453,7 +479,7 @@ function SolarRealm() {
       galaxy.rotation.y = t * 0.0032;
       solarSystem.rotation.y = t * 0.005;
       solarSystem.rotation.x = Math.sin(t * 0.08) * 0.035;
-      orbitGroups.forEach((orbit) => { orbit.rotation.y += Number(orbit.userData.speed) * 0.002; });
+      orbitGroups.forEach((orbit) => { orbit.rotation.y += Number(orbit.userData.speed) * 0.002; orbit.children.forEach((child) => { const moonSpeed=Number((child as THREE.Object3D).userData.moonSpeed||0); if(moonSpeed) child.rotation.y += moonSpeed*0.004; }); });
 
       if (model) {
         const roamX = Math.sin(t * 0.085) * 2.8;
@@ -530,7 +556,7 @@ export function Onboarding() {
   const complete = useSelfStore((s) => s.completeOnboarding);
   const profile = useSelfStore((s) => s.profile);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState("");\n  const [language, setLanguage] = useState<"fa" | "en">("fa");
 
   useEffect(() => {
     if (!user || profile) return;
@@ -548,25 +574,32 @@ export function Onboarding() {
     }
   }
 
+  const fa = language === "fa";
+  const copy = fa ? {
+    gate:"درگاه هویت امن", intro:"هویت،", intro2:"پیش از ورود.", lede:"درگاه ورود به قلمرو خصوصی سلف؛ تجربه‌ای سه‌بعدی سینمایی با پلنگ سیاه، منظومه شمسی و کهکشان.", title:"ورود به قلمرو سلف", desc:"هویت خود را تأیید کنید تا ورود امن به محیط SALF1 آغاز شود.", auth:"احراز هویت", ready:"آماده", private:"دسترسی خصوصی", secure:"اطلاعات حساب فقط برای ایجاد یک ورود امن استفاده می‌شود.", connecting:"در حال اتصال…", verify:"تأیید و ورود امن با ", encrypted:"ارتباط رمزنگاری‌شده · انتقال امن", loading:"{copy.loading}", wait:"{copy.wait}"
+  } : {
+    gate:"SECURE IDENTITY GATE", intro:"IDENTITY", intro2:"BEFORE ENTRY.", lede:"Private access to the SALF1 realm — a cinematic 3D experience with a black panther, the Solar System and deep space.", title:"ENTER THE REALM", desc:"Verify your identity to begin secure access to SALF1.", auth:"AUTHENTICATION", ready:"READY", private:"PRIVATE ACCESS", secure:"Account data is used only to establish a secure session.", connecting:"Connecting…", verify:"Secure sign-in with ", encrypted:"Encrypted connection · Secure transfer", loading:"ENTERING THE REALM", wait:"Please wait a moment…"
+  };
+
   if (isPending) {
-    return <div className="pb-auth pb-auth--space" dir="rtl"><SolarRealm /><div className="pb-auth__space-vignette" /><div className="pb-auth__loading"><div className="pb-auth__loading-card"><div className="pb-seal pb-seal--loading" aria-hidden><span>P</span><i /><b /></div><p className="pb-auth__loading-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · PRIVATE</p><h1 className="pb-auth__loading-title">در حال ورود به قلمرو</h1><div className="pb-auth__progress" aria-hidden><span /></div><p className="pb-auth__loading-copy">لطفاً چند لحظه صبر کنید…</p></div></div></div>;
+    return <div className={"pb-auth pb-auth--space " + (fa ? "pb-auth--fa" : "pb-auth--en")} dir={fa ? "rtl" : "ltr"}><SolarRealm /><div className="pb-auth__space-vignette" /><div className="pb-auth__loading"><div className="pb-auth__loading-card"><div className="pb-seal pb-seal--loading" aria-hidden><span>P</span><i /><b /></div><p className="pb-auth__loading-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · PRIVATE</p><h1 className="pb-auth__loading-title">در حال ورود به قلمرو</h1><div className="pb-auth__progress" aria-hidden><span /></div><p className="pb-auth__loading-copy">لطفاً چند لحظه صبر کنید…</p></div></div></div>;
   }
 
   if (user && profile) {
-    return <div className="pb-auth pb-auth--space" dir="rtl"><SolarRealm /><div className="pb-auth__space-vignette" /></div>;
+    return <div className={"pb-auth pb-auth--space " + (fa ? "pb-auth--fa" : "pb-auth--en")} dir={fa ? "rtl" : "ltr"}><SolarRealm /><div className="pb-auth__space-vignette" /></div>;
   }
 
   return (
-    <div className="pb-auth pb-auth--space" dir="rtl">
+    <div className={"pb-auth pb-auth--space " + (fa ? "pb-auth--fa" : "pb-auth--en")} dir={fa ? "rtl" : "ltr"}>
       <SolarRealm />
       <div className="pb-auth__space-vignette" />
       <header className="pb-auth__top">
         <div className="pb-auth__brand"><div className="pb-auth__mini-seal" aria-hidden><span>P</span></div><div className="pb-auth__brand-copy"><strong>Pᴇʀsɪᴀɴ ᴮᵒᵗ</strong><small>SALF1 · PRIVATE MANAGEMENT REALM</small></div></div>
-        <div className="pb-auth__secure"><i /><span>SECURE IDENTITY GATE</span></div>
+        <div className="pb-auth__secure"><i /><span>{copy.gate}</span></div><div className="pb-auth__language"><button className={fa ? "active" : ""} onClick={() => setLanguage("fa")}>فارسی</button><button className={!fa ? "active" : ""} onClick={() => setLanguage("en")}>ENGLISH</button></div>
       </header>
       <main className="pb-auth__body pb-auth__body--space">
         <section className="pb-auth__intro pb-auth__intro--space">
-          <div className="pb-auth__intro-line"><span>01</span><i /><span>IDENTITY GATE</span></div>
+          <div className="pb-auth__intro-line"><span>01</span><i /><span>{copy.gate}</span></div>
           <p className="pb-auth__intro-kicker">Pᴇʀsɪᴀɴ ᴮᵒᵗ · PANTHERA REALM</p>
           <h1 className="pb-auth__title">هویت،<br /><em>پیش از ورود.</em></h1>
           <p className="pb-auth__lede">درگاه ورود به قلمرو خصوصی سلف؛ یک تجربه سه‌بعدی سینمایی با منظومه شمسی، کهکشان و هویت Panthera.</p>
@@ -583,14 +616,14 @@ export function Onboarding() {
             {GROK_PROVIDERS.map((provider) => (
               <button key={provider.providerId} type="button" className="pb-auth__provider" disabled={busy !== null} onClick={() => handleSignIn(provider.providerId)}>
                 <span className="pb-auth__provider-mark">{provider.idp === "google" ? "G" : "X"}</span>
-                <span className="pb-auth__provider-copy"><strong>{busy === provider.providerId ? "در حال اتصال…" : "تأیید و ورود امن با " + provider.label}</strong><small>ارتباط رمزنگاری‌شده · انتقال امن</small></span>
+                <span className="pb-auth__provider-copy"><strong>{busy === provider.providerId ? copy.connecting : copy.verify + provider.label}</strong><small>{copy.encrypted}</small></span>
                 <ArrowUpLeft className="pb-auth__provider-arrow size-4" />
               </button>
             ))}
           </div>
           {error ? <div className="pb-auth__error" role="alert">{error}</div> : null}
-          <div className="pb-auth__divider"><span>PRIVATE ACCESS</span></div>
-          <div className="pb-auth__footnote"><ShieldCheck className="size-3.5" /><span>اطلاعات حساب فقط برای ایجاد یک ورود امن استفاده می‌شود.</span></div>
+          <div className="pb-auth__divider"><span>{copy.private}</span></div>
+          <div className="pb-auth__footnote"><ShieldCheck className="size-3.5" /><span>{copy.secure}</span></div>
         </section>
       </main>
       <footer className="pb-auth__footer"><span>Pᴇʀsɪᴀɴ ᴮᵒᵗ</span><span>SALF1 · PANTHERA REALM</span><span>JAWATI · 2026</span></footer>
