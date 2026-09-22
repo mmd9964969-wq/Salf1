@@ -156,6 +156,16 @@ def strip_custom_emoji(text: str) -> str:
     return rendered
 
 
+PAYMENT_PACKAGES = {
+    "package_60": ("۱ ساعت", 60, 5000),
+    "package_1440": ("تست ۲۴ ساعته", 1440, 25000),
+    "package_10080": ("اقتصادی · ۷ روز", 10080, 90000),
+    "package_43200": ("محبوب · ۳۰ روز", 43200, 290000),
+    "package_86400": ("ویژه · ۶۰ روز", 86400, 500000),
+}
+PAYMENT_CARD = os.getenv("SALF1_PAYMENT_CARD", "").strip()
+PAYMENT_CARD_HOLDER = os.getenv("SALF1_PAYMENT_CARD_HOLDER", "").strip()
+
 REFERRAL_REWARD = int(os.getenv("SALF1_REFERRAL_REWARD", "500"))
 TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 LOGIN_TOKEN_TTL_SECONDS = int(os.getenv("SALF1_LOGIN_TOKEN_TTL_SECONDS", "600"))
@@ -222,6 +232,62 @@ async def reset_customer_session(customer_id: str):
     await update_account_state(customer_id, False)
     await set_salf_enabled(customer_id, False)
 
+
+async def init_payment_tables():
+    if db_pool is None:
+        return
+    await db_pool.execute("""
+        create table if not exists salf1_payment_orders (
+            id bigserial primary key,
+            order_id text not null unique,
+            user_id bigint not null,
+            package_id text not null,
+            package_title text not null,
+            gem_amount integer not null check (gem_amount > 0),
+            price_toman bigint not null check (price_toman > 0),
+            status text not null default 'pending' check (status in ('pending','awaiting_receipt','paid','failed','expired','cancelled')),
+            payment_method text,
+            provider_transaction_id text unique,
+            receipt_file_id text,
+            created_at timestamptz not null default now(),
+            expires_at timestamptz not null,
+            paid_at timestamptz,
+            updated_at timestamptz not null default now()
+        )
+    """)
+    await db_pool.execute("""
+        create index if not exists idx_salf1_payment_orders_user
+        on salf1_payment_orders (user_id, created_at desc)
+    """)
+
+def new_payment_order_id() -> str:
+    return "SALF-" + secrets.token_hex(8).upper()
+
+async def create_payment_order(user_id: int, package_id: str):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    package = PAYMENT_PACKAGES.get(package_id)
+    if not package:
+        raise ValueError("بسته پرداخت معتبر نیست.")
+    title, gems, price = package
+    order_id = new_payment_order_id()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=20)
+    await init_payment_tables()
+    return await db_pool.fetchrow(
+        """insert into salf1_payment_orders
+           (order_id,user_id,package_id,package_title,gem_amount,price_toman,expires_at)
+           values ($1,$2,$3,$4,$5,$6,$7)
+           returning *""",
+        order_id, user_id, package_id, title, gems, price, expires_at,
+    )
+
+async def get_payment_order(user_id: int, order_id: str):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        "select * from salf1_payment_orders where order_id=$1 and user_id=$2",
+        order_id, user_id,
+    )
 
 async def init_web_login_tokens_table():
     if db_pool is None:
@@ -2436,6 +2502,68 @@ async def process_callback(callback_query: dict):
             shop_markup())
         return
 
+    if data.startswith("paypkg:"):
+        package_id = data.split(":", 1)[1]
+        if package_id not in PAYMENT_PACKAGES:
+            await bot_edit(chat_id, message_id, "⛂ بسته پرداخت معتبر نیست.", package_markup())
+            return
+        try:
+            order = await create_payment_order(user_id, package_id)
+        except Exception as exc:
+            print(f"Payment order create failed: {type(exc).__name__}: {exc}")
+            await bot_edit(chat_id, message_id, "⛂ ایجاد سفارش انجام نشد. موجودی شما تغییر نکرده است.", package_markup())
+            return
+        title, gems, price = PAYMENT_PACKAGES[package_id]
+        await bot_edit(chat_id, message_id, f"""<b>◈ Sᴀʟғ1 · Pᴀʏᴍᴇɴᴛ</b>
+
+⛂ - سفارش : <code>{order["order_id"]}</code>
+⛂ - بسته : <b>{title}</b>
+⛂ - جم : <b>{gems:,}</b>
+⛂ - مبلغ : <b>{price:,} تومان</b>
+⛂ - اعتبار سفارش : 20 دقیقه
+
+─────━━───── ◈ ─────━━─────
+
+روش پرداخت را انتخاب کنید.
+
+پرداخت آنلاین تا زمان اتصال درگاه در این نسخه فعال نیست.
+برای پرداخت دستی می‌توانید از کارت‌به‌کارت استفاده کنید.""",
+            {"inline_keyboard": [
+                [{"text": "‹ کارت‌به‌کارت", "callback_data": f"paycard:{order['order_id']}"}],
+                [{"text": "‹ بازگشت به بسته‌ها", "callback_data": "shop_packages"}],
+            ]}
+        )
+        return
+
+    if data.startswith("paycard:"):
+        order_id = data.split(":", 1)[1]
+        order = await get_payment_order(user_id, order_id)
+        if not order:
+            await bot_edit(chat_id, message_id, "⛂ سفارش پیدا نشد یا متعلق به حساب شما نیست.", package_markup())
+            return
+        if str(order["status"]) == "paid":
+            await bot_edit(chat_id, message_id, "✓ این سفارش قبلاً تأیید شده است.", package_markup())
+            return
+        card = PAYMENT_CARD
+        if not card:
+            await bot_edit(chat_id, message_id, "⛂ اطلاعات کارت پرداخت هنوز در تنظیمات سرویس ثبت نشده است.", package_markup())
+            return
+        holder = f"\n⛂ - به نام : <b>{html.escape(PAYMENT_CARD_HOLDER)}</b>" if PAYMENT_CARD_HOLDER else ""
+        await bot_edit(chat_id, message_id, f"""<b>◈ Sᴀʟғ1 · Cᴀʀᴅ Pᴀʏᴍᴇɴᴛ</b>
+
+⛂ - سفارش : <code>{order["order_id"]}</code>
+⛂ - مبلغ دقیق : <b>{int(order["price_toman"]):,} تومان</b>
+⛂ - جم : <b>{int(order["gem_amount"]):,}</b>
+
+─────━━───── ◈ ─────━━─────
+
+⛂ - شماره کارت : <code>{html.escape(card)}</code>{holder}
+
+پس از پرداخت، رسید را از مسیر پشتیبانی ارسال کنید.
+تا زمان تأیید، موجودی حساب شما تغییر نمی‌کند.""",
+            {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": f"paypkg:{order['package_id']}"}]]}
+        )
+        return
     if data in {"shop_buy", "shop_packages"}:
         await bot_edit(chat_id, message_id,
             """<b>◈ Sᴀʟғ1 · Gᴇᴍ Pᴀᴄᴋᴀɢᴇs</b>
@@ -2530,7 +2658,7 @@ async def process_callback(callback_query: dict):
 نکته :
 مدت قابل استفاده به میزان مصرف سلف بستگی دارد. فعال بودن مداوم سلف، مصرف مداوم جم را به همراه دارد.""",
                 {"inline_keyboard": [
-                    [{"text": "‹ پرداخت", "callback_data": "shop_buy"}],
+                    [{"text": "‹ پرداخت", "callback_data": f"paypkg:{data}"}],
                     [{"text": "‹ بازگشت", "callback_data": "shop_packages"}],
                 ]})
             return
