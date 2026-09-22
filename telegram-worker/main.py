@@ -108,68 +108,124 @@ async def reset_customer_session(customer_id: str):
     await set_salf_enabled(customer_id, False)
 
 
-def create_web_login_token(customer_id: str) -> str:
+async def init_web_login_tokens_table():
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        create table if not exists salf1_web_login_tokens (
+            token text primary key,
+            customer_id text not null,
+            created_at timestamptz not null,
+            expires_at timestamptz not null,
+            stage text not null default 'phone'
+        )
+        """
+    )
+    await db_pool.execute(
+        """
+        create index if not exists idx_salf1_web_login_tokens_expires_at
+        on salf1_web_login_tokens (expires_at)
+        """
+    )
+
+
+async def create_web_login_token(customer_id: str) -> str:
     now = datetime.now(timezone.utc)
-    expires_at = int((now + timedelta(seconds=LOGIN_TOKEN_TTL_SECONDS)).timestamp())
-    payload = {
-        "customer_id": str(customer_id),
-        "created_at": int(now.timestamp()),
-        "expires_at": expires_at,
-    }
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-    signature = hmac.new(
-        WEBHOOK_SECRET.encode("utf-8"),
-        encoded.encode("ascii"),
-        hashlib.sha256,
-    ).hexdigest()
-    token = f"{encoded}.{signature}"
-    web_login_tokens[token] = {
+    expires_at = now + timedelta(seconds=LOGIN_TOKEN_TTL_SECONDS)
+    token = secrets.token_urlsafe(32)
+
+    ctx = {
         "customer_id": str(customer_id),
         "created_at": now,
-        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc),
+        "expires_at": expires_at,
         "stage": "phone",
     }
+
+    if db_pool is None:
+        web_login_tokens[token] = ctx
+        return token
+
+    await db_pool.execute(
+        """
+        delete from salf1_web_login_tokens
+        where customer_id = $1
+          and expires_at <= now()
+        """,
+        str(customer_id),
+    )
+    await db_pool.execute(
+        """
+        insert into salf1_web_login_tokens (
+            token, customer_id, created_at, expires_at, stage
+        )
+        values ($1, $2, $3, $4, 'phone')
+        """,
+        token,
+        str(customer_id),
+        now,
+        expires_at,
+    )
+    web_login_tokens[token] = ctx
     return token
 
 
-def web_login_context(token: str):
+async def web_login_context(token: str):
     token = str(token or "").strip()
-    if not token or "." not in token or not WEBHOOK_SECRET:
-        return None
-
-    encoded, signature = token.rsplit(".", 1)
-    expected = hmac.new(
-        WEBHOOK_SECRET.encode("utf-8"),
-        encoded.encode("ascii"),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        return None
-
-    try:
-        padded = encoded + "=" * (-len(encoded) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
-        customer_id = str(payload["customer_id"])
-        expires_at = datetime.fromtimestamp(int(payload["expires_at"]), tz=timezone.utc)
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-        return None
-
-    if expires_at <= datetime.now(timezone.utc):
-        web_login_tokens.pop(token, None)
+    if not token:
         return None
 
     ctx = web_login_tokens.get(token)
-    if ctx is None:
-        ctx = {
-            "customer_id": customer_id,
-            "created_at": datetime.fromtimestamp(int(payload.get("created_at", 0)), tz=timezone.utc),
-            "expires_at": expires_at,
-            "stage": "phone",
-        }
-        web_login_tokens[token] = ctx
+    if ctx is not None:
+        if ctx["expires_at"] <= datetime.now(timezone.utc):
+            web_login_tokens.pop(token, None)
+            return None
+        return ctx
+
+    if db_pool is None:
+        return None
+
+    row = await db_pool.fetchrow(
+        """
+        select token, customer_id, created_at, expires_at, stage
+        from salf1_web_login_tokens
+        where token = $1
+          and expires_at > now()
+        """,
+        token,
+    )
+    if not row:
+        return None
+
+    ctx = {
+        "customer_id": str(row["customer_id"]),
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+        "stage": str(row["stage"] or "phone"),
+    }
+    web_login_tokens[token] = ctx
     return ctx
 
+
+async def web_login_set_stage(token: str, stage: str):
+    token = str(token or "").strip()
+    stage = str(stage or "phone").strip() or "phone"
+
+    ctx = web_login_tokens.get(token)
+    if ctx is not None:
+        ctx["stage"] = stage
+
+    if db_pool is not None and token:
+        await db_pool.execute(
+            """
+            update salf1_web_login_tokens
+            set stage = $2
+            where token = $1
+              and expires_at > now()
+            """,
+            token,
+            stage,
+        )
 
 def normalize_login_code(value: str) -> str:
     table = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
@@ -1541,7 +1597,7 @@ async def process_callback(callback_query: dict):
         # Telegram login codes must not be collected through a Telegram chat.
         # Telegram/Telethon can invalidate codes that are sent through the app itself.
         await reset_customer_session(str(user_id))
-        token = create_web_login_token(str(user_id))
+        token = await create_web_login_token(str(user_id))
         if not LOGIN_BASE_URL:
             await bot_edit(
                 chat_id,
@@ -1815,6 +1871,8 @@ async def main():
                 command_timeout=15,
             )
             print("Salf1 worker database connected.")
+            await init_web_login_tokens_table()
+            print("Salf1 web login token store ready.")
         except Exception as exc:
             print(f"WARNING: database connection failed: {exc}")
             db_pool = None
@@ -2013,7 +2071,7 @@ async def login_page(request: web.Request):
     page = LOGIN_HTML
     if token:
         page = page.replace('<input type="hidden" name="token" value="">', f'<input type="hidden" name="token" value="{html.escape(token, quote=True)}">', 1)
-    if stage == "code" and web_login_context(token):
+    if stage == "code" and await web_login_context(token):
         page = page.replace('<section id="phoneStep">', '<section id="phoneStep" class="hidden">', 1)
         page = page.replace('<section id="codeStep" class="hidden">', '<section id="codeStep">', 1)
         page = page.replace('در انتظار شروع ورود…', 'کد ورود ارسال شد؛ کد آخرین پیام تلگرام را وارد کنید.', 1)
@@ -2040,7 +2098,7 @@ async def web_login_start_form(request: web.Request):
             token = str(form.get("token") or "").strip()
         except Exception:
             token = ""
-    ctx = web_login_context(token)
+    ctx = await web_login_context(token)
     if not ctx:
         return web.Response(text="لینک ورود منقضی یا نامعتبر است.", content_type="text/plain", status=401)
     try:
@@ -2080,7 +2138,7 @@ async def web_login_start(request: web.Request):
     except Exception as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
-    ctx["stage"] = "code"
+    await web_login_set_stage(token, "code")
     return web.json_response({"ok": True, **result})
 
 
@@ -2111,9 +2169,9 @@ async def web_login_verify(request: web.Request):
 
     status = result.get("status")
     if status == "2fa_required":
-        ctx["stage"] = "2fa"
+        await web_login_set_stage(token, "2fa")
     elif status == "connected":
-        ctx["stage"] = "done"
+        await web_login_set_stage(token, "done")
         bot_states.pop(int(ctx["customer_id"]), None)
         await bot_send(
             int(ctx["customer_id"]),
@@ -2126,11 +2184,11 @@ async def web_login_verify(request: web.Request):
             await user_manage_markup(int(ctx["customer_id"])),
         )
     elif status == "code_expired":
-        ctx["stage"] = "phone"
+        await web_login_set_stage(token, "phone")
     elif status == "code_invalid":
-        ctx["stage"] = "code"
+        await web_login_set_stage(token, "code")
     elif status == "2fa_invalid":
-        ctx["stage"] = "2fa"
+        await web_login_set_stage(token, "2fa")
 
     return web.json_response({"ok": status in {"2fa_required", "connected", "code_invalid", "code_expired", "2fa_invalid"}, **result})
 
