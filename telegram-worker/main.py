@@ -1448,6 +1448,41 @@ async def process_bot_message(message: dict):
                 )
                 return
 
+            status = result.get("status")
+            if status == "code_invalid":
+                await bot_send(
+                    chat["id"],
+                    """<b>✘ کد ورود نامعتبر است</b>
+
+⛂ - کد واردشده نادرست یا قبلاً استفاده شده است.
+⛂ - یک کد جدید از تلگرام درخواست کنید و فقط آخرین کد را ارسال کنید.""",
+                )
+                return
+            if status == "code_expired":
+                bot_states.pop(user_id, None)
+                await bot_send(
+                    chat["id"],
+                    """<b>✘ کد ورود منقضی شده است</b>
+
+⛂ - دوباره ورود اکانت را شروع کنید تا کد جدید ارسال شود.""",
+                )
+                return
+            if status == "phone_invalid":
+                bot_states.pop(user_id, None)
+                await bot_send(chat["id"], "<b>✘ شماره تلفن نامعتبر است.</b>\\n\\n⛂ ورود را دوباره با شماره صحیح شروع کنید.")
+                return
+            if status == "flood_wait":
+                bot_states.pop(user_id, None)
+                seconds = int(result.get("seconds", 0))
+                await bot_send(
+                    chat["id"],
+                    f"<b>✘ محدودیت موقت تلگرام</b>\\n\\n⛂ لطفاً {seconds} ثانیه بعد دوباره تلاش کنید.",
+                )
+                return
+            if status != "connected":
+                await bot_send(chat["id"], "<b>✘ اتصال اکانت انجام نشد.</b>\\n\\n⛂ لطفاً دوباره تلاش کنید.")
+                return
+
             bot_states.pop(user_id, None)
             await bot_send(
                 chat["id"],
