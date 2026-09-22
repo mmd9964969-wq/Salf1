@@ -2457,11 +2457,7 @@ async def process_callback(callback_query: dict):
 ─────━━───── ◈ ─────━━─────
 
 - پس از تایید پرداخت جم‌ها به موجودی شما اضافه می‌شوند.
-- تا قبل از تایید نهایی موجودی حساب شما تغییری نمی‌کند.
-
-[ ‹ پرداخت ]
-
-[ ‹ بازگشت ]""",
+- تا قبل از تایید نهایی موجودی حساب شما تغییری نمی‌کند.""",
                 {"inline_keyboard": [
                     [{"text": "‹ پرداخت", "callback_data": f"pay_{data.removeprefix('package_')}"}],
                     [{"text": "‹ بازگشت", "callback_data": "shop_packages"}],
