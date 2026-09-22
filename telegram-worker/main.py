@@ -1410,7 +1410,7 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
         {
             "chat_id": chat_id,
             "message_id": message_id,
-            "text": text,
+            "text": render_custom_emoji(text),
             "parse_mode": "HTML",
             **({"reply_markup": reply_markup} if reply_markup else {}),
         },
@@ -1507,28 +1507,40 @@ async def salf_panel_text(user_id: int):
     balance = int(row["tron_balance"]) if row else 0
     return f"""<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-⛂ - نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
-⛂ - شناسه : <code>{user_id}</code>
-⛂ - اکانت : {"● متصل" if connected else "○ متصل نیست"}
-⛂ - سلف : {"● فعال" if enabled else "○ خاموش"}
-⛂ - پلن : رایگان
+[[account]] - نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
+[[account]] - شناسه : <code>{user_id}</code>
+[[account]] - اکانت : {"● متصل" if connected else "○ متصل نیست"}
+[[self]] - سلف : {"● فعال" if enabled else "○ خاموش"}
+[[system]] - پلن : رایگان
 ⛂ - زمان باقی‌مانده : {trial_remaining_text(row)}
-⛂ - موجودی : {balance:,} جم
+[[balance]] - موجودی : {balance:,} جم
 
-⛂ - وضعیت سیستم : ● پایدار
-⛂ - وضعیت Worker : ● آنلاین
+[[system]] - وضعیت سیستم : ● پایدار
+[[system]] - وضعیت Worker : ● آنلاین
 ⛂ - مصرف فعال : 1 جم / دقیقه
 
 ─────━━───── ◈ ─────━━─────
 
-⛂ - دسترسی اختصاصی برای این حساب"""
+[[account]] - دسترسی اختصاصی برای این حساب"""
+
+
+def custom_emoji_button(text: str, callback_data: str, emoji_key: str | None = None):
+    button = {"text": text, "callback_data": callback_data}
+    if emoji_key:
+        emoji_id = CUSTOM_EMOJI.get(emoji_key, ("", ""))[0]
+        if emoji_id:
+            button["icon_custom_emoji_id"] = emoji_id
+    return button
 
 
 def salf_panel_markup():
     return {"inline_keyboard": [
-        [{"text":"› حساب کاربری","callback_data":"panel_account"},{"text":"› تنظیمات سلف","callback_data":"panel_self"}],
-        [{"text":"› اتوماسیون","callback_data":"panel_automation"},{"text":"› محافظت","callback_data":"panel_protection"}],
-        [{"text":"› ابزارها","callback_data":"panel_tools"},{"text":"› سیستم","callback_data":"panel_system"}],
+        [custom_emoji_button("› حساب کاربری", "panel_account", "account"),
+         custom_emoji_button("› تنظیمات سلف", "panel_self", "self")],
+        [custom_emoji_button("› اتوماسیون", "panel_automation", "automation"),
+         custom_emoji_button("› محافظت", "panel_protection", "protection")],
+        [custom_emoji_button("› ابزارها", "panel_tools", "tools"),
+         custom_emoji_button("› سیستم", "panel_system", "system")],
         [{"text":"‹ بازگشت","callback_data":"home"}],
     ]}
 
