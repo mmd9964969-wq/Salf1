@@ -41,7 +41,8 @@ TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
-pending_codes: dict[str, str] = {}\npending_2fa: set[str] = set()
+pending_codes: dict[str, str] = {}
+pending_2fa: set[str] = set()
 enabled_cache: dict[str, bool] = {}
 me_cache: dict[str, int] = {}
 bot_states: dict[int, str] = {}
