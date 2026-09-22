@@ -478,16 +478,16 @@ export function SalfPanelView() {
           <h3>وضعیت سیستم</h3>
         </div>
         <div className="salf-quick-grid">
-          <button onClick={() => setSectionId("billing")}><Gem className="size-4" /><span>› مصرف و موجودی</span><ChevronLeft className="size-4" /></button>
-          <button onClick={() => setSectionId("security")}><ShieldCheck className="size-4" /><span>› امنیت</span><ChevronLeft className="size-4" /></button>
-          <button onClick={() => setSectionId("advanced")}><Wrench className="size-4" /><span>› ابزارهای پیشرفته</span><ChevronLeft className="size-4" /></button>
-          <button onClick={() => setSectionId("account")}><BookOpen className="size-4" /><span>› راهنما</span><ChevronLeft className="size-4" /></button>
+          <button onClick={() => setSectionId("system")}><Gem className="size-4" /><span>› سیستم</span><ChevronLeft className="size-4" /></button>
+          <button onClick={() => setSectionId("self-settings")}><Settings2 className="size-4" /><span>› تنظیمات سلف</span><ChevronLeft className="size-4" /></button>
+          <button onClick={() => setSectionId("protection")}><ShieldCheck className="size-4" /><span>› محافظت</span><ChevronLeft className="size-4" /></button>
+          <button onClick={() => setSectionId("tools")}><Wrench className="size-4" /><span>› ابزارها</span><ChevronLeft className="size-4" /></button>
         </div>
         <div className="mt-4 rounded-xl border border-line bg-surface-2/60 p-4 text-sm">
           <p>⛂ - وضعیت سیستم : ● پایدار</p>
           <p>⛂ - وضعیت Worker : ● آنلاین</p>
           <p>⛂ - مصرف فعال : 1 جم / دقیقه</p>
-          <p>⛂ - قابلیت‌ها : {faNum(totalCapabilities)}</p>
+          <p>⛂ - تعداد قابلیت‌ها : {faNum(totalCapabilities)}</p>
         </div>
       </section>
 
