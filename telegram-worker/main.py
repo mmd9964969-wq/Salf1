@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, functions
 from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.errors import (
     PasswordHashInvalidError,
@@ -86,30 +86,61 @@ def _utf16_len(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
 
-def render_telethon_custom_emoji(text: str):
+async def render_telethon_custom_emoji(client: TelegramClient, text: str):
     """
-    Convert [[emoji_key]] tokens into Telegram custom-emoji entities for
-    Telethon/MTProto messages. This is separate from Bot API HTML rendering.
+    Build MessageEntityCustomEmoji entities using the actual MTProto custom
+    emoji documents. Telegram requires the entity to wrap exactly the emoji
+    character declared by the custom emoji document.
     """
     source = str(text)
+    token_re = __import__("re").compile(r"\[\[([a-z_]+)\]\]")
+    document_by_key = {}
+
+    keys = {match.group(1) for match in token_re.finditer(source)}
+    numeric_ids = []
+    for key in keys:
+        raw_id, _ = CUSTOM_EMOJI.get(key, ("", ""))
+        emoji_id = _emoji_id(raw_id)
+        if emoji_id:
+            numeric_ids.append((key, int(emoji_id)))
+
+    if numeric_ids:
+        try:
+            documents = await client(
+                functions.messages.GetCustomEmojiDocumentsRequest(
+                    document_id=[doc_id for _, doc_id in numeric_ids]
+                )
+            )
+            for doc in documents:
+                alt = ""
+                for attr in getattr(doc, "attributes", []) or []:
+                    if hasattr(attr, "alt") and getattr(attr, "alt", None):
+                        alt = str(attr.alt)
+                        break
+                if alt:
+                    document_by_key[str(getattr(doc, "id", ""))] = (int(doc.id), alt)
+        except Exception as exc:
+            print(f"Custom Emoji MTProto lookup failed: {type(exc).__name__}: {exc}")
+
+    output = []
     entities = []
     cursor = 0
     out_text = ""
-    token_re = __import__("re").compile(r"\[\[([a-z_]+)\]\]")
     for match in token_re.finditer(source):
         out_text += source[cursor:match.start()]
         key = match.group(1)
-        raw_id, alt = CUSTOM_EMOJI.get(key, ("", ""))
+        raw_id, configured_alt = CUSTOM_EMOJI.get(key, ("", ""))
         emoji_id = _emoji_id(raw_id)
-        replacement = VALID_CUSTOM_EMOJI_ALTS.get(emoji_id) or alt or match.group(0)
+        doc = document_by_key.get(emoji_id)
+        replacement = doc[1] if doc else configured_alt or match.group(0)
         entity_offset = _utf16_len(out_text)
         out_text += replacement
-        if emoji_id and emoji_id in VALID_CUSTOM_EMOJI_IDS:
+        if doc:
             entities.append(
                 MessageEntityCustomEmoji(
                     offset=entity_offset,
                     length=_utf16_len(replacement),
-                    document_id=int(emoji_id),
+                    document_id=doc[0],
                 )
             )
         cursor = match.end()
@@ -1157,7 +1188,7 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 
 [[protection]] - دسترسی اختصاصی برای این حساب"""
 
-    rendered_text, custom_entities = render_telethon_custom_emoji(text)
+    rendered_text, custom_entities = await render_telethon_custom_emoji(client, text)
     await event.respond(rendered_text, formatting_entities=custom_entities)
 
 
