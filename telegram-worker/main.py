@@ -91,11 +91,10 @@ def render_telethon_custom_emoji(text: str):
     Telethon/MTProto messages. This is separate from Bot API HTML rendering.
     """
     source = str(text)
-    output = []
     entities = []
     cursor = 0
     out_text = ""
-    token_re = __import__("re").compile(r"\\[\\[([a-z_]+)\\]\\]")
+    token_re = __import__("re").compile(r"\[\[([a-z_]+)\]\]")
     for match in token_re.finditer(source):
         out_text += source[cursor:match.start()]
         key = match.group(1)
