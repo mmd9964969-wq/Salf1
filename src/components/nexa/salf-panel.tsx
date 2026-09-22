@@ -404,7 +404,7 @@ export function SalfPanelView() {
             <div>
               <p className="salf-eyebrow">SALF1 · COMMAND CENTER</p>
               <h1>SALF<span>1</span></h1>
-              <p className="salf-hero-sub">مرکز فرمان اختصاصی اکانت</p>
+              <p className="salf-hero-sub">⛂ - مرکز فرمان اختصاصی اکانت</p>
             </div>
           </div>
           <div className="salf-live-pill"><span /> ● متصل <b>LIVE</b></div>
@@ -412,9 +412,9 @@ export function SalfPanelView() {
 
         <div className="salf-hero-main">
           <div>
-            <p className="salf-kicker">PRIVATE ACCESS</p>
+            <p className="salf-kicker">⛂ - PRIVATE ACCESS</p>
             <h2>خوش آمدید، {profile.name}</h2>
-            <p className="salf-hero-description">این مرکز برای مدیریت اختصاصی اکانت شما طراحی شده است؛ ساختار و دسترسی‌ها بر اساس همین حساب تنظیم می‌شوند.</p>
+            <p className="salf-hero-description">⛂ - این مرکز برای مدیریت اختصاصی اکانت شما طراحی شده است؛ ساختار و دسترسی‌ها بر اساس همین حساب تنظیم می‌شوند.</p>
           </div>
           <div className="salf-orbit-card">
             <div className="salf-orbit-ring ring-one" />
@@ -425,10 +425,10 @@ export function SalfPanelView() {
         </div>
 
         <div className="salf-stat-grid">
-          <div><span>اکانت</span><strong>@{profile.username}</strong><small>⛂ - وضعیت : ● متصل</small></div>
-          <div><span>سلف</span><strong className="is-ok">● فعال</strong><small>⛂ - آماده اجرا</small></div>
-          <div><span>پلن</span><strong>FREE</strong><small>⛂ - دسترسی پایه</small></div>
-          <div><span>موجودی</span><strong>{faNum(1250)}</strong><small>⛂ - جم ترون</small></div>
+          <div><span>⛂ - اکانت</span><strong>@{profile.username}</strong><small>⛂ - وضعیت : ● متصل</small></div>
+          <div><span>⛂ - سلف</span><strong className="is-ok">● فعال</strong><small>⛂ - آماده اجرا</small></div>
+          <div><span>⛂ - پلن</span><strong>FREE</strong><small>⛂ - دسترسی پایه</small></div>
+          <div><span>⛂ - موجودی</span><strong>{faNum(1250)}</strong><small>⛂ - جم ترون</small></div>
         </div>
       </section>
 
@@ -442,9 +442,9 @@ export function SalfPanelView() {
 
       <div className="salf-section-heading">
         <div>
-          <p className="salf-eyebrow">COMMAND ARCHITECTURE</p>
-          <h2>مرکز فرمان</h2>
-          <p>هر بخش را انتخاب کنید؛ تنظیمات جزئی همان بخش در مرحله بعد نمایش داده می‌شود.</p>
+          <p className="salf-eyebrow">⛂ - COMMAND ARCHITECTURE</p>
+          <h2>⛂ - مرکز فرمان</h2>
+          <p>⛂ - هر بخش را انتخاب کنید؛ تنظیمات جزئی همان بخش در مرحله بعد نمایش داده می‌شود.</p>
         </div>
         <span>{faNum(filteredSections.length)} / {faNum(sections.length)} بخش</span>
       </div>
@@ -456,7 +456,7 @@ export function SalfPanelView() {
             <span className="salf-module-icon"><section.icon className="size-5" /></span>
             <span className="salf-module-body">
               <strong>› {section.title}</strong>
-              <span>{section.desc}</span>
+              <span>⛂ - {section.desc}</span>
               <small>⛂ - {faNum(section.items.length)} قابلیت</small>
             </span>
             <ChevronLeft className="salf-module-arrow size-5" />
@@ -474,8 +474,8 @@ export function SalfPanelView() {
 
       <section className="salf-command-catalog">
         <div>
-          <p className="salf-eyebrow">SYSTEM STATUS</p>
-          <h3>وضعیت سیستم</h3>
+          <p className="salf-eyebrow">⛂ - SYSTEM STATUS</p>
+          <h3>⛂ - وضعیت سیستم</h3>
         </div>
         <div className="salf-quick-grid">
           <button onClick={() => setSectionId("system")}><Gem className="size-4" /><span>› سیستم</span><ChevronLeft className="size-4" /></button>
