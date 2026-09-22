@@ -1116,9 +1116,19 @@ async def handle_self_command(event, customer_id: str, text: str):
             owner_id = None
 
     sender_id = getattr(event, "sender_id", None)
+    chat_id = getattr(event, "chat_id", None)
     is_owner = bool(event.out or (owner_id and sender_id == owner_id))
+    is_saved_messages = bool(
+        owner_id
+        and event.is_private
+        and chat_id is not None
+        and int(chat_id) == int(owner_id)
+    )
 
     if normalized in {"پنل", "panel"}:
+        # The self-account panel is intentionally available only in Saved Messages.
+        if not is_saved_messages:
+            return False
         await send_owner_panel(event, customer_id, is_owner)
         return True
 
@@ -1480,7 +1490,8 @@ async def salf_panel_text(user_id: int):
 ⛂ - شناسه : <code>{user_id}</code>
 ⛂ - اکانت : {"● متصل" if connected else "○ متصل نیست"}
 ⛂ - سلف : {"● فعال" if enabled else "○ خاموش"}
-⛂ - پلن : FREE
+⛂ - پلن : رایگان
+⛂ - زمان باقی‌مانده : {trial_remaining_text(row)}
 ⛂ - موجودی : {balance:,} جم
 
 <b>━━━ مدیریت سلف ━━━</b>
@@ -1591,6 +1602,9 @@ async def process_bot_message(message: dict):
         return
 
     if normalized in {"panel", "پنل"}:
+        # Bot panel commands are handled only in the bot's private chat.
+        if chat.get("type") != "private":
+            return
         await bot_send(chat["id"], await salf_panel_text(user_id), salf_panel_markup())
         return
 
