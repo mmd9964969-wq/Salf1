@@ -1952,7 +1952,8 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 <label>کد ورود تلگرام</label>
 <form id="codeForm" method="post" action="/login/verify" enctype="application/x-www-form-urlencoded">
 <input type="hidden" name="token" value="">
-<input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="12345">
+<input type="hidden" name="token_code" value="">
+<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="12345">
 <button id="verifyBtn" type="submit">تأیید کد</button>
 </form>
 <button id="newCodeBtn" type="button" style="background:#252931;color:#fff">دریافت کد جدید</button>
@@ -1962,7 +1963,8 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 <label>رمز دو مرحله‌ای تلگرام</label>
 <form id="passwordForm" method="post" action="/login/verify" enctype="application/x-www-form-urlencoded">
 <input type="hidden" name="token" value="">
-<input id="password" type="password" autocomplete="current-password" placeholder="رمز 2FA">
+<input type="hidden" name="token_password" value="">
+<input id="password" name="password" type="password" autocomplete="current-password" placeholder="رمز 2FA">
 <button id="passwordBtn" type="submit">تکمیل اتصال</button>
 </form>
 </section>
@@ -2074,7 +2076,10 @@ async def login_page(request: web.Request):
     stage = request.query.get("stage", "").strip()
     page = LOGIN_HTML
     if token:
-        page = page.replace('<input type="hidden" name="token" value="">', f'<input type="hidden" name="token" value="{html.escape(token, quote=True)}">', 1)
+        safe_token = html.escape(token, quote=True)
+        page = page.replace('name="token" value=""', f'name="token" value="{safe_token}"')
+        page = page.replace('name="token_code" value=""', f'name="token_code" value="{safe_token}"')
+        page = page.replace('name="token_password" value=""', f'name="token_password" value="{safe_token}"')
     if stage in {"code", "2fa", "done"} and await web_login_context(token):
         page = page.replace('<section id="phoneStep">', '<section id="phoneStep" class="hidden">', 1)
         if stage == "code":
@@ -2180,6 +2185,8 @@ async def web_login_verify_form(request: web.Request):
         return web.Response(text="درخواست نامعتبر است.", content_type="text/plain", status=400)
     if not token:
         token = str(form.get("token") or "").strip()
+    if not token:
+        token = str(form.get("token_code") or form.get("token_password") or "").strip()
     ctx = await web_login_context(token)
     if not ctx:
         return web.Response(text="لینک ورود منقضی یا نامعتبر است.", content_type="text/plain", status=401)
