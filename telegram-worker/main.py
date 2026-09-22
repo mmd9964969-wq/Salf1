@@ -2067,6 +2067,8 @@ if(!token) msg('لینک ورود نامعتبر یا ناقص است. از دا
 
 async def login_page(request: web.Request):
     token = request.query.get("token", "").strip()
+    if not token:
+        token = request.cookies.get("salf1_login_token", "").strip()
     stage = request.query.get("stage", "").strip()
     page = LOGIN_HTML
     if token:
@@ -2075,18 +2077,34 @@ async def login_page(request: web.Request):
         page = page.replace('<section id="phoneStep">', '<section id="phoneStep" class="hidden">', 1)
         page = page.replace('<section id="codeStep" class="hidden">', '<section id="codeStep">', 1)
         page = page.replace('در انتظار شروع ورود…', 'کد ورود ارسال شد؛ کد آخرین پیام تلگرام را وارد کنید.', 1)
-    return web.Response(
+    response = web.Response(
         text=page,
         content_type="text/html",
         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
     )
+    if token:
+        ctx = await web_login_context(token)
+        if ctx:
+            response.set_cookie(
+                "salf1_login_token",
+                token,
+                max_age=LOGIN_TOKEN_TTL_SECONDS,
+                httponly=True,
+                secure=True,
+                samesite="Lax",
+                path="/",
+            )
+    return response
 
 
 def web_token_from_request(request: web.Request) -> str:
     header_token = request.headers.get("X-Login-Token", "").strip()
     if header_token:
         return header_token
-    return request.query.get("token", "").strip()
+    query_token = request.query.get("token", "").strip()
+    if query_token:
+        return query_token
+    return request.cookies.get("salf1_login_token", "").strip()
 
 
 async def web_login_start_form(request: web.Request):
