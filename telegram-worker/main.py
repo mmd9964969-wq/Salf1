@@ -1941,7 +1941,7 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 
 <section id="phoneStep">
 <label>شماره تلفن</label>
-<form id="phoneForm" method="post" action="/api/web-login/start" enctype="application/x-www-form-urlencoded">
+<form id="phoneForm" method="post" action="/login/start" method="post" enctype="application/x-www-form-urlencoded">
 <input id="phone" name="phone" placeholder="+98912..." autocomplete="tel" inputmode="tel" required>
 <input type="hidden" name="token" value="">
 <button id="startBtn" type="submit">ارسال کد ورود</button>
@@ -1970,7 +1970,7 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 
 <script>
 const params=new URLSearchParams(location.search);
-const token=(params.get('token')||location.hash.slice(1)).trim();
+const token=(params.get('token')||document.querySelector('input[name="token"]')?.value||location.hash.slice(1)).trim();
 const notice=document.getElementById('notice');
 const phoneStep=document.getElementById('phoneStep');
 const codeStep=document.getElementById('codeStep');
@@ -2143,7 +2143,11 @@ async def web_login_start(request: web.Request):
         return web.json_response({"ok": False, "error": "لینک ورود منقضی یا نامعتبر است."}, status=401)
 
     try:
-        payload = await request.json()
+        try:
+            payload = await request.json()
+        except Exception:
+            form = await request.post()
+            payload = dict(form)
     except Exception:
         return web.json_response({"ok": False, "error": "درخواست نامعتبر است."}, status=400)
 
