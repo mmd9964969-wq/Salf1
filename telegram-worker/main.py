@@ -1576,7 +1576,15 @@ async def message_event(event, customer_id: str):
         return
 
     if normalize_text(text) in {"پنل", "panel"} and not text.startswith("/"):
-        await event.respond(await salf_panel_text(int(customer_id)), buttons=salf_panel_markup())
+        try:
+            client = client_for(customer_id)
+            await client.send_message(
+                event.chat_id,
+                await salf_panel_text(int(customer_id)),
+                buttons=salf_panel_markup(),
+            )
+        except Exception as exc:
+            print(f"Panel response failed in chat {getattr(event, 'chat_id', None)}: {type(exc).__name__}: {exc}")
         return
 
     if await handle_self_command(event, customer_id, text):
