@@ -1575,6 +1575,10 @@ async def message_event(event, customer_id: str):
     if not text:
         return
 
+    if normalize_text(text) in {"پنل", "panel"} and not text.startswith("/"):
+        await event.respond(await salf_panel_text(int(customer_id)), buttons=salf_panel_markup())
+        return
+
     if await handle_self_command(event, customer_id, text):
         return
 
@@ -2010,21 +2014,23 @@ async def salf_panel_text(user_id: int):
     balance = int(row["tron_balance"]) if row else 0
     return f"""<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-[[account]] - نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
-[[account]] - شناسه : <code>{user_id}</code>
-[[account]] - اکانت : {"● متصل" if connected else "○ متصل نیست"}
-[[self]] - سلف : {"● فعال" if enabled else "○ خاموش"}
-[[system]] - پلن : رایگان
-⛂ - زمان باقی‌مانده : {trial_remaining_text(row)}
-[[balance]] - موجودی : {balance:,} جم
-
-[[system]] - وضعیت سیستم : ● پایدار
-[[system]] - وضعیت Worker : ● آنلاین
-⛂ - مصرف فعال : 1 جم / دقیقه
+نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
+شناسه : <code>{user_id}</code>
+اکانت : {"● متصل" if connected else "○ متصل نیست"}
+سلف : {"● روشن" if enabled else "○ خاموش"}
+پلن : رایگان
+زمان باقی‌مانده : {trial_remaining_text(row)}
+موجودی : {balance:,} جم
 
 ─────━━───── ◈ ─────━━─────
 
-[[account]] - دسترسی اختصاصی برای این حساب"""
+وضعیت سیستم : ● پایدار
+وضعیت Worker : ● آنلاین
+مصرف فعال : 1 جم / دقیقه
+
+─────━━───── ◈ ─────━━─────
+
+دسترسی اختصاصی برای این حساب"""
 
 
 def _strip_invalid_button_emojis(reply_markup: dict) -> dict:
@@ -2691,8 +2697,7 @@ async def process_bot_message(message: dict):
             return
 
     if normalized in {"panel", "پنل"}:
-        # The panel command is slashless and private-chat only.
-        if text.startswith("/") or chat.get("type") != "private":
+        if text.startswith("/"):
             return
         await bot_send(chat["id"], await salf_panel_text(user_id), salf_panel_markup())
         return
