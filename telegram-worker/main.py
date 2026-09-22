@@ -1460,6 +1460,106 @@ def shop_markup():
     }
 
 
+def balance_markup():
+    return {"inline_keyboard": [
+        [{"text": "‹ خرید جم", "callback_data": "shop_packages"}],
+        [{"text": "‹ تاریخچه مصرف", "callback_data": "balance_consumption"}],
+        [{"text": "‹ تراکنش‌ها", "callback_data": "balance_transactions"}],
+        [{"text": "‹ بازگشت", "callback_data": "shop"}],
+    ]}
+
+
+def package_markup():
+    return {"inline_keyboard": [
+        [{"text": "‹ ۱ ساعت · ۶۰ جم", "callback_data": "package_60"}],
+        [{"text": "‹ تست ۲۴ ساعته · ۱٬۴۴۰ جم", "callback_data": "package_1440"}],
+        [{"text": "‹ اقتصادی · ۷ روز · ۱۰٬۰۸۰ جم", "callback_data": "package_10080"}],
+        [{"text": "‹ محبوب · ۳۰ روز · ۴۳٬۲۰۰ جم", "callback_data": "package_43200"}],
+        [{"text": "‹ ویژه · ۶۰ روز · ۸۶٬۴۰۰ جم", "callback_data": "package_86400"}],
+        [{"text": "‹ بازگشت", "callback_data": "shop"}],
+    ]}
+
+
+async def balance_text(user_id: int):
+    row = await db_user(str(user_id))
+    balance = int(row["tron_balance"]) if row else 0
+    minutes = max(0, balance)
+    days, rem = divmod(minutes, 1440)
+    hours, _ = divmod(rem, 60)
+
+    if balance == 0:
+        return """<b>◈ Sᴀʟғ1 · Bᴀʟᴀɴᴄᴇ</b>
+
+موجودی جم شما به پایان رسید.
+
+موجودی حساب شما به پایان رسیده است.
+برای ادامه فعالیت حساب خود را شارژ کنید.
+
+─────━━───── ◈ ─────━━─────""", balance_markup()
+
+    warning = balance <= 144
+    body = """موجودی جم شما رو به اتمام است.
+
+⛂ - برای جلوگیری از توقف سلف حساب خود را شارژ کنید""" if warning else "مـدیـریـت مـوجـودی"
+
+    return f"""<b>◈ Sᴀʟғ1 · Bᴀʟᴀɴᴄᴇ</b>
+
+{body}
+
+⛂ - موجودی فعلی : {balance:,} جم
+⛂ - مصرف فعال : 1 جم / دقیقه
+⛂ - زمان قابل استفاده : {days} روز و {hours} ساعت
+
+─────━━───── ◈ ─────━━─────""", balance_markup()
+
+
+async def consumption_history_text(user_id: int):
+    if db_pool is None:
+        return "<b>◈ Sᴀʟғ1 · Cᴏɴsᴜᴍᴘᴛɪᴏɴ</b>\n\n⛂ - تاریخچه مصرف در دسترس نیست.", balance_markup()
+    await ensure_admin_ledger_table()
+    rows = await db_pool.fetch(
+        """select amount, balance_after, created_at
+           from salf1_balance_ledger
+           where target_user_id = $1 and action = 'consumption'
+           order by id desc limit 20""", user_id)
+    total = sum(abs(int(row["amount"])) for row in rows)
+    return f"""<b>◈ Sᴀʟғ1 · Cᴏɴsᴜᴍᴘᴛɪᴏɴ</b>
+
+تـاریـخـچـه مـصـرف
+
+⛂ - آخرین ۲۰ مصرف : {len(rows)} رکورد
+⛂ - مجموع مصرف ثبت‌شده : {total:,} جم
+
+─────━━───── ◈ ─────━━─────
+
+⛂ - مصرف فعال : 1 جم / دقیقه
+
+─────━━───── ◈ ─────━━─────""", balance_markup()
+
+
+async def transactions_text(user_id: int):
+    if db_pool is None:
+        return "<b>◈ Sᴀʟғ1 · Tʀᴀɴsᴀᴄᴛɪᴏɴs</b>\n\n⛂ - تراکنش‌ها در دسترس نیست.", balance_markup()
+    await ensure_admin_ledger_table()
+    rows = await db_pool.fetch(
+        """select amount, balance_after, action, created_at
+           from salf1_balance_ledger
+           where target_user_id = $1
+           order by id desc limit 20""", user_id)
+    if not rows:
+        body = "⛂ - هنوز تراکنشی برای نمایش ثبت نشده است."
+    else:
+        body = "\n".join(
+            f"⛂ - {'+' if int(row['amount']) >= 0 else ''}{int(row['amount']):,} جم · {html.escape(str(row['action']))}"
+            for row in rows[:10]
+        )
+    return f"""<b>◈ Sᴀʟғ1 · Tʀᴀɴsᴀᴄᴛɪᴏɴs</b>
+
+{body}
+
+─────━━───── ◈ ─────━━─────""", balance_markup()
+
+
 def manage_menu_markup(connected: bool = False, enabled: bool = False):
     keyboard = [
         [
@@ -1579,60 +1679,38 @@ def trial_remaining_text(row) -> str:
 
 async def mini_main_text(user_id: int, user_first_name: str | None):
     name = html.escape(user_first_name or "کاربر")
-    row = await db_user(str(user_id))
-    connected = bool(row["account_connected"]) if row else False
-    enabled = bool(row["salf_enabled"]) if row else False
-    balance = int(row["tron_balance"]) if row else 0
-    trial_left = trial_remaining_text(row)
-
     return f"""
-<b>◈ مـدیـریـت اکـانـت سـلـف</b>
+<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-- خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
+سلام <b>[ {name} ]</b> 🌹
 
-⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
-⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست رایگان 24 ساعت : {"پس از ورود اکانت" if row and row["trial_expires_at"] is None else trial_left}
-⛂ موجودی : <b>{balance:,} جم ترون</b>
-⛂ مصرف فعال : 1 جم ترون در دقیقه
+به مرکز SALF1 خوش آمدید.
 
 ─────━━───── ◈ ─────━━─────
-
-<b>[[system]] وضـعیـت سـرویـس</b>
-
-★ - برای شروع، اکانت خود را متصل کنید.
 """
-
+    
 
 async def mini_manage_text(user_id: int):
     row = await db_user(str(user_id))
     connected = bool(row["account_connected"]) if row else False
     enabled = bool(row["salf_enabled"]) if row else False
     balance = int(row["tron_balance"]) if row else 0
-    trial_active = bool(
-        row
-        and row["trial_expires_at"] is not None
-        and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
-    )
-    trial_text = "● فعال" if trial_active else (
-        "○ پس از ورود اکانت شروع می‌شود"
-        if row and row["trial_expires_at"] is None
-        else "○ پایان‌یافته"
-    )
     return f"""
-<b>◈ مـدیـریـت سـلـف</b>
+<b>◈ مـدیـریـت اکـانـت سـلـف</b>
 
-⛂ - اکانت : {"● متصل" if connected else "○ متصل نیست"}
-⛂ - سلف : {"● روشن" if enabled else "○ خاموش"}
-⛂ - تست رایگان 24 ساعت : {"پس از ورود اکانت" if row and row["trial_expires_at"] is None else trial_text}
-⛂ - موجودی : <b>{balance:,} جم ترون</b>
+- خـوش اومـدی <b>[ {html.escape(str(row["first_name"] if row else "کاربر"))} ]</b> مـحتـرم.
+
+⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
+⛂ تست رایگان 24 ساعت : {trial_remaining_text(row)}
+⛂ موجودی : {balance:,} جم ترون
+⛂ مصرف فعال : 1 جم ترون در دقیقه
 
 ─────━━───── ◈ ─────━━─────
 
-<b>◈ وضـعیـت سـرویـس</b>
+⚙️ وضـعیـت سـرویـس
 
-★ - از این بخش، تمام کنترل‌های اصلی
-سلف در دسترس شما قرار دارد.
+★ - برای شروع، اکانت خود را متصل کنید.
 """
 
 
@@ -2330,79 +2408,79 @@ async def process_callback(callback_query: dict):
         return
 
     if data == "shop":
-        await bot_edit(
-            chat_id,
-            message_id,
-            """<b>◈ شاپ جم</b>
+        await bot_edit(chat_id, message_id,
+            """<b>◈ Sᴀʟғ1 · Gᴇᴍ Sʜᴏᴘ</b>
 
-⛂ - خرید و مدیریت جم ترون
-⛂ - انتخاب بسته، خرید و مشاهده تراکنش‌ها
+خرید و مدیریت جم سلف.
+
+─────━━───── ◈ ─────━━─────""",
+            shop_markup())
+        return
+
+    if data in {"shop_buy", "shop_packages"}:
+        await bot_edit(chat_id, message_id,
+            """<b>◈ Sᴀʟғ1 · Gᴇᴍ Pᴀᴄᴋᴀɢᴇs</b>
+
+بسته موردنظر خود را انتخاب کنید.
+
+─────━━───── ◈ ─────━━─────""",
+            package_markup())
+        return
+
+    if data.startswith("package_"):
+        packages = {
+            "package_60": ("۱ ساعت", 60),
+            "package_1440": ("تست ۲۴ ساعته", 1440),
+            "package_10080": ("اقتصادی · ۷ روز", 10080),
+            "package_43200": ("محبوب · ۳۰ روز", 43200),
+            "package_86400": ("ویژه · ۶۰ روز", 86400),
+        }
+        item = packages.get(data)
+        if item:
+            title, amount = item
+            await bot_edit(chat_id, message_id,
+                f"""<b>◈ Sᴀʟғ1 · Pᴀᴄᴋᴀɢᴇ</b>
+
+بسته انتخاب‌شده : <b>{title}</b>
+مقدار : <b>{amount:,} جم</b>
+مصرف : <b>1 جم / دقیقه</b>
 
 ─────━━───── ◈ ─────━━─────
 
-⛂ - یک گزینه را انتخاب کنید.""",
-            shop_markup(),
-        )
+⛂ - پرداخت آنلاین در مرحله فروش فعال می‌شود.
+⛂ - تا قبل از تأیید پرداخت، موجودی شما تغییر نمی‌کند.""",
+                package_markup())
+            return
+
+    if data == "shop_balance":
+        text, markup = await balance_text(user_id)
+        await bot_edit(chat_id, message_id, text, markup)
         return
 
-    if data == "shop_buy":
-        await bot_edit(
-            chat_id,
-            message_id,
-            """<b>◈ خرید جم</b>
-
-⛂ - خرید جم ترون برای افزایش اعتبار Salf1.
-
-⛂ - بسته‌های قابل خرید از بخش «بسته‌های جم» نمایش داده می‌شوند.""",
-            shop_markup(),
-        )
+    if data == "balance_consumption":
+        text, markup = await consumption_history_text(user_id)
+        await bot_edit(chat_id, message_id, text, markup)
         return
 
-    if data == "shop_packages":
-        await bot_edit(
-            chat_id,
-            message_id,
-            """<b>◈ بسته‌های جم</b>
-
-⛂ - بسته‌های جم ترون در این بخش قرار می‌گیرند.
-⛂ - انتخاب بسته بعد از فعال شدن سیستم فروش انجام می‌شود.""",
-            shop_markup(),
-        )
+    if data == "balance_transactions":
+        text, markup = await transactions_text(user_id)
+        await bot_edit(chat_id, message_id, text, markup)
         return
 
-    if data in {"shop_balance", "shop_history", "shop_discount", "shop_support"}:
-        if data == "shop_balance":
-            row = await db_user(str(user_id))
-            balance = int(row["tron_balance"]) if row else 0
-            text = f"""<b>◈ موجودی من</b>
-
-⛂ - موجودی فعلی : <b>{balance:,} جم</b>
-⛂ - مصرف فعال : 1 جم / دقیقه
-
-─────━━───── ◈ ─────━━─────
-
-⛂ - برای افزایش موجودی، از بخش خرید جم استفاده کنید."""
-        elif data == "shop_history":
+    if data in {"shop_history", "shop_discount", "shop_support"}:
+        if data == "shop_history":
             text = """<b>◈ تاریخچه خرید</b>
 
-⛂ - تاریخچه خرید و شارژ جم در این بخش نمایش داده می‌شود.
-⛂ - هنوز تراکنشی برای نمایش ثبت نشده است."""
+⛂ - تاریخچه خرید و شارژ جم در این بخش نمایش داده می‌شود."""
         elif data == "shop_discount":
             text = """<b>◈ کد تخفیف</b>
 
-⛂ - کد تخفیف خود را در این بخش وارد کنید.
-⛂ - سیستم بررسی و اعمال کد تخفیف در مرحله فروش فعال می‌شود."""
+⛂ - کد تخفیف خود را در این بخش وارد کنید."""
         else:
             text = """<b>◈ پشتیبانی خرید</b>
 
-⛂ - برای پیگیری خرید، پرداخت یا مشکل دریافت جم از این بخش استفاده کنید.
-⛂ - درخواست شما از مسیر پشتیبانی خرید بررسی می‌شود."""
-        await bot_edit(
-            chat_id,
-            message_id,
-            text,
-            shop_markup(),
-        )
+⛂ - برای پیگیری خرید، پرداخت یا مشکل دریافت جم از این بخش استفاده کنید."""
+        await bot_edit(chat_id, message_id, text, shop_markup())
         return
 
     if data == "support":
@@ -2490,6 +2568,7 @@ async def main():
             )
             print("Salf1 worker database connected.")
             await init_web_login_tokens_table()
+            await ensure_admin_ledger_table()
             print("Salf1 web login token store ready.")
         except Exception as exc:
             print(f"WARNING: database connection failed: {exc}")
