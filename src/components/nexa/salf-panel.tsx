@@ -377,36 +377,157 @@ export function SalfPanelView() {
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [capability, setCapability] = useState<Capability | null>(null);
   const [search, setSearch] = useState("");
-  const [commandCopied, setCommandCopied] = useState(false);
   const totalCapabilities = sections.reduce((n, s) => n + s.items.length, 0);
-  const filteredSections = sections.map(section => ({...section,items: section.items.filter(item => !search.trim() || item.title.includes(search.trim()) || item.desc.includes(search.trim()) || item.commands.some(c => c.toLowerCase().includes(search.trim().toLowerCase())))})).filter(section => !search.trim() || section.items.length > 0);
-  if (capability) return <CapabilityView item={capability} onBack={()=>setCapability(null)} />;
+  const filteredSections = sections
+    .map(section => ({
+      ...section,
+      items: section.items.filter(item =>
+        !search.trim() ||
+        item.title.includes(search.trim()) ||
+        item.desc.includes(search.trim()) ||
+        item.commands.some(c => c.toLowerCase().includes(search.trim().toLowerCase()))
+      )
+    }))
+    .filter(section => !search.trim() || section.items.length > 0);
+
+  if (capability) return <CapabilityView item={capability} onBack={() => setCapability(null)} />;
+
   if (sectionId) {
     const section = sections.find(s => s.id === sectionId);
     if (!section) return null;
-    return <div className="salf-page salf-dashboard">
-      <div className="salf-page-head"><button className="salf-ghost-button" onClick={()=>setSectionId(null)}><ArrowRight className="size-4"/> بازگشت به خانه</button>
-        <div className="salf-title-row"><div className="salf-emblem salf-emblem-sm"><section.icon className="size-5"/></div><div><p className="salf-eyebrow">SALF1 / MODULE</p><h1>{section.title}</h1><p>{section.desc}</p></div></div>
+    return (
+      <div className="salf-page salf-dashboard">
+        <div className="salf-page-head">
+          <button className="salf-ghost-button" onClick={() => setSectionId(null)}>
+            <ArrowRight className="size-4" /> بازگشت
+          </button>
+          <div className="salf-title-row">
+            <div className="salf-emblem salf-emblem-sm"><section.icon className="size-5" /></div>
+            <div>
+              <p className="salf-eyebrow">SALF1 / MODULE</p>
+              <h1>{section.title}</h1>
+              <p>{section.desc}</p>
+            </div>
+          </div>
+        </div>
+        <div className="salf-feature-grid">
+          {section.items.map((item, index) => (
+            <button key={item.id} onClick={() => setCapability(item)} className="salf-feature-card">
+              <span className="salf-card-index">{String(index + 1).padStart(2, "0")}</span>
+              <span className="salf-card-icon"><item.icon className="size-5" /></span>
+              <span className="salf-card-copy">
+                <strong>{item.title}</strong>
+                <span>{item.desc}</span>
+                <small>{faNum(item.commands.length)} دستور</small>
+              </span>
+              <ChevronLeft className="salf-card-arrow size-5" />
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="salf-feature-grid">{section.items.map((item,index)=><button key={item.id} onClick={()=>setCapability(item)} className="salf-feature-card">
-        <span className="salf-card-index">{String(index+1).padStart(2,"0")}</span><span className="salf-card-icon"><item.icon className="size-5"/></span>
-        <span className="salf-card-copy"><strong>{item.title}</strong><span>{item.desc}</span><small>{faNum(item.commands.length)} دستور قابل مدیریت</small></span><ChevronLeft className="salf-card-arrow size-5"/>
-      </button>)}</div>
-    </div>;
+    );
   }
-  const copyCommand = async () => { try { await navigator.clipboard.writeText("/panel"); setCommandCopied(true); window.setTimeout(()=>setCommandCopied(false),1400); } catch {} };
-  return <div className="salf-page salf-dashboard">
-    <section className="salf-hero"><div className="salf-hero-grid"/>
-      <div className="salf-hero-top"><div className="salf-brand-lockup"><div className="salf-emblem"><span>S</span><i/></div><div><p className="salf-eyebrow">SELF ACCOUNT LAYER / 01</p><h1>SALF<span>1</span></h1><p className="salf-hero-sub">مرکز فرمان اکانت تلگرام — طراحی‌شده برای کنترل دقیق، سریع و حرفه‌ای.</p></div></div><div className="salf-live-pill"><span/> سیستم فعال <b>LIVE</b></div></div>
-      <div className="salf-hero-main"><div><p className="salf-kicker">WELCOME BACK</p><h2>سلام، {profile.name}</h2><p className="salf-hero-description">همه‌چیز از اینجا شروع می‌شود؛ از پروفایل و پیام‌ها تا اتوماسیون، امنیت، رسانه و سیستم‌های پیشرفته.</p><div className="salf-hero-actions"><button className="salf-primary-button" onClick={()=>setSectionId("automation")}><Zap className="size-4"/> شروع اتوماسیون <ChevronLeft className="size-4"/></button><button className="salf-secondary-button" onClick={copyCommand}>{commandCopied ? "کپی شد ✓" : "/panel"} <Command className="size-4"/></button></div></div>
-        <div className="salf-orbit-card"><div className="salf-orbit-ring ring-one"/><div className="salf-orbit-ring ring-two"/><div className="salf-orbit-core"><span>S</span><small>01</small></div><p>ACCOUNT<br/><strong>CONTROL</strong></p></div></div>
-      <div className="salf-stat-grid"><div><span>اکانت</span><strong>@{profile.username}</strong><small>شناسه فعال</small></div><div><span>وضعیت سیستم</span><strong className="is-ok">● آنلاین</strong><small>سالم و آماده</small></div><div><span>جم ترون</span><strong>{faNum(1250)}</strong><small>موجودی فعلی</small></div><div><span>ماژول‌ها</span><strong>{faNum(sections.length)}</strong><small>{faNum(totalCapabilities)} قابلیت</small></div></div>
-    </section>
-    <section className="salf-command-bar"><div className="salf-search-wrap"><Search className="size-4"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="جستجو در قابلیت‌ها، ماژول‌ها و دستورات..."/></div><div className="salf-command-hint"><span>فرمان سریع</span><code dir="ltr">/panel</code><kbd>ENTER</kbd></div></section>
-    <div className="salf-section-heading"><div><p className="salf-eyebrow">COMMAND ARCHITECTURE</p><h2>مرکز کنترل</h2><p>ماژول‌ها را انتخاب کنید و وارد تنظیمات جزئی هر قابلیت شوید.</p></div><span>{faNum(filteredSections.length)} / {faNum(sections.length)} ماژول</span></div>
-    <div className="salf-module-grid">{filteredSections.map((section,index)=><button key={section.id} onClick={()=>setSectionId(section.id)} className="salf-module-card"><span className="salf-module-number">{String(index+1).padStart(2,"0")}</span><span className="salf-module-icon"><section.icon className="size-5"/></span><span className="salf-module-body"><strong>{section.title}</strong><span>{section.desc}</span><small>{faNum(section.items.length)} قابلیت</small></span><ChevronLeft className="salf-module-arrow size-5"/></button>)}</div>
-    {filteredSections.length===0&&<div className="salf-empty-state"><Search className="size-6"/><strong>نتیجه‌ای پیدا نشد</strong><span>عبارت دیگری جستجو کنید.</span></div>}
-    <section className="salf-command-catalog"><div><p className="salf-eyebrow">QUICK ACCESS</p><h3>دسترسی سریع</h3></div><div className="salf-quick-grid"><button onClick={()=>setSectionId("billing")}><Gem className="size-4"/><span>ترون و اشتراک</span><ChevronLeft className="size-4"/></button><button onClick={()=>setSectionId("security")}><ShieldCheck className="size-4"/><span>مرکز امنیت</span><ChevronLeft className="size-4"/></button><button onClick={()=>setSectionId("advanced")}><Wrench className="size-4"/><span>ابزارهای پیشرفته</span><ChevronLeft className="size-4"/></button><button onClick={()=>setSectionId("account")}><BookOpen className="size-4"/><span>راهنمای قابلیت‌ها</span><ChevronLeft className="size-4"/></button></div></section>
-    <footer className="salf-page-signature"><span>SALF1</span><i/><span>SELF ACCOUNT CONTROL SYSTEM</span><b>MADE BY JAWATI</b></footer>
-  </div>;
+
+  return (
+    <div className="salf-page salf-dashboard">
+      <section className="salf-hero">
+        <div className="salf-hero-grid" />
+        <div className="salf-hero-top">
+          <div className="salf-brand-lockup">
+            <div className="salf-emblem"><span>S</span><i /></div>
+            <div>
+              <p className="salf-eyebrow">SALF1 · COMMAND CENTER</p>
+              <h1>SALF<span>1</span></h1>
+              <p className="salf-hero-sub">مرکز فرمان اختصاصی اکانت تلگرام</p>
+            </div>
+          </div>
+          <div className="salf-live-pill"><span /> ● متصل <b>LIVE</b></div>
+        </div>
+
+        <div className="salf-hero-main">
+          <div>
+            <p className="salf-kicker">PRIVATE ACCESS</p>
+            <h2>خوش آمدید، {profile.name}</h2>
+            <p className="salf-hero-description">این مرکز برای مدیریت اختصاصی اکانت شما طراحی شده است؛ هر بخش، کنترل مشخص و مستقلی دارد.</p>
+          </div>
+          <div className="salf-orbit-card">
+            <div className="salf-orbit-ring ring-one" />
+            <div className="salf-orbit-ring ring-two" />
+            <div className="salf-orbit-core"><span>S</span><small>01</small></div>
+            <p>ACCOUNT<br /><strong>CONTROL</strong></p>
+          </div>
+        </div>
+
+        <div className="salf-stat-grid">
+          <div><span>اکانت</span><strong>@{profile.username}</strong><small>⛂ - وضعیت : ● متصل</small></div>
+          <div><span>سلف</span><strong className="is-ok">● فعال</strong><small>⛂ - آماده اجرا</small></div>
+          <div><span>پلن</span><strong>FREE</strong><small>⛂ - دسترسی پایه</small></div>
+          <div><span>موجودی</span><strong>{faNum(1250)}</strong><small>⛂ - جم ترون</small></div>
+        </div>
+      </section>
+
+      <section className="salf-command-bar">
+        <div className="salf-search-wrap">
+          <Search className="size-4" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="جستجو در قابلیت‌ها و دستورات..." />
+        </div>
+        <div className="salf-command-hint"><span>فرمان</span><code dir="ltr">/panel</code><kbd>ENTER</kbd></div>
+      </section>
+
+      <div className="salf-section-heading">
+        <div>
+          <p className="salf-eyebrow">COMMAND ARCHITECTURE</p>
+          <h2>مرکز فرمان</h2>
+          <p>هر بخش را انتخاب کنید؛ تنظیمات جزئی همان بخش در مرحله بعد نمایش داده می‌شود.</p>
+        </div>
+        <span>{faNum(filteredSections.length)} / {faNum(sections.length)} بخش</span>
+      </div>
+
+      <div className="salf-module-grid">
+        {filteredSections.map((section, index) => (
+          <button key={section.id} onClick={() => setSectionId(section.id)} className="salf-module-card">
+            <span className="salf-module-number">{String(index + 1).padStart(2, "0")}</span>
+            <span className="salf-module-icon"><section.icon className="size-5" /></span>
+            <span className="salf-module-body">
+              <strong>› {section.title}</strong>
+              <span>{section.desc}</span>
+              <small>⛂ - {faNum(section.items.length)} قابلیت</small>
+            </span>
+            <ChevronLeft className="salf-module-arrow size-5" />
+          </button>
+        ))}
+      </div>
+
+      {filteredSections.length === 0 && (
+        <div className="salf-empty-state">
+          <Search className="size-6" />
+          <strong>نتیجه‌ای پیدا نشد</strong>
+          <span>عبارت دیگری جستجو کنید.</span>
+        </div>
+      )}
+
+      <section className="salf-command-catalog">
+        <div>
+          <p className="salf-eyebrow">SYSTEM STATUS</p>
+          <h3>وضعیت سیستم</h3>
+        </div>
+        <div className="salf-quick-grid">
+          <button onClick={() => setSectionId("billing")}><Gem className="size-4" /><span>› مصرف و موجودی</span><ChevronLeft className="size-4" /></button>
+          <button onClick={() => setSectionId("security")}><ShieldCheck className="size-4" /><span>› امنیت</span><ChevronLeft className="size-4" /></button>
+          <button onClick={() => setSectionId("advanced")}><Wrench className="size-4" /><span>› ابزارهای پیشرفته</span><ChevronLeft className="size-4" /></button>
+          <button onClick={() => setSectionId("account")}><BookOpen className="size-4" /><span>› راهنما</span><ChevronLeft className="size-4" /></button>
+        </div>
+        <div className="mt-4 rounded-xl border border-line bg-surface-2/60 p-4 text-sm">
+          <p>⛂ - وضعیت سیستم : ● پایدار</p>
+          <p>⛂ - وضعیت Worker : ● آنلاین</p>
+          <p>⛂ - مصرف فعال : 1 جم / دقیقه</p>
+          <p>⛂ - قابلیت‌ها : {faNum(totalCapabilities)}</p>
+        </div>
+      </section>
+
+      <footer className="salf-page-signature">
+        <span>SALF1</span><i /><span>SELF ACCOUNT CONTROL SYSTEM</span><b>MADE BY JAWATI</b>
+      </footer>
+    </div>
+  );
 }
