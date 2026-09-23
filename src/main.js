@@ -305,6 +305,8 @@ function pageHtml() {
         '<h1>' + t("success") + '</h1>' +
         '<p class="stage-subtitle">' + (state.account?.name || state.account?.username || "") + '</p>' +
         '<button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button>' +
+        '<div class="identity-chip"><span>TELEGRAM ID</span><strong>' + (state.account?.id ?? state.account?.telegram_user_id ?? "—") + '</strong></div>' +
+        '<div class="identity-chip"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : (state.lang==="fa" ? "ندارد" : "NONE")) + '</strong></div>' +
         '<button class="ghost-action" id="enterPanel" type="button">' + (state.lang==="fa" ? "ورود به قلمرو" : "ENTER THE REALM") + ' ↗</button>' +
       '</div>';
   }
@@ -456,7 +458,7 @@ function bindCommon() {
     busy(button,"...");
     setLive(t("verifying"));
     try{
-      const data=await postJson("/api/auth/code",{flow_id:state.flowId,code});
+      const data=await postJson("/api/auth/code",{flow_id:state.flowId,identifier:state.identifier,code});
       state.stage=data.step;
       state.account=data.account||null;
       stagePulse();
@@ -476,7 +478,7 @@ function bindCommon() {
     busy(button,"...");
     setLive(t("verifying"));
     try{
-      const data=await postJson("/api/auth/2fa",{flow_id:state.flowId,password});
+      const data=await postJson("/api/auth/2fa",{flow_id:state.flowId,identifier:state.identifier,password});
       state.stage="master_setup";
       state.account=data.account||null;
       stagePulse();
