@@ -323,6 +323,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
+
+            if self.path == "/internal/event":
+                telegram_id = int(payload.get("telegram_id"))
+                message = str(payload.get("message") or "")[:4000]
+                future = asyncio.run_coroutine_threadsafe(
+                    bot_app.bot.send_message(chat_id=telegram_id, text=message),
+                    loop
+                )
+                future.result(timeout=15)
+                send_json(self, 200, {"ok": True})
+                return
+
             future = asyncio.run_coroutine_threadsafe(process_api(self.path, payload), loop)
             result = future.result(timeout=45)
             send_json(self, 200, result)
