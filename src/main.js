@@ -195,33 +195,11 @@ function bindUI() {
     consoleText.textContent = t("secured");
     document.querySelector("#securityScan")?.classList.add("complete");
 
-    try {
-      const response = await fetch("/api/auth/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: "salf1-web", lang: state.lang })
-      });
+    await delay(620);
+    consoleText.textContent = t("ready");
 
-      if (response.ok) {
-        consoleText.textContent = t("ready");
-        showToast(t("success"));
-      } else {
-        consoleText.textContent = t("error");
-        showToast(t("error"));
-      }
-    } catch {
-      consoleText.textContent = t("error");
-      showToast(t("error"));
-    }
-
-    await delay(950);
-
-    button.classList.remove("pressed");
-    document.body.classList.remove("security-sequence");
-    shield?.classList.remove("active");
-    document.querySelector("#brandSystem")?.classList.remove("security-verified");
-    document.querySelector("#securityScan")?.classList.remove("complete");
-    state.sequence = false;
+    await delay(360);
+    window.location.assign("/auth/telegram");
   });
 
   document.querySelectorAll(".lang-item").forEach((item) => {
