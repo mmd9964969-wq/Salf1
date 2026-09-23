@@ -653,11 +653,20 @@ async function callWorker(req,route,payload) {
   const workerPayload = route==="/auth/start"
     ? {phone:String(payload.identifier || "").trim()}
     : payload;
+  const customerId=String(
+    payload?.identifier ||
+    payload?.customer_id ||
+    req.headers["x-salf1-customer-id"] ||
+    ""
+  ).trim();
+
   const response=await fetch(workerUrl()+workerRoute,{
     method:"POST",
     headers:{
       "Content-Type":"application/json",
       "X-Worker-Token":token,
+      "X-Salf1-Worker-Token":token,
+      "X-Salf1-Customer-ID":customerId,
       "X-Client-IP":directIp(req)
     },
     body:JSON.stringify(workerPayload),
