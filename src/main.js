@@ -268,6 +268,18 @@ function pageHtml() {
           '<button class="ghost-action" id="biometricButton" type="button">◈ ' + t("biometric") + '</button>' +
         '</form>' +
       '</div>';
+  } else if(state.stage === "dashboard") {
+    body =
+      '<div class="auth-stage dashboard-stage">' +
+        '<div class="stage-mark">SELF PERSIAN MANAGEMENT</div>' +
+        '<div class="success-core">♛</div>' +
+        '<h1>' + (state.lang==="fa" ? "قلمرو آماده است" : "THE REALM IS READY") + '</h1>' +
+        '<p class="stage-subtitle">' + (state.account?.name || state.account?.username || "") + '</p>' +
+        '<div class="dashboard-line"><span>ACCOUNT</span><strong>' + (state.account?.username ? "@" + state.account.username : "CONNECTED") + '</strong></div>' +
+        '<div class="dashboard-line"><span>SECURITY</span><strong>' + (state.lang==="fa" ? "MASTER · SESSION PROTECTED" : "MASTER · SESSION PROTECTED") + '</strong></div>' +
+        '<button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button>' +
+        '<button class="ghost-action" id="logoutButton" type="button">' + (state.lang==="fa" ? "خروج از قلمرو" : "SIGN OUT") + '</button>' +
+      '</div>';
   } else {
     body =
       '<div class="auth-stage success-stage">' +
@@ -487,6 +499,7 @@ function bindCommon() {
       setLive(t("access"));
       render();
       setTimeout(()=>document.body.classList.add("realm-open"),80);
+      setTimeout(()=>{state.stage="dashboard";render();},900);
     }catch(error){
       setLive(translateStageError(error.message));
       document.querySelector(".auth-stage")?.classList.add("error-shake");
@@ -562,8 +575,12 @@ function bindCommon() {
   });
 
   document.querySelector("#enterPanel")?.addEventListener("click",()=>{
-    window.history.pushState({}, "", "/panel");
-    showToast(state.lang==="fa"?"قلمرو آماده است.":"The realm is ready.");
+    state.stage="dashboard";
+    render();
+  });
+
+  document.querySelector("#logoutButton")?.addEventListener("click",()=>{
+    window.location.assign("/auth/logout");
   });
 
   setupFieldFocus();
