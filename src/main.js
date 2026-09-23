@@ -297,9 +297,20 @@ function pageHtml() {
         '<div class="dashboard-line"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : "—") + '</strong></div>' +
         '<div class="dashboard-line"><span>SECURITY</span><strong>MASTER · SESSION PROTECTED</strong></div>' +
         '<div class="dashboard-actions"><button class="royal-button compact" id="openGems" type="button"><span class="button-light"></span><span class="button-label">◈ خرید جم</span><span class="button-mark">↗</span></button><button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button><button class="ghost-action" id="logoutButton" type="button">' + (state.lang==="fa" ? "خروج از قلمرو" : "SIGN OUT") + '</button></div>' +
-      '</div>  } else {
+      '</div>  } else if(state.stage === "gems") {
     body =
-      '<div class="auth-stage success-stage">' +
+      '<div class="auth-stage gem-stage"><button class="stage-back" id="backButton" type="button">← بازگشت</button><div class="stage-mark">GEM MARKET / 05</div><h1>بسته‌های جم</h1><p class="stage-subtitle">قلمرو خود را با بسته مصرفی انتخاب کن.</p><div class="gem-grid">' +
+      state.gemPackages.map((p,i)=>'<button class="gem-card" data-gem="'+p.code+'" type="button"><span class="gem-index">0'+(i+1)+'</span><strong>'+p.name+'</strong><b>'+p.gems.toLocaleString("fa-IR")+' جم</b><small>1 جم / دقیقه</small><i>↗</i></button>').join("") +
+      '</div></div>';
+  } else if(state.stage === "gem_detail") {
+    const p=state.selectedGem||state.gemPackages[0];
+    body =
+      '<div class="auth-stage gem-detail-stage"><button class="stage-back" id="backButton" type="button">← بازگشت</button><div class="stage-mark">GEM PACKAGE</div><h1>◈ Pᴇʀsɪᴀɴ Sᴇʟғ Bᴏᴛ · Gᴇᴍ Pᴀᴄᴋᴀɢᴇ</h1><div class="gem-copy"><h3>مـشـخـصـات بـسـتـه</h3><p>⛂ - بسته : '+p.name+'<br>⛂ - مقدار : '+p.gems.toLocaleString("fa-IR")+' جم<br>⛂ - مصرف : 1 جم / دقیقه<br>⛂ - مدت استفاده : '+p.duration+'<br>⛂ - نوع : بسته مصرفی</p><hr><h3>نـحـوه مـصـرف</h3><p>هر 1 دقیقه فعالیت سلف برابر با 1 جم مصرف است.<br><br>⛂ - سلف فعال : مصرف جم<br>⛂ - سلف خاموش : بدون مصرف<br>⛂ - اکانت متصل نباشد : بدون مصرف<br>⛂ - موجودی 0 جم : توقف مصرف و فعالیت</p><hr><h3>مـوجـودی و مـصـرف</h3><p>موجودی حساب شما به‌ صورت خودکار از مقدار جم مصرف‌ شده کسر میشود.<br><br>⛂ - موجودی هیچ‌ وقت منفی نمیشود.<br>⛂ - مصرف فقط هنگام فعالیت سلف انجام میشود.<br>⛂ - با پایان موجودی مصرف متوقف میشود.<br>⛂ - مقدار باقی‌ مانده از طریق بخش «موجودی من» قابل مشاهده است.</p><hr><h3>شـرایـط بـسـتـه</h3><p>⛂ - جم پس از تایید خرید به حساب اضافه میشود.<br>⛂ - قبل از تایید پرداخت موجودی تغییر نمیکند.<br>⛂ - بسته بر اساس مقدار جم تعریف شده است.<br>⛂ - استفاده از جم فقط برای سرویس‌های فعال انجام میشود.<br>⛂ - انتقال یا تبدیل جم به وجه نقد ، در صورت فعال نبودن این قابلیت ، امکان‌ پذیر نیست.</p><hr><h3>هـشـدار مـوجـودی</h3><p>⛂ - موجودی کم : هشدار شارژ حساب<br>⛂ - موجودی 0 : توقف مصرف<br>⛂ - بدون موجودی : ادامه فعالیت نیازمند شارژ حساب است.</p><hr><h3>پـس از خـریـد</h3><p>پس از تأیید پرداخت مقدار جم خریداری‌ شده به موجودی حساب شما اضافه میشود و میتوانید از آن برای فعال نگه‌ داشتن سرویس استفاده کنید.</p><hr><p><strong>نکته :</strong> مدت قابل استفاده به میزان مصرف سلف بستگی دارد؛ فعال بودن مداوم سلف باعث مصرف مداوم جم میشود.</p></div><button class="royal-button" id="payGem" type="button"><span class="button-light"></span><span class="button-label">پرداخت</span><span class="button-mark">↗</span></button></div>';
+  } else if(state.stage === "receipt") {
+    const r=state.receipt||{};
+    body='<div class="auth-stage receipt-stage"><div class="stage-mark">RECEIPT / 06</div><h1>رسید خرید جم</h1><div class="receipt-box"><span>کد رسید</span><strong>'+r.code+'</strong><span>بسته</span><strong>'+r.name+'</strong><span>مقدار</span><strong>'+Number(r.gems||0).toLocaleString("fa-IR")+' جم</strong><span>وضعیت</span><strong>در انتظار پرداخت</strong></div><div class="payment-gates"><button class="glass-gate" data-method="online" type="button"><b>درگاه آنلاین</b><small>فعلاً اسکلت درگاه</small></button><button class="glass-gate" data-method="card" type="button"><b>کارت به کارت</b><small>فعلاً اسکلت درگاه</small></button></div><button class="ghost-action" id="backToGems" type="button">بازگشت به بسته‌ها</button></div>';
+  } else {
+    body =' +
         '<div class="success-core">♛</div>' +
         '<div class="stage-mark">ACCESS</div>' +
         '<h1>' + t("success") + '</h1>' +
