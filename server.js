@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { handleApi } from "./src/api.js";
 import { Pool } from "pg";
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
 
@@ -1220,6 +1221,7 @@ const safePath = (urlPath) => {
 
 const server = createServer(async (req,res) => {
   try {
+    if (await handleApi(req,res,sendJson)) return;
     const url = new URL(req.url || "/", `http://localhost:${port}`);
 
     if (url.pathname === "/api/passkey/registration-options" && req.method === "GET") {
