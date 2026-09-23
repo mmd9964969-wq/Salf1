@@ -910,6 +910,26 @@ const server = createServer(async (req,res) => {
   try {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
 
+    if (url.pathname === "/api/passkey/registration-options" && req.method === "GET") {
+      await passkeyRegistrationOptions(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/passkey/registration-verify" && req.method === "POST") {
+      await passkeyRegistrationVerify(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/passkey/authentication-options" && req.method === "POST") {
+      await passkeyAuthenticationOptions(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/passkey/authentication-verify" && req.method === "POST") {
+      await passkeyAuthenticationVerify(req,res);
+      return;
+    }
+
     if (url.pathname === "/api/auth/start" && req.method === "POST") {
       await directAuth(req,res,"/auth/start");
       return;
