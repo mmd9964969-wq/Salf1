@@ -99,7 +99,7 @@ const copy = {
   ar:{
     brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"دخول",
     identifier:"رقم هاتف أو اسم مستخدم تيليجرام",identifierHint:"استخدم رقمًا دوليًا عند الاتصال الأول.",
-    continue:"متابعة",codeTitle:"رمز التحقق",codeText:"أدخل الرمز الذي أرسله تيليجرام.",code:"رمز من 6 أرقام",
+    continue:"متابعة",codeTitle:"رمز التحقق",codeText:"أدخل الرمز الذي أرسله تيليجرام.",code:"رمز من 5 أرقام",
     resend:"إعادة الإرسال",verify:"تأكيد الرمز",twofaTitle:"التحقق بخطوتين",twofaText:"أكمل طبقة الأمان الثانية.",
     twofa:"رمز التحقق بخطوتين",masterSetup:"كلمة المرور الرئيسية",masterSetupText:"أنشئ كلمة المرور الدائمة لهذا الحساب.",
     masterLogin:"دخول مباشر",masterLoginText:"أدخل كلمة المرور الرئيسية لفتح الحساب مباشرة.",master:"كلمة المرور الرئيسية",
@@ -113,7 +113,7 @@ const copy = {
   zh:{
     brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"进入",
     identifier:"Telegram 手机号或用户名",identifierHint:"首次连接请使用国际手机号。",
-    continue:"继续",codeTitle:"验证码",codeText:"输入 Telegram 发送的验证码。",code:"6 位验证码",
+    continue:"继续",codeTitle:"验证码",codeText:"输入 Telegram 发送的验证码。",code:"5 位验证码",
     resend:"重新发送",verify:"验证代码",twofaTitle:"两步验证",twofaText:"完成第二层安全验证。",
     twofa:"两步验证密码",masterSetup:"主密码",masterSetupText:"为此账户创建永久主密码。",
     masterLogin:"直接进入",masterLoginText:"输入主密码直接打开账户。",master:"永久主密码",masterConfirm:"确认主密码",
@@ -127,7 +127,7 @@ const copy = {
   es:{
     brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"ENTRAR",
     identifier:"Teléfono o usuario de Telegram",identifierHint:"Usa un número internacional para la primera conexión.",
-    continue:"CONTINUAR",codeTitle:"CÓDIGO DE VERIFICACIÓN",codeText:"Introduce el código enviado por Telegram.",code:"CÓDIGO DE 6 DÍGITOS",
+    continue:"CONTINUAR",codeTitle:"CÓDIGO DE VERIFICACIÓN",codeText:"Introduce el código enviado por Telegram.",code:"CÓDIGO DE 5 DÍGITOS",
     resend:"REENVIAR",verify:"VERIFICAR CÓDIGO",twofaTitle:"VERIFICACIÓN EN DOS PASOS",twofaText:"Completa la segunda capa de seguridad.",
     twofa:"Contraseña de dos pasos",masterSetup:"CONTRASEÑA MAESTRA",masterSetupText:"Crea la contraseña permanente de esta cuenta.",
     masterLogin:"ACCESO DIRECTO",masterLoginText:"Introduce tu contraseña maestra para entrar directamente.",master:"Contraseña maestra",
@@ -142,7 +142,7 @@ const copy = {
   fr:{
     brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"ENTRER",
     identifier:"Téléphone ou nom d'utilisateur Telegram",identifierHint:"Utilisez un numéro international pour la première connexion.",
-    continue:"CONTINUER",codeTitle:"CODE DE VÉRIFICATION",codeText:"Saisissez le code envoyé par Telegram.",code:"CODE À 6 CHIFFRES",
+    continue:"CONTINUER",codeTitle:"CODE DE VÉRIFICATION",codeText:"Saisissez le code envoyé par Telegram.",code:"CODE À 5 CHIFFRES",
     resend:"RENVOYER",verify:"VÉRIFIER LE CODE",twofaTitle:"VÉRIFICATION EN DEUX ÉTAPES",twofaText:"Complétez la seconde couche de sécurité.",
     twofa:"Mot de passe en deux étapes",masterSetup:"MOT DE PASSE MAÎTRE",masterSetupText:"Créez le mot de passe permanent de ce compte.",
     masterLogin:"ACCÈS DIRECT",masterLoginText:"Saisissez votre mot de passe maître pour ouvrir le compte.",master:"Mot de passe maître",
@@ -157,7 +157,7 @@ const copy = {
   de:{
     brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"EINTRETEN",
     identifier:"Telegram-Telefonnummer oder Benutzername",identifierHint:"Für die erste Verbindung internationale Nummer verwenden.",
-    continue:"WEITER",codeTitle:"BESTÄTIGUNGSCODE",codeText:"Gib den von Telegram gesendeten Code ein.",code:"6-STELLIGER CODE",
+    continue:"WEITER",codeTitle:"BESTÄTIGUNGSCODE",codeText:"Gib den von Telegram gesendeten Code ein.",code:"5-STELLIGER CODE",
     resend:"ERNEUT SENDEN",verify:"CODE BESTÄTIGEN",twofaTitle:"ZWEI-SCHRITT-VERIFIZIERUNG",twofaText:"Schließe die zweite Sicherheitsebene ab.",
     twofa:"Zwei-Schritt-Passwort",masterSetup:"MASTER-PASSWORT",masterSetupText:"Erstelle das dauerhafte Passwort für dieses Konto.",
     masterLogin:"DIREKTZUGANG",masterLoginText:"Master-Passwort eingeben und Konto direkt öffnen.",master:"Dauerhaftes Master-Passwort",
@@ -206,7 +206,7 @@ function pageHtml() {
         '<p class="stage-subtitle">' + t("codeText") + '</p>' +
         '<form id="codeForm" class="auth-form">' +
           '<div class="otp-label">' + t("code") + '</div>' +
-          '<div class="otp-row" dir="ltr">' + [0,1,2,3,4,5].map(i => '<input class="otp-cell" maxlength="1" inputmode="numeric" aria-label="OTP ' + (i + 1) + '">').join("") + '</div>' +
+          '<div class="otp-row" dir="ltr">' + [0,1,2,3,4].map(i => '<input class="otp-cell" maxlength="1" inputmode="numeric" aria-label="OTP ' + (i + 1) + '">').join("") + '</div>' +
           '<div class="otp-meta"><span id="timerRing" class="timer-ring"><b id="timer">59</b></span><span>' + t("security") + '</span></div>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("verify") + '</span><span class="button-mark">↗</span></button>' +
           '<button class="ghost-action" id="resendButton" type="button" disabled>' + t("resend") + '</button>' +
@@ -419,7 +419,7 @@ function bindCommon() {
   document.querySelector("#codeForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
     const code=[...document.querySelectorAll(".otp-cell")].map(x=>x.value).join("");
-    if(code.length!==6)return;
+    if(code.length!==5)return;
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
     setLive(t("verifying"));
@@ -611,7 +611,7 @@ function setupOtp() {
       if(e.key==="Backspace"&&!cell.value&&cells[index-1])cells[index-1].focus();
     });
     cell.addEventListener("paste",e=>{
-      const pasted=(e.clipboardData?.getData("text")||"").replace(/\D/g,"").slice(0,6);
+      const pasted=(e.clipboardData?.getData("text")||"").replace(/\D/g,"").slice(0,5);
       if(!pasted)return;
       e.preventDefault();
       pasted.split("").forEach((digit,i)=>{if(cells[i]){cells[i].value=digit;cells[i].classList.add("filled");}});
@@ -690,12 +690,8 @@ function initCosmos() {
   }
 
   const names = [
-    "DEEP SPACE / 01",
-    "METEOR FALL / 02",
-    "LUNAR SILENCE / 03",
-    "PLANET P / 04",
-    "STELLAR FIELD / 05",
-    "SOLAR ORBIT / 06"
+    "MERCURY / 01", "MARS / 02", "VENUS / 03", "EARTH / 04", "NEPTUNE / 05",
+    "URANUS / 06", "SATURN / 07", "JUPITER / 08", "SUN / 09"
   ];
 
   function resize() {
@@ -711,9 +707,9 @@ function initCosmos() {
 
   function frame(now) {
     const duration = 15000;
-    const cycle = (now - start) % (duration * 6);
+    const cycle = (now - start) % (duration * 9);
     const current = Math.floor(cycle / duration);
-    const next = (current + 1) % 6;
+    const next = (current + 1) % 9;
     const local = cycle - current * duration;
     const transition = Math.max(0, (local - (duration - 2500)) / 2500);
     const eased = transition * transition * (3 - 2 * transition);
@@ -750,8 +746,9 @@ function initCosmos() {
     ctx.globalAlpha = opacity;
 
     const atmosphere = [
-      ["#1B0B3B", "#0A1A3F"], ["#2E103F", "#4A1D10"], ["#0A1A3F", "#003D4D"],
-      ["#32104D", "#6A2C16"], ["#1B0B3B", "#0A1A3F"], ["#0A1A3F", "#003D4D"]
+      ["#0E0E14", "#3B1711"], ["#170A08", "#6A261A"], ["#2A1B05", "#8C6A2C"],
+      ["#061B33", "#0A5A86"], ["#031427", "#0B4F86"], ["#062227", "#0C6D73"],
+      ["#171006", "#7B5B2B"], ["#170E09", "#6E2C1A"], ["#230A04", "#A13E12"]
     ][index];
 
     const ax = 0.36 + Math.sin(progress * Math.PI * 2) * 0.08 + pointer.x * 0.08;
@@ -771,12 +768,15 @@ function initCosmos() {
     if (index === 3) sceneFour(progress);
     if (index === 4) sceneFive(progress);
     if (index === 5) sceneSix(progress);
+    if (index === 6) sceneSeven(progress);
+    if (index === 7) sceneEight(progress);
+    if (index === 8) sceneNine(progress);
 
     ctx.restore();
   }
 
   function drawStars(index, progress) {
-    const density = index === 4 ? 1 : 0.72;
+    const density = (index === 3 || index === 7 || index === 8) ? 0.92 : 0.68;
     for (const s of stars) {
       if (Math.random() > density) continue;
       const parallax = 10 + s.depth * 38;
@@ -790,7 +790,7 @@ function initCosmos() {
       ctx.arc(x, y, s.r * (.65 + s.depth*.75), 0, Math.PI*2);
       ctx.fill();
 
-      if (index === 4 && s.depth > .84 && tw > .92) {
+      if ((index === 3 || index === 7 || index === 8) && s.depth > .84 && tw > .92) {
         ctx.strokeStyle = "rgba(216,226,255,.26)";
         ctx.lineWidth = .6;
         ctx.beginPath();
@@ -803,124 +803,184 @@ function initCosmos() {
   }
 
   function sceneOne(progress) {
-    meteorField(progress, 10, false);
-    dustBand(.52,.26);
+    const x=width*.58+pointer.x*16, y=height*.52+pointer.y*8, r=Math.min(width,height)*.18;
+    drawPlanet(x,y,r,["#E6E3DA","#88847F","#35363A","#090A0E"]);
+    drawCraters(x,y,r,70,.62);
+    const solar=ctx.createRadialGradient(width*.03,height*.38,0,width*.03,height*.38,width*.55);
+    solar.addColorStop(0,"rgba(255,220,160,.86)"); solar.addColorStop(.28,"rgba(255,155,75,.22)"); solar.addColorStop(1,"rgba(255,100,30,0)");
+    ctx.fillStyle=solar; ctx.fillRect(0,0,width,height);
+    meteorField(progress,8,false);
+    dustBand(.42,.32);
   }
 
   function sceneTwo(progress) {
-    meteorField(progress, 7, true);
-    for (let i=0;i<7;i++) {
-      const p=(progress*1.1+i*.17)%1;
-      drawLargeMeteor(width*(.10+i*.135)+Math.sin(p*8+i)*35, -80+p*(height+220), .64+(i%3)*.23, p);
-    }
+    const x=width*.58+pointer.x*14, y=height*.52+pointer.y*8, r=Math.min(width,height)*.18;
+    drawPlanet(x,y,r,["#F09A62","#B94D32","#69231E","#16090A"]);
+    drawPlanetBands(x,y,r,["rgba(255,197,154,.16)","rgba(94,28,24,.25)","rgba(226,100,65,.12)"]);
+    drawCanyonField(x,y,r,18);
+    moonOrbit(x,y,r,1.38,.28,.09,"#807A76",progress*.42);
+    moonOrbit(x,y,r,1.76,.38,.055,"#6E6865",progress*.29+2.3);
+    dustField(.55,"rgba(207,91,62,.18)");
   }
 
   function sceneThree(progress) {
-    const cx=width*.70+pointer.x*18, cy=height*.42+pointer.y*12;
-    const radius=Math.min(width,height)*.18;
-    const halo=ctx.createRadialGradient(cx,cy,radius*.45,cx,cy,radius*2.3);
-    halo.addColorStop(0,"rgba(210,226,255,.16)");
-    halo.addColorStop(1,"rgba(210,226,255,0)");
-    ctx.fillStyle=halo; ctx.fillRect(0,0,width,height);
-
-    const moon=ctx.createRadialGradient(cx-radius*.3,cy-radius*.28,radius*.05,cx,cy,radius);
-    moon.addColorStop(0,"#f2f2f2"); moon.addColorStop(.45,"#aeb3bb"); moon.addColorStop(1,"#42464d");
-    ctx.fillStyle=moon; ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fill();
-
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.clip();
-    const craters=[[-.28,-.13,.10],[.22,-.27,.07],[.36,.16,.12],[-.10,.26,.08],[-.38,.28,.05],[.02,-.02,.14],[.30,-.03,.045],[-.17,-.33,.055]];
-    craters.forEach(c=>{
-      ctx.fillStyle="rgba(50,54,60,.20)";
-      ctx.beginPath(); ctx.arc(cx+c[0]*radius*2,cy+c[1]*radius*2,c[2]*radius,0,Math.PI*2); ctx.fill();
-      ctx.strokeStyle="rgba(245,247,250,.10)"; ctx.lineWidth=1.2; ctx.stroke();
-    });
-    ctx.fillStyle="rgba(90,110,150,.08)"; ctx.fillRect(cx-radius,cy,radius*2,radius);
-    ctx.restore();
-
-    for(let i=0;i<42;i++){
-      const a=i*.71+progress*4;
-      const rr=radius*(1.22+(i%7)*.13);
-      ctx.fillStyle="rgba(222,231,248,.16)";
-      ctx.beginPath(); ctx.arc(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr*.55,1+(i%3)*.45,0,Math.PI*2); ctx.fill();
+    const x=width*.58+pointer.x*12, y=height*.51+pointer.y*7, r=Math.min(width,height)*.18;
+    const glow=ctx.createRadialGradient(x,y,r*.55,x,y,r*1.8);
+    glow.addColorStop(0,"rgba(255,224,145,.25)"); glow.addColorStop(1,"rgba(255,150,40,0)");
+    ctx.fillStyle=glow; ctx.fillRect(x-r*2,y-r*2,r*4,r*4);
+    drawPlanet(x,y,r,["#FFF4C8","#E6D184","#A7803E","#382611"]);
+    ctx.save(); ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.clip();
+    for(let i=0;i<10;i++){
+      ctx.strokeStyle=i%2?"rgba(255,240,183,.19)":"rgba(188,151,77,.16)"; ctx.lineWidth=7-i*.3;
+      ctx.beginPath(); ctx.ellipse(x,y-r*.04+i*2,r*(.68+i*.02),r*(.25+i*.012),-.24+progress*.12,0,Math.PI*2); ctx.stroke();
     }
+    ctx.restore();
+    dustField(.31,"rgba(255,227,151,.16)");
   }
 
   function sceneFour(progress) {
-    const px=width*.68, py=height*.56, pr=Math.min(width,height)*.16;
-    const planet=ctx.createRadialGradient(px-pr*.4,py-pr*.35,pr*.08,px,py,pr);
-    planet.addColorStop(0,"#9b6bc5"); planet.addColorStop(.46,"#432660"); planet.addColorStop(1,"#100b1d");
-    ctx.fillStyle=planet; ctx.beginPath(); ctx.arc(px,py,pr,0,Math.PI*2); ctx.fill();
-
-    ctx.save(); ctx.beginPath(); ctx.arc(px,py,pr,0,Math.PI*2); ctx.clip();
-    for(let i=0;i<9;i++){
-      ctx.strokeStyle= i%2 ? "rgba(127,201,223,.18)" : "rgba(191,143,232,.18)";
-      ctx.lineWidth=2; ctx.beginPath(); ctx.arc(px+Math.sin(i*1.7)*pr*.35,py+Math.cos(i*1.2)*pr*.25,pr*(.25+i*.045),.2,2.6); ctx.stroke();
+    const x=width*.58+pointer.x*15, y=height*.52+pointer.y*8, r=Math.min(width,height)*.18;
+    drawPlanet(x,y,r,["#89E7FF","#247FBF","#0B4E7A","#03111F"]);
+    ctx.save(); ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.clip();
+    for(let i=0;i<11;i++){
+      const px=x-r*.82+((i*43)%100)/100*r*1.7, py=y-r*.57+((i*71)%100)/100*r*1.2;
+      ctx.fillStyle=i%2?"rgba(63,119,54,.76)":"rgba(128,118,62,.65)";
+      ctx.beginPath(); ctx.ellipse(px,py,15+(i%5)*8,8+(i%4)*5,.4,0,Math.PI*2); ctx.fill();
     }
-    ctx.font="700 "+Math.floor(pr*.48)+"px Inter, sans-serif";
-    ctx.textAlign="center"; ctx.textBaseline="middle"; ctx.fillStyle="rgba(245,238,255,.78)";
-    ctx.shadowBlur=24; ctx.shadowColor="#B98BEA"; ctx.fillText("P",px,py+pr*.04); ctx.shadowBlur=0; ctx.restore();
-
-    const mx=width*(.06+progress*.76), my=height*(.10+progress*.48);
-    drawLargeMeteor(mx,my,.80,progress);
-
-    if(progress>.54){
-      const q=(progress-.54)/.46, wave=pr*(.4+q*2.6);
-      ctx.strokeStyle="rgba(255,125,70,"+(.38*(1-q))+")"; ctx.lineWidth=2.2;
-      ctx.beginPath(); ctx.arc(px,py,wave,0,Math.PI*2); ctx.stroke();
-      const warm=ctx.createRadialGradient(px,py,0,px,py,pr*3.1);
-      warm.addColorStop(0,"rgba(255,107,53,"+(.10*(1-q))+")");
-      warm.addColorStop(.5,"rgba(149,70,200,"+(.08*(1-q))+")");
-      warm.addColorStop(1,"rgba(0,0,0,0)");
-      ctx.fillStyle=warm; ctx.fillRect(0,0,width,height);
-      for(let i=0;i<80;i++){
-        const a=i*.47, rr=wave*(.2+(i%11)/18);
-        ctx.fillStyle="rgba(255,176,120,"+(.18*(1-q))+")";
-        ctx.fillRect(px+Math.cos(a)*rr,py+Math.sin(a)*rr,1.5,1.5);
-      }
+    for(let i=0;i<10;i++){
+      const yy=y-r+i*(2*r/10); ctx.strokeStyle="rgba(255,255,255,.12)"; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(x-r,yy); ctx.bezierCurveTo(x-r*.4,yy-8,x+r*.35,yy+11,x+r,yy-4); ctx.stroke();
     }
+    ctx.restore();
+    moonOrbit(x,y,r,1.48,.30,.095,"#AEB4BA",progress*.22);
+    drawAurora(x,y,r,progress);
+    drawCityLights(x,y,r);
   }
 
   function sceneFive(progress) {
-    dustBand(.50+Math.sin(progress*Math.PI*2)*.04,.42);
-    for(let i=0;i<22;i++){
-      const angle=i*.68+progress*.25, distance=Math.min(width,height)*(.12+(i%7)*.065);
-      const x=width*.5+Math.cos(angle)*distance+pointer.x*30;
-      const y=height*.46+Math.sin(angle)*distance*.52+pointer.y*15;
-      ctx.fillStyle=i%3===0?"#DDE9FF":"#A8B6D1"; ctx.globalAlpha=.36+((i*3)%4)*.1;
-      ctx.beginPath(); ctx.arc(x,y,.8+(i%4)*.5,0,Math.PI*2); ctx.fill();
+    const x=width*.58+pointer.x*12, y=height*.51+pointer.y*8, r=Math.min(width,height)*.18;
+    drawPlanet(x,y,r,["#82C9FF","#1F6DC2","#0A4282","#020A1C"]);
+    ctx.save(); ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.clip();
+    for(let i=0;i<16;i++){
+      const yy=y-r+i*(2*r/16); ctx.strokeStyle=i%2?"rgba(136,212,255,.22)":"rgba(35,100,169,.20)"; ctx.lineWidth=3+(i%4);
+      ctx.beginPath(); ctx.moveTo(x-r,yy); ctx.bezierCurveTo(x-r*.4,yy+Math.sin(i+progress*7)*17,x+r*.35,yy-Math.cos(i)*19,x+r,yy+7); ctx.stroke();
     }
-    ctx.globalAlpha=1;
+    ctx.fillStyle="rgba(4,27,64,.54)"; ctx.beginPath(); ctx.ellipse(x+r*.18,y-r*.09,r*.27,r*.13,-.18,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    for(let i=0;i<4;i++){ctx.strokeStyle="rgba(128,204,255,.08)";ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(x,y,r*(1.09+i*.035),r*(.31+i*.018),-.16,0,Math.PI*2);ctx.stroke();}
+    iceDust(x,y,r);
   }
 
   function sceneSix(progress) {
-    const cx=width*.51, cy=height*.52, base=Math.min(width,height)*.065;
-    const sun=ctx.createRadialGradient(cx,cy,base*.1,cx,cy,base*2.5);
-    sun.addColorStop(0,"#FFF5C8"); sun.addColorStop(.22,"#FFD37D"); sun.addColorStop(.5,"rgba(255,142,72,.28)"); sun.addColorStop(1,"rgba(255,113,49,0)");
-    ctx.fillStyle=sun; ctx.fillRect(cx-base*2.5,cy-base*2.5,base*5,base*5);
-    ctx.fillStyle="#FFCC75"; ctx.beginPath(); ctx.arc(cx,cy,base,0,Math.PI*2); ctx.fill();
+    const x=width*.58+pointer.x*12, y=height*.51+pointer.y*8, r=Math.min(width,height)*.18;
+    drawPlanet(x,y,r,["#D8FFFF","#84CFD2","#418F97","#091F26"]);
+    ctx.save(); ctx.translate(x,y); ctx.rotate(-Math.PI/5);
+    for(let i=0;i<7;i++){ctx.strokeStyle="rgba(199,251,249,"+(0.23-i*.02)+")";ctx.lineWidth=1.2;ctx.beginPath();ctx.ellipse(0,0,r*(1.06+i*.035),r*(.26+i*.015),0,0,Math.PI*2);ctx.stroke();}
+    ctx.restore();
+    for(let i=0;i<3;i++) moonOrbit(x,y,r,1.42+i*.3,.7+i*.15,.05,"#9FBCC1",progress*(.20-i*.025)+i*1.7);
+    dustField(.42,"rgba(137,225,226,.14)");
+  }
 
-    const planets=[
-      {a:.9,r:base*.34,size:base*.08,color:"#A8A49C"},
-      {a:1.8,r:base*.52,size:base*.13,color:"#D7A775"},
-      {a:2.7,r:base*.74,size:base*.14,color:"#7197C6"},
-      {a:3.6,r:base*1.02,size:base*.22,color:"#B98A6D"}
-    ];
+  function sceneSeven(progress) {
+    const x=width*.58+pointer.x*12, y=height*.51+pointer.y*8, r=Math.min(width,height)*.18;
+    drawPlanet(x,y,r,["#F3E4BD","#CFAD6A","#86683D","#21170B"]);
+    ctx.save(); ctx.translate(x,y); ctx.rotate(-.22);
+    for(let i=0;i<8;i++){ctx.strokeStyle=["rgba(245,226,176,.55)","rgba(186,153,104,.39)","rgba(112,90,62,.30)"][i%3];ctx.lineWidth=1.3+i*.45;ctx.beginPath();ctx.ellipse(0,0,r*(1.17+i*.095),r*(.33+i*.032),0,0,Math.PI*2);ctx.stroke();}
+    ctx.restore();
+    moonOrbit(x,y,r,1.72,.67,.045,"#C3B79F",progress*.18);
+    moonOrbit(x,y,r,2.02,.82,.036,"#AA9D86",progress*.14+1.7);
+  }
 
-    planets.forEach((p,i)=>{
-      const angle=p.a+progress*(.45-i*.05), x=cx+Math.cos(angle)*p.r*3, y=cy+Math.sin(angle)*p.r*1.5;
-      ctx.strokeStyle="rgba(180,200,235,.08)"; ctx.lineWidth=1; ctx.beginPath(); ctx.ellipse(cx,cy,p.r*3,p.r*1.5,0,0,Math.PI*2); ctx.stroke();
-      const fill=ctx.createRadialGradient(x-p.size*.35,y-p.size*.3,0,x,y,p.size);
-      fill.addColorStop(0,"#ffffff"); fill.addColorStop(.15,p.color); fill.addColorStop(1,"#11121A");
-      ctx.fillStyle=fill; ctx.beginPath(); ctx.arc(x,y,p.size,0,Math.PI*2); ctx.fill();
-      if(i===2){ctx.strokeStyle="rgba(214,221,239,.32)";ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(x,y,p.size*1.7,p.size*.55,.2,0,Math.PI*2);ctx.stroke();}
+  function sceneEight(progress) {
+    const x=width*.58+pointer.x*12, y=height*.51+pointer.y*8, r=Math.min(width,height)*.19;
+    drawPlanet(x,y,r,["#F4DBAD","#C98D62","#7C4E39","#23150F"]);
+    ctx.save(); ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.clip();
+    const bands=["#E9D6B0","#B9744E","#F2E8D0","#AB6247","#D7B589","#8C5240"];
+    bands.forEach((col,i)=>{const yy=y-r+i*(2*r/bands.length)+Math.sin(progress*8+i)*5;ctx.strokeStyle=col;ctx.globalAlpha=.55;ctx.lineWidth=14+(i%3)*6;ctx.beginPath();ctx.moveTo(x-r,yy);ctx.quadraticCurveTo(x-r*.25,yy+Math.sin(i*2)*12,x+.15*r,yy-Math.cos(i)*9);ctx.quadraticCurveTo(x+.5*r,yy+Math.sin(i+progress*4)*14,x+r,yy-4);ctx.stroke();});
+    const sx=x+r*.20, sy=y+r*.20+Math.sin(progress*1.7)*5; ctx.globalAlpha=.95; ctx.fillStyle="#A9492E";ctx.beginPath();ctx.ellipse(sx,sy,r*.21,r*.11,-.12,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle="rgba(255,225,184,.28)";ctx.lineWidth=3;ctx.stroke(); ctx.restore();
+    moonOrbit(x,y,r,1.52,.70,.052,"#BEBBB3",progress*.20);
+    moonOrbit(x,y,r,1.88,.90,.042,"#AAA7A0",progress*.16+1.8);
+  }
+
+  function sceneNine(progress) {
+    const x=width*.58+pointer.x*9,y=height*.51+pointer.y*7,r=Math.min(width,height)*.20;
+    const halo=ctx.createRadialGradient(x,y,r*.3,x,y,r*2.7);halo.addColorStop(0,"rgba(255,246,188,.35)");halo.addColorStop(.32,"rgba(255,164,61,.18)");halo.addColorStop(1,"rgba(255,90,30,0)");ctx.fillStyle=halo;ctx.fillRect(0,0,width,height);
+    const body=ctx.createRadialGradient(x-r*.35,y-r*.34,r*.04,x,y,r);body.addColorStop(0,"#FFF3BD");body.addColorStop(.28,"#FFD95D");body.addColorStop(.60,"#FF9C32");body.addColorStop(.86,"#E65B1A");body.addColorStop(1,"#6F1F0A");ctx.fillStyle=body;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();
+    for(let i=0;i<90;i++){const a=i*.72+progress*2.2,rr=r*(.06+((i*13)%100)/100*.86),sx=x+Math.cos(a)*rr,sy=y+Math.sin(a)*rr;ctx.strokeStyle=i%4===0?"rgba(255,239,171,.35)":"rgba(255,255,255,.13)";ctx.lineWidth=.8+(i%3)*.3;ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+Math.cos(a+1.9)*9,sy+Math.sin(a+1.9)*9);ctx.stroke();}
+    for(let i=0;i<7;i++){const a=progress*5+i*.82,sx=x+Math.cos(a)*r*.96,sy=y+Math.sin(a)*r*.96;ctx.strokeStyle="rgba(255,225,147,.43)";ctx.lineWidth=3;ctx.beginPath();ctx.arc(sx,sy,24+(i%3)*11,a-.34,a+.34);ctx.stroke();}
+    ctx.restore();
+    for(let i=0;i<50;i++){const a=i*.49+progress*3.2,rr=r*(1.12+(i%8)*.11);ctx.fillStyle="rgba(255,214,132,.24)";ctx.beginPath();ctx.arc(x+Math.cos(a)*rr,y+Math.sin(a)*rr*.72,.8+(i%2),0,Math.PI*2);ctx.fill();}
+  }
+
+  function drawPlanet(x,y,r,colors){
+    const g=ctx.createRadialGradient(x-r*.34,y-r*.36,r*.04,x,y,r);
+    g.addColorStop(0,colors[0]);g.addColorStop(.38,colors[1]);g.addColorStop(.72,colors[2]);g.addColorStop(1,colors[3]);
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle="rgba(255,255,255,.08)";ctx.lineWidth=1;ctx.stroke();
+  }
+
+  function drawCraters(x,y,r,count,coverage){
+    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();
+    for(let i=0;i<count;i++){
+      const a=i*2.399,rr=r*(.12+((i*37)%100)/100*coverage);
+      const cx=x+Math.cos(a)*rr,cy=y+Math.sin(a)*rr;
+      const cr=1.4+((i*17)%10)*1.5;
+      ctx.fillStyle=i%2?"rgba(24,24,28,.23)":"rgba(248,246,240,.07)";
+      ctx.beginPath();ctx.arc(cx,cy,cr,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle="rgba(0,0,0,.13)";ctx.lineWidth=1;ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawPlanetBands(x,y,r,colors){
+    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();
+    colors.forEach((col,i)=>{
+      const yy=y-r+(i+1)*2*r/(colors.length+1);
+      ctx.strokeStyle=col;ctx.lineWidth=5+(i%2)*4;
+      ctx.beginPath();ctx.moveTo(x-r,yy);ctx.quadraticCurveTo(x,yy+Math.sin(i)*9,x+r,yy-5);ctx.stroke();
     });
+    ctx.restore();
+  }
 
-    const cp=(progress*1.1)%1, cometX=width*(.12+cp*.75), cometY=height*(.24+Math.sin(cp*Math.PI*3)*.12);
-    const tail=ctx.createLinearGradient(cometX-180,cometY,cometX+10,cometY);
-    tail.addColorStop(0,"rgba(121,199,255,0)"); tail.addColorStop(.75,"rgba(121,199,255,.20)"); tail.addColorStop(1,"rgba(255,255,255,.75)");
-    ctx.fillStyle=tail; ctx.fillRect(cometX-180,cometY-2,190,4);
-    ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(cometX,cometY,3,0,Math.PI*2); ctx.fill();
+  function drawCanyonField(x,y,r,count){
+    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();
+    for(let i=0;i<count;i++){
+      const px=x-r+((i*67)%100)/100*2*r;
+      const py=y-r+((i*41)%100)/100*2*r;
+      ctx.strokeStyle="rgba(84,24,22,.30)";ctx.lineWidth=1.6+(i%3);
+      ctx.beginPath();ctx.moveTo(px-r*.08,py-r*.12);ctx.quadraticCurveTo(px,py+8,px+r*.08,py+r*.15);ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function moonOrbit(x,y,r,distance,vertical,size,color,speed){
+    const a=speed*Math.PI*2;
+    moon(x+Math.cos(a)*r*distance,y+Math.sin(a)*r*vertical,size*r,color);
+  }
+
+  function moon(x,y,r,color){
+    drawPlanet(x,y,r,[color,"#8C8E94","#4D5158","#1C2026"]);
+    ctx.globalAlpha=.55;
+    for(let i=0;i<4;i++){ctx.fillStyle="rgba(25,25,30,.18)";ctx.beginPath();ctx.arc(x+Math.cos(i*1.7)*r*.42,y+Math.sin(i*2.1)*r*.42,r*.12,0,Math.PI*2);ctx.fill();}
+    ctx.globalAlpha=1;
+  }
+
+  function drawAurora(x,y,r,progress){
+    const g=ctx.createRadialGradient(x,y-r*.72,0,x,y-r*.72,r*.85);
+    g.addColorStop(0,"rgba(43,255,182,.18)");g.addColorStop(.5,"rgba(169,70,255,.07)");g.addColorStop(1,"rgba(0,0,0,0)");
+    ctx.fillStyle=g;ctx.fillRect(x-r*1.4,y-r*1.4,r*2.8,r*2.8);
+  }
+
+  function drawCityLights(x,y,r){
+    ctx.save();ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.clip();
+    for(let i=0;i<36;i++){const px=x-r*.72+((i*19)%100)/100*r*1.44,py=y+r*.05+((i*31)%100)/100*r*.72;ctx.fillStyle="rgba(255,224,133,.24)";ctx.fillRect(px,py,1.1,1.1);}
+    ctx.restore();
+  }
+
+  function iceDust(x,y,r){
+    for(let i=0;i<30;i++){const a=i*.61,rr=r*(1.08+(i%7)*.13);ctx.fillStyle="rgba(112,201,255,.14)";ctx.beginPath();ctx.arc(x+Math.cos(a)*rr,y+Math.sin(a)*rr*.56,.8+(i%2),0,Math.PI*2);ctx.fill();}
   }
 
   function meteorField(progress,count,warm){
