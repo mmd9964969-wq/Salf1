@@ -645,18 +645,44 @@ function workerUrl() {
 async function callWorker(req,route,payload) {
   const token=String(process.env.WORKER_API_TOKEN||"");
   if(!token) throw new Error("WORKER_API_TOKEN_MISSING");
-  const response=await fetch(workerUrl()+route,{
+  const workerRoute = route==="/auth/start"
+    ? "/api/telegram/login/start"
+    : (route==="/auth/code" || route==="/auth/2fa")
+      ? "/api/telegram/login/verify"
+      : route;
+  const workerPayload = route==="/auth/start"
+    ? {phone:String(payload.identifier || "").trim()}
+    : payload;
+  const response=await fetch(workerUrl()+workerRoute,{
     method:"POST",
     headers:{
       "Content-Type":"application/json",
       "X-Worker-Token":token,
       "X-Client-IP":directIp(req)
     },
-    body:JSON.stringify(payload),
+    body:JSON.stringify(workerPayload),
     signal:AbortSignal.timeout(35000)
   });
-  const data=await response.json().catch(()=>({ok:false,error:"WORKER_INVALID_RESPONSE"}));
-  return {ok:response.ok,status:response.status,data};
+  const raw=await response.json().catch(()=>({ok:false,error:"WORKER_INVALID_RESPONSE"}));
+  if(route==="/auth/start" && raw.ok){
+    return {ok:true,status:200,data:{ok:true,step:"code"}};
+  }
+  if((route==="/auth/code" || route==="/auth/2fa") && raw.status==="2fa_required"){
+    return {ok:false,status:401,data:{ok:false,status:"2fa_required",error:"TWOFA_REQUIRED"}};
+  }
+  if((route==="/auth/code" || route==="/auth/2fa") && raw.ok && raw.status==="connected"){
+    const user=raw.user || {};
+    const account={
+      id:user.id,
+      telegram_user_id:user.id,
+      username:user.username || "",
+      name:[user.first_name,user.last_name].filter(Boolean).join(" "),
+      first_name:user.first_name || "",
+      last_name:user.last_name || ""
+    };
+    return {ok:true,status:200,data:{ok:true,step:"master_setup",account}};
+  }
+  return {ok:response.ok,status:response.status,data:raw};
 }
 
 function authErrorMessage(code) {
