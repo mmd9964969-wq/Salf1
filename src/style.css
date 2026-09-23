@@ -866,3 +866,48 @@ body{overflow:hidden}
 .entry-options{width:min(100%,420px);display:grid;gap:12px;margin-top:26px}
 .entry-options .royal-button{width:100%}
 .entry-secondary{width:100%;margin-top:0}
+
+
+.identity-chip{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  width:min(390px,90vw);
+  margin:8px auto;
+  padding:11px 14px;
+  border:1px solid rgba(208,208,216,.08);
+  border-radius:13px;
+  background:rgba(255,255,255,.018);
+}
+.identity-chip span{
+  color:rgba(225,230,245,.30);
+  font:600 8px/1 "Inter";
+  letter-spacing:.14em;
+}
+.identity-chip strong{
+  color:rgba(241,243,249,.72);
+  font:600 11px/1.5 "Inter","Vazirmatn",sans-serif;
+  direction:ltr;
+  unicode-bidi:plaintext;
+}
+.dashboard-line{
+  width:min(390px,90vw);
+  margin:6px auto;
+  padding:10px 12px;
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  border-bottom:1px solid rgba(208,208,216,.06);
+}
+.dashboard-line span{
+  color:rgba(225,230,245,.28);
+  font:600 8px/1 "Inter";
+  letter-spacing:.12em;
+}
+.dashboard-line strong{
+  color:rgba(242,243,248,.70);
+  font-size:10px;
+  direction:ltr;
+  unicode-bidi:plaintext;
+}
