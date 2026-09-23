@@ -788,10 +788,15 @@ async function masterSetup(req,res) {
   const pending=unpackSigned(parseCookies(req.headers.cookie || "").salf_pending_auth);
   const telegramId=String(body.telegram_id || pending?.id || "");
   const password=String(body.password || "");
-  const siteUsername=String(body.site_username || "").trim().replace(/^@/,"").toLowerCase();
+  let siteUsername=String(body.site_username || "").trim().replace(/^@/,"").toLowerCase();
   if(!pending?.id || String(pending.id)!==telegramId) return sendJson(res,req,401,{ok:false,error:"TELEGRAM_REAUTH_REQUIRED"});
   if(!validMasterPassword(password)) return sendJson(res,req,400,{ok:false,error:"MASTER_PASSWORD_WEAK",code:"MASTER_TOO_SHORT"});
   await ensureMasterTable();
+
+  if(!siteUsername && pending?.id){
+    const existing=await authDb.query("SELECT site_username,username FROM salf_master_credentials WHERE telegram_user_id=$1 LIMIT 1",[telegramId]);
+    siteUsername=String(existing.rows[0]?.site_username || existing.rows[0]?.username || "").trim().replace(/^@/,"").toLowerCase();
+  }
 
   if(!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(siteUsername)) {
     return sendJson(res,req,400,{ok:false,error:"SITE_USERNAME_INVALID"});
