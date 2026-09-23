@@ -840,3 +840,25 @@ body{overflow:hidden}
   .scene-caption{top:15%}
   .security-console{bottom:12%}
 }
+
+
+.dashboard-stage{width:min(520px,92vw);text-align:center;animation:stageIn .55s cubic-bezier(.22,.61,.36,1) both}
+.dashboard-stage .success-core{margin-bottom:17px}
+.dashboard-line{
+  width:min(360px,86vw);
+  margin:10px auto;
+  padding:11px 13px;
+  border-bottom:1px solid rgba(225,230,244,.08);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  color:rgba(225,230,244,.30);
+  font:600 8px/1 "Inter";
+  letter-spacing:.14em;
+}
+.dashboard-line strong{
+  color:rgba(237,240,248,.62);
+  font-weight:600;
+  letter-spacing:.04em;
+}
