@@ -1,15 +1,17 @@
 {
-  "name":"salf1-royal-cosmic-auth",
-  "private":true,
-  "version":"3.0.0",
-  "type":"module",
-  "scripts":{
-    "dev":"vite --host 0.0.0.0",
-    "build":"vite build",
-    "start":"node server.js"
+  "name": "salf1-royal-cosmic-auth",
+  "private": true,
+  "version": "3.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "node server.js"
   },
-  "dependencies":{
-    "vite":"^7.3.6",
-    "pg":"^8.23.0"
+  "dependencies": {
+    "vite": "^7.3.6",
+    "pg": "^8.23.0",
+    "@simplewebauthn/server": "^14.0.2",
+    "@simplewebauthn/browser": "^14.0.0"
   }
 }
