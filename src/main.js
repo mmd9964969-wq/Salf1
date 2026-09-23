@@ -206,7 +206,7 @@ function pageHtml() {
         '<p class="stage-subtitle">' + t("codeText") + '</p>' +
         '<form id="codeForm" class="auth-form">' +
           '<div class="otp-label">' + t("code") + '</div>' +
-          '<div class="otp-row" dir="ltr">' + [0,1,2,3,4].map(i => '<input class="otp-cell" maxlength="1" inputmode="numeric" aria-label="OTP ' + (i + 1) + '">').join("") + '</div>' +
+          '<div class="otp-row" dir="ltr">' + [0,1,2,3,4,5].map(i => '<input class="otp-cell" maxlength="1" inputmode="numeric" aria-label="OTP ' + (i + 1) + '">').join("") + '</div>' +
           '<div class="otp-meta"><span id="timerRing" class="timer-ring"><b id="timer">59</b></span><span>' + t("security") + '</span></div>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("verify") + '</span><span class="button-mark">↗</span></button>' +
           '<button class="ghost-action" id="resendButton" type="button" disabled>' + t("resend") + '</button>' +
@@ -419,7 +419,7 @@ function bindCommon() {
   document.querySelector("#codeForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
     const code=[...document.querySelectorAll(".otp-cell")].map(x=>x.value).join("");
-    if(code.length!==5)return;
+    if(code.length!==6)return;
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
     setLive(t("verifying"));
@@ -440,7 +440,12 @@ function bindCommon() {
   document.querySelector("#twofaForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
     const password=document.querySelector("#twofa")?.value||"";
-    if(!password)return;
+    if(!/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{6,}$/.test(password)){
+      setLive(t("passwordRule"));
+      document.querySelector("#twofa")?.classList.add("invalid");
+      setTimeout(()=>document.querySelector("#twofa")?.classList.remove("invalid"),520);
+      return;
+    }
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
     setLive(t("verifying"));
@@ -462,6 +467,7 @@ function bindCommon() {
     e.preventDefault();
     const password=document.querySelector("#master")?.value||"";
     const confirm=document.querySelector("#masterConfirm")?.value||"";
+    if(!/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{6,}$/.test(password)){setLive(t("passwordRule"));return;}
     if(password!==confirm){setLive(t("mismatch"));return;}
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
@@ -487,6 +493,7 @@ function bindCommon() {
     e.preventDefault();
     const identifier=document.querySelector("#masterLoginIdentifier")?.value.trim()||"";
     const password=document.querySelector("#masterLogin")?.value||"";
+    if(!password)return;
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
     setLive(t("shield"));
