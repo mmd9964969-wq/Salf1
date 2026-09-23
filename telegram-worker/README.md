@@ -1,0 +1,1 @@
+# SALF1 Telegram Worker\n\nRuntime gateway for Telegram/Billing services. The worker exposes `/health`, `/ready`, and a token-protected `/internal/status`.\n
