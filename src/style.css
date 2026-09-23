@@ -862,3 +862,7 @@ body{overflow:hidden}
   font-weight:600;
   letter-spacing:.04em;
 }
+
+.entry-options{width:min(100%,420px);display:grid;gap:12px;margin-top:26px}
+.entry-options .royal-button{width:100%}
+.entry-secondary{width:100%;margin-top:0}
