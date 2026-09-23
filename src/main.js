@@ -257,23 +257,15 @@ function pageHtml() {
       '<div class="auth-stage" data-stage="master">' +
         '<div class="stage-mark">04</div>' +
         '<h1>' + (state.recovery ? (state.lang==="fa" ? "بازیابی رمز اصلی" : "RECOVER MASTER PASSWORD") : t("masterSetup")) + '</h1>' +
-        '<p class="stage-subtitle">' + (state.recovery ? (state.lang==="fa" ? "پس از تأیید دوباره اکانت تلگرام، رمز اصلی را بازنشانی کن." : "Re-verify Telegram, then create a new master password.") : t("masterSetupText")) + '</p>' +
+        '<p class="stage-subtitle">' + (state.recovery ? (state.lang==="fa" ? "هویت تلگرام دوباره تأیید شد. رمز جدید را تعیین کن." : "Telegram identity re-verified. Create a new master password.") : t("masterSetupText")) + '</p>' +
+        (!state.recovery ? '<div class="minimal-field username-field"><input id="siteUsername" type="text" placeholder=" " autocomplete="username" required><label for="siteUsername">نام کاربری سلف</label><span class="field-line"></span><span id="usernameState" class="username-state">نام آزاد را انتخاب کن</span></div>' : '') +
         '<form id="masterSetupForm" class="auth-form">' +
-          '<div class="minimal-field password-field">' +
-            '<input minlength="6" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*\\d).{6,}" title="حداقل ۶ کاراکتر؛ حرف بزرگ، حرف کوچک و عدد" id="master" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required>' +
-            '<label for="master">' + t("master") + '</label><span class="field-line"></span>' +
-            '<button class="eye-toggle" id="masterEye" type="button">◌</button>' +
-          '</div>' +
-          '<div class="minimal-field password-field">' +
-            '<input minlength="6" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*\\d).{6,}" title="حداقل ۶ کاراکتر؛ حرف بزرگ، حرف کوچک و عدد" id="masterConfirm" type="' + (state.confirmVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required>' +
-            '<label for="masterConfirm">' + t("masterConfirm") + '</label><span class="field-line"></span>' +
-            '<button class="eye-toggle" id="masterConfirmEye" type="button">◌</button>' +
-          '</div>' +
+          '<div class="minimal-field password-field"><input minlength="12" id="master" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required><label for="master">' + t("master") + '</label><span class="field-line"></span><button class="eye-toggle" id="masterEye" type="button">◌</button></div>' +
+          '<div class="minimal-field password-field"><input minlength="12" id="masterConfirm" type="' + (state.confirmVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required><label for="masterConfirm">' + t("masterConfirm") + '</label><span class="field-line"></span><button class="eye-toggle" id="masterConfirmEye" type="button">◌</button></div>' +
           '<p class="master-rule">' + t("masterRule") + '</p>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("save") + '</span><span class="button-mark">♛</span></button>' +
         '</form>' +
-      '</div>';
-  } else if (state.stage === "master_login") {
+      '</div>  } else if (state.stage === "master_login") {
     body =
       '<div class="auth-stage" data-stage="master-login">' +
         '<div class="stage-mark">04</div>' +
