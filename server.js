@@ -650,6 +650,44 @@ async function directAuth(req,res,route) {
   }
 }
 
+
+function passkeyOrigin() {
+  const domain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || "";
+  return (process.env.PUBLIC_ORIGIN || (domain ? "https://" + domain : "http://localhost:" + port)).replace(/\/+$/,"");
+}
+
+function passkeyRpId() {
+  return process.env.RP_ID || new URL(passkeyOrigin()).hostname;
+}
+
+function currentPasskeySession(req) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  const session = unpackSigned(cookies.salf_session);
+  if (!session) return null;
+  if (session.expiresAt && Number(session.expiresAt) <= Math.floor(Date.now()/1000)) return null;
+  return session;
+}
+
+async function initPasskeyDb() {
+  if (!authDb) return;
+  await authDb.query(
+    "CREATE TABLE IF NOT EXISTS salf_passkeys (" +
+    "credential_id TEXT PRIMARY KEY," +
+    "telegram_user_id TEXT NOT NULL," +
+    "public_key TEXT NOT NULL," +
+    "counter BIGINT NOT NULL DEFAULT 0," +
+    "transports TEXT[] NOT NULL DEFAULT '{}'," +
+    "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()," +
+    "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()" +
+    ")"
+  );
+  await authDb.query("CREATE INDEX IF NOT EXISTS salf_passkeys_user_idx ON salf_passkeys (telegram_user_id)");
+}
+
+function passkeyStateCookie(value) {
+  return cookie("webauthn_state",packSigned(value),{maxAge:300});
+}
+
 const safePath = (urlPath) => {
   const raw = decodeURIComponent((urlPath || "/").split("?")[0] || "/");
   const normalized = path.normalize(raw).replace(/^\/+/, "");
