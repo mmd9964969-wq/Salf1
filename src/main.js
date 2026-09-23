@@ -275,6 +275,8 @@ function pageHtml() {
         '<div class="stage-mark">ACCESS</div>' +
         '<h1>' + t("success") + '</h1>' +
         '<p class="stage-subtitle">' + (state.account?.name || state.account?.username || "") + '</p>' +
+        '<button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button>' +
+        '<button class="ghost-action" id="enterPanel" type="button">' + (state.lang==="fa" ? "ورود به قلمرو" : "ENTER THE REALM") + ' ↗</button>' +
       '</div>';
   }
 
@@ -522,8 +524,46 @@ function bindCommon() {
   document.querySelector("#masterConfirmEye")?.addEventListener("click",()=>togglePassword("masterConfirm","confirmVisible"));
   document.querySelector("#masterLoginEye")?.addEventListener("click",()=>togglePassword("masterLogin","passwordVisible"));
 
-  document.querySelector("#biometricButton")?.addEventListener("click",()=>{
-    showToast("ورود زیستی در لایه Passkey سیستم فعال خواهد شد.");
+  document.querySelector("#biometricButton")?.addEventListener("click", async ()=>{
+    try{
+      if(!browserSupportsWebAuthn()) throw new Error("BIOMETRIC_UNAVAILABLE");
+      const identifier=document.querySelector("#masterLoginIdentifier")?.value.trim()||state.identifier;
+      const optionsResponse=await fetch("/api/passkey/authentication-options",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identifier}),credentials:"same-origin"});
+      const options=await optionsResponse.json();
+      if(!optionsResponse.ok) throw new Error(options.error||"PASSKEY_UNAVAILABLE");
+      setLive(t("verifying"));
+      const assertion=await startAuthentication({optionsJSON:options});
+      const verify=await fetch("/api/passkey/authentication-verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(assertion),credentials:"same-origin"});
+      const data=await verify.json();
+      if(!verify.ok) throw new Error(data.error||"PASSKEY_FAILED");
+      state.account=data.account||state.account;
+      state.stage="success";
+      setLive(t("access"));
+      render();
+    }catch(error){
+      setLive(error.message==="BIOMETRIC_UNAVAILABLE"?"Passkey در این دستگاه در دسترس نیست.":(error.message||t("invalid")));
+    }
+  });
+
+  document.querySelector("#registerBiometric")?.addEventListener("click", async ()=>{
+    try{
+      if(!browserSupportsWebAuthn()) throw new Error("BIOMETRIC_UNAVAILABLE");
+      const optionsResponse=await fetch("/api/passkey/registration-options",{credentials:"same-origin"});
+      const options=await optionsResponse.json();
+      if(!optionsResponse.ok) throw new Error(options.error||"PASSKEY_UNAVAILABLE");
+      const registration=await startRegistration({optionsJSON:options});
+      const verify=await fetch("/api/passkey/registration-verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(registration),credentials:"same-origin"});
+      const data=await verify.json();
+      if(!verify.ok) throw new Error(data.error||"PASSKEY_FAILED");
+      showToast(state.lang==="fa"?"ورود زیستی فعال شد.":"Biometric access enabled.");
+    }catch(error){
+      showToast(error.message==="BIOMETRIC_UNAVAILABLE"?"Passkey در این دستگاه در دسترس نیست.":(error.message||t("invalid")));
+    }
+  });
+
+  document.querySelector("#enterPanel")?.addEventListener("click",()=>{
+    window.history.pushState({}, "", "/panel");
+    showToast(state.lang==="fa"?"قلمرو آماده است.":"The realm is ready.");
   });
 
   setupFieldFocus();
