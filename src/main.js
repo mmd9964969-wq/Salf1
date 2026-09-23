@@ -6,7 +6,8 @@ const app = document.querySelector("#app");
 const LANGS = ["fa","en","ar","zh","es","fr","de"];
 const state = {
   lang: localStorage.getItem("salf1_lang") || "fa",
-  stage: "identifier",
+  stage: "entry",
+  recovery: false,
   flowId: "",
   identifier: "",
   account: null,
@@ -183,7 +184,18 @@ function pageHtml() {
 
   let body = "";
 
-  if (state.stage === "identifier") {
+  if (state.stage === "entry") {
+    body =
+      '<div class="auth-stage" data-stage="entry">' +
+        '<div class="stage-mark">00</div>' +
+        '<h1>' + t("login") + '</h1>' +
+        '<p class="stage-subtitle">' + (state.lang==="fa" ? "درگاه ورود و اتصال اکانت" : t("management")) + '</p>' +
+        '<div class="entry-options">' +
+          '<button class="royal-button" id="existingLogin" type="button"><span class="button-light"></span><span class="button-label">' + (state.lang==="fa" ? "ورود به اکانت" : "ACCOUNT LOGIN") + '</span><span class="button-mark">↗</span></button>' +
+          '<button class="ghost-action entry-secondary" id="newConnection" type="button">' + (state.lang==="fa" ? "اتصال اکانت جدید" : "CONNECT NEW ACCOUNT") + ' ↗</button>' +
+        '</div>' +
+      '</div>';
+  } else if (state.stage === "identifier") {
     body =
       '<div class="auth-stage" data-stage="identifier">' +
         '<div class="stage-mark">01</div>' +
@@ -233,8 +245,8 @@ function pageHtml() {
     body =
       '<div class="auth-stage" data-stage="master">' +
         '<div class="stage-mark">04</div>' +
-        '<h1>' + t("masterSetup") + '</h1>' +
-        '<p class="stage-subtitle">' + t("masterSetupText") + '</p>' +
+        '<h1>' + (state.recovery ? (state.lang==="fa" ? "بازیابی رمز اصلی" : "RECOVER MASTER PASSWORD") : t("masterSetup")) + '</h1>' +
+        '<p class="stage-subtitle">' + (state.recovery ? (state.lang==="fa" ? "پس از تأیید دوباره اکانت تلگرام، رمز اصلی را بازنشانی کن." : "Re-verify Telegram, then create a new master password.") : t("masterSetupText")) + '</p>' +
         '<form id="masterSetupForm" class="auth-form">' +
           '<div class="minimal-field password-field">' +
             '<input minlength="6" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*\\d).{6,}" title="حداقل ۶ کاراکتر؛ حرف بزرگ، حرف کوچک و عدد" id="master" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required>' +
@@ -267,7 +279,8 @@ function pageHtml() {
             '<button class="eye-toggle" id="masterLoginEye" type="button">◌</button>' +
           '</div>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("enter") + '</span><span class="button-mark">↗</span></button>' +
-          '<button class="ghost-action" id="biometricButton" type="button">◈ ' + t("biometric") + '</button>' +
+          '<button class="ghost-action" id="forgotPassword" type="button">⌁ ' + (state.lang==="fa" ? "بازیابی رمز" : "RECOVER PASSWORD") + '</button>' +
+      '<button class="ghost-action" id="biometricButton" type="button">◈ ' + t("biometric") + '</button>' +
         '</form>' +
       '</div>';
   } else if(state.stage === "dashboard") {
@@ -407,6 +420,10 @@ function bindCommon() {
     });
   });
 
+  document.querySelector("#existingLogin")?.addEventListener("click",()=>{ state.recovery=false; state.stage="master_login"; render(); });
+  document.querySelector("#newConnection")?.addEventListener("click",()=>{ state.recovery=false; state.stage="identifier"; render(); });
+  document.querySelector("#forgotPassword")?.addEventListener("click",()=>{ state.recovery=true; state.stage="identifier"; render(); });
+
   document.querySelector("#identifierForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
     const input=document.querySelector("#identifier");
@@ -416,9 +433,9 @@ function bindCommon() {
     busy(button,"...");
     setLive(t("verifying"));
     try{
-      const data=await postJson("/api/auth/start",{identifier:state.identifier});
+      const data=await postJson("/api/auth/start",{identifier:state.identifier,recovery:state.recovery});
       state.flowId=data.flow_id||"";
-      state.stage=data.step==="master_login"?"master_login":"code";
+      state.stage="code";
       stagePulse();
       render();
     }catch(error){
