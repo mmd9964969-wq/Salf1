@@ -513,6 +513,41 @@ function logout(req,res) {
   redirect(res, req, "/", { "Set-Cookie":clearCookie("salf_session") });
 }
 
+
+function directOrigin(req) {
+  const origin=req.headers.origin;
+  if(!origin) return true;
+  const domain=process.env.RAILWAY_PUBLIC_DOMAIN||process.env.RAILWAY_STATIC_URL||"";
+  const expected=process.env.PUBLIC_ORIGIN||(domain?"https://"+domain:"");
+  return !expected || origin===expected.replace(/\/+$/,"");
+}
+
+function directIp(req) {
+  const forwarded=String(req.headers["x-forwarded-for"]||"");
+  return forwarded.split(",")[0].trim() || req.socket.remoteAddress || "unknown";
+}
+
+const directRate=new Map();
+
+function directLimited(req,key,max,windowMs) {
+  const id=key+":"+directIp(req);
+  const now=Date.now();
+  const list=(directRate.get(id)||[]).filter(ts=>now-ts<windowMs);
+  if(list.length>=max){directRate.set(id,list);return true;}
+  list.push(now);directRate.set(id,list);return false;
+}
+
+async function directBody(req) {
+  const chunks=[]; let size=0;
+  for await(const chunk of req){
+    size+=chunk.length;
+    if(size>32768) throw new Error("BODY_TOO_LARGE");
+    chunks.push(chunk);
+  }
+  try{return JSON.parse(Buffer.concat(chunks).toString("utf8")||"{}");}
+  catch{throw new Error("INVALID_JSON");}
+}
+
 const safePath = (urlPath) => {
   const raw = decodeURIComponent((urlPath || "/").split("?")[0] || "/");
   const normalized = path.normalize(raw).replace(/^\/+/, "");
