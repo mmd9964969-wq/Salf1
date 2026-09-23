@@ -545,3 +545,298 @@ html.language-changing .command-stage{transition:opacity .12s ease}
     transition-duration:.01ms !important;
   }
 }
+
+
+/* =========================================================
+   FOUR-STAGE TELEGRAM AUTH — FINAL ROYAL MINIMAL SYSTEM
+========================================================= */
+
+body{overflow:hidden}
+.universe{min-height:100svh;height:100svh;background:#05050A}
+.command-stage{padding-top:72px;padding-bottom:130px}
+.header-index{
+  color:rgba(236,239,248,.36)!important;
+  letter-spacing:.12em!important;
+  text-transform:none!important;
+}
+.site-header{padding:24px 32px}
+.site-footer{
+  gap:24px!important;
+  justify-content:center!important;
+  color:rgba(232,235,245,.44)!important;
+  font-family:"Vazirmatn","Inter",sans-serif!important;
+  font-size:10px!important;
+  letter-spacing:.02em!important;
+  text-transform:none!important;
+}
+.site-footer span{white-space:nowrap}
+.brand-wordmark .brand-text{
+  font-size:clamp(42px,7.4vw,88px)!important;
+  letter-spacing:-.075em!important;
+  font-weight:470!important;
+}
+.brand-subtitle{
+  margin-top:15px!important;
+  color:rgba(226,231,245,.34)!important;
+  font-family:"Inter","Vazirmatn",sans-serif!important;
+  font-size:9px!important;
+  letter-spacing:.20em!important;
+}
+.auth-rail{
+  width:min(520px,92vw);
+  min-height:255px;
+  margin-top:60px;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  position:relative;
+  z-index:20;
+}
+.auth-stage{
+  width:100%;
+  text-align:center;
+  animation:stageIn .55s cubic-bezier(.22,.61,.36,1) both;
+}
+@keyframes stageIn{
+  from{opacity:0;transform:translateY(12px) scale(.985);filter:blur(4px)}
+  to{opacity:1;transform:translateY(0) scale(1);filter:blur(0)}
+}
+.stage-mark{
+  color:rgba(224,229,244,.24);
+  font:700 8px/1 "Inter",sans-serif;
+  letter-spacing:.28em;
+  margin-bottom:17px;
+}
+.auth-stage h1{
+  margin:0;
+  color:#F7F8FC;
+  font-family:"Vazirmatn","Inter",sans-serif;
+  font-size:clamp(21px,3vw,29px);
+  font-weight:650;
+  letter-spacing:-.03em;
+}
+.stage-subtitle{
+  margin:9px auto 24px;
+  max-width:460px;
+  color:rgba(227,232,243,.42);
+  font-size:11px;
+  line-height:1.9;
+}
+.auth-form{
+  width:min(420px,92vw);
+  margin:0 auto;
+}
+.minimal-field{
+  position:relative;
+  width:100%;
+  height:65px;
+  margin:0 0 8px;
+}
+.minimal-field input{
+  width:100%;
+  height:100%;
+  padding:22px 8px 7px;
+  border:0;
+  outline:0;
+  background:transparent;
+  color:#F6F7FB;
+  text-align:center;
+  font-family:"Vazirmatn","Inter",sans-serif;
+  font-size:14px;
+  border-bottom:1px solid rgba(226,231,245,.12);
+  transition:border-color .28s ease,box-shadow .28s ease;
+}
+.minimal-field input:focus{
+  border-bottom-color:rgba(222,226,243,.66);
+  box-shadow:0 16px 28px -24px rgba(220,220,240,.34);
+}
+.minimal-field label{
+  position:absolute;
+  left:50%;
+  top:23px;
+  transform:translateX(-50%);
+  color:rgba(226,231,245,.34);
+  font-size:11px;
+  pointer-events:none;
+  white-space:nowrap;
+  transition:top .24s var(--ease),font-size .24s var(--ease),color .24s var(--ease),transform .24s var(--ease);
+}
+.minimal-field input:focus+label,
+.minimal-field input:not(:placeholder-shown)+label{
+  top:7px;
+  font-size:8px;
+  color:rgba(229,232,242,.70);
+}
+.field-line{
+  position:absolute;
+  left:50%;
+  bottom:0;
+  width:0;
+  height:1px;
+  transform:translateX(-50%);
+  background:linear-gradient(90deg,transparent,#D8DCE9,transparent);
+  box-shadow:0 0 18px rgba(214,220,242,.25);
+  transition:width .38s var(--ease);
+}
+.minimal-field.focused .field-line,
+.minimal-field input:focus~.field-line{width:58%}
+.field-particles{
+  position:absolute;
+  inset:10px 12%;
+  pointer-events:none;
+  opacity:0;
+  transition:opacity .3s ease;
+  background:radial-gradient(circle,rgba(187,168,255,.16) 0 1px,transparent 1.5px);
+  background-size:18px 14px;
+}
+.minimal-field:focus-within .field-particles{opacity:.42;animation:fieldParticles 2.4s linear infinite}
+@keyframes fieldParticles{to{transform:translateY(-8px);opacity:.18}}
+.field-hint{
+  margin:6px 0 17px;
+  color:rgba(227,231,243,.23);
+  font-size:9px;
+  line-height:1.8;
+}
+.royal-button{
+  width:min(350px,92vw)!important;
+  height:61px!important;
+  border-radius:21px!important;
+  margin:4px auto 0;
+}
+.ghost-action,.stage-back{
+  border:0;
+  background:transparent;
+  color:rgba(229,233,245,.40);
+  font-size:9px;
+  transition:color .2s ease,transform .2s ease;
+}
+.ghost-action{margin-top:12px;padding:7px 12px}
+.ghost-action:hover,.stage-back:hover{color:rgba(240,243,250,.75);transform:translateY(-1px)}
+.stage-back{
+  display:block;
+  margin:0 auto 22px;
+  padding:0;
+}
+.otp-label{
+  color:rgba(225,230,242,.25);
+  font:600 8px/1 "Inter";
+  letter-spacing:.18em;
+  margin-bottom:13px;
+}
+.otp-row{
+  display:grid;
+  grid-template-columns:repeat(6,1fr);
+  gap:8px;
+}
+.otp-cell{
+  width:100%;
+  height:58px;
+  border:1px solid rgba(228,232,245,.10);
+  border-radius:15px;
+  background:rgba(255,255,255,.018);
+  color:#F5F7FC;
+  text-align:center;
+  outline:0;
+  font:650 20px/1 "Inter";
+  transition:transform .26s var(--ease),border-color .26s ease,box-shadow .26s ease,background .26s ease;
+}
+.otp-cell:focus{
+  transform:translateY(-2px);
+  border-color:rgba(232,235,246,.36);
+  box-shadow:0 0 0 4px rgba(220,220,240,.025),0 14px 30px rgba(0,0,0,.24);
+}
+.otp-cell.filled{
+  background:rgba(218,222,239,.045);
+  border-color:rgba(216,221,239,.26);
+  animation:digitIn .30s var(--ease) both;
+}
+@keyframes digitIn{
+  from{opacity:.25;transform:scale(.82);filter:blur(3px)}
+  to{opacity:1;transform:scale(1);filter:blur(0)}
+}
+.otp-meta{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:11px;
+  margin:15px 0 14px;
+  color:rgba(226,230,242,.30);
+  font-size:8px;
+}
+.timer-ring{
+  width:28px;height:28px;
+  display:grid;place-items:center;
+  border-radius:50%;
+  border:1px solid rgba(211,216,234,.13);
+  color:rgba(236,239,249,.70);
+}
+.timer-ring b{
+  font:600 9px "Inter";
+}
+.master-rule{
+  margin:5px 0 15px;
+  color:rgba(226,230,242,.27);
+  font:500 8px/1.8 "Inter","Vazirmatn",sans-serif;
+}
+.eye-toggle{
+  position:absolute;
+  left:2px;
+  top:21px;
+  border:0;
+  background:transparent;
+  color:rgba(229,233,245,.35);
+  padding:0;
+}
+.success-stage{
+  transform:translateY(-6px);
+}
+.success-core{
+  width:64px;height:64px;
+  margin:0 auto 18px;
+  display:grid;place-items:center;
+  border-radius:50%;
+  border:1px solid rgba(222,226,241,.21);
+  color:#E4E7EF;
+  box-shadow:0 0 40px rgba(221,224,242,.11);
+  animation:successCore 2.2s ease-in-out infinite;
+}
+@keyframes successCore{
+  0%,100%{transform:scale(.96);box-shadow:0 0 35px rgba(221,224,242,.08)}
+  50%{transform:scale(1.04);box-shadow:0 0 58px rgba(221,224,242,.18)}
+}
+.error-shake{animation:shake .46s ease both!important}
+@keyframes shake{
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-5px)}
+  40%{transform:translateX(4px)}
+  60%{transform:translateX(-3px)}
+  80%{transform:translateX(2px)}
+}
+.stage-pulse .brand-system{animation:brandPulse .8s var(--ease) both}
+@keyframes brandPulse{
+  0%{transform:translateY(-3%) scale(1)}
+  40%{transform:translateY(-3%) scale(1.035)}
+  100%{transform:translateY(-3%) scale(1)}
+}
+.security-sequence .security-scan{
+  animation:scan 1.15s var(--ease) both;
+}
+.security-sequence .brand-energy{opacity:.28!important}
+.security-sequence .brand-shield{
+  opacity:1!important;
+  border-color:rgba(218,224,242,.34)!important;
+  box-shadow:0 0 40px rgba(205,211,238,.14),inset 0 0 30px rgba(181,164,247,.05)!important;
+  animation:shieldIn 1.15s var(--ease) both;
+}
+@media(max-width:700px){
+  .command-stage{padding:62px 12px 112px}
+  .site-header{padding:18px 15px}
+  .site-footer{padding:14px 12px;gap:8px!important;font-size:8px!important}
+  .site-footer span{white-space:normal}
+  .brand-wordmark .brand-text{font-size:clamp(34px,10vw,56px)!important}
+  .auth-rail{margin-top:48px;min-height:270px;width:94vw}
+  .auth-form{width:min(390px,92vw)}
+  .scene-caption{top:15%}
+  .security-console{bottom:12%}
+}
