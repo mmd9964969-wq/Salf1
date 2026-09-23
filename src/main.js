@@ -749,6 +749,10 @@ function startLogoMorph() {
 }
 
 function initCosmos() {
+  if (window.__salfCosmosCleanup) {
+    try { window.__salfCosmosCleanup(); } catch {}
+    window.__salfCosmosCleanup = null;
+  }
   const canvas = document.querySelector("#cosmos");
   if (!canvas) return;
   const ctx = canvas.getContext("2d", { alpha: false });
@@ -763,6 +767,7 @@ function initCosmos() {
   let start = performance.now();
 
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
+  const sceneNodeRef = document.querySelector("#sceneName");
 
   for (let i = 0; i < 1450; i++) {
     stars.push({
@@ -807,8 +812,7 @@ function initCosmos() {
     pointer.x += (pointer.tx - pointer.x) * 0.028;
     pointer.y += (pointer.ty - pointer.y) * 0.028;
 
-    const sceneNode = document.querySelector("#sceneName");
-    if (sceneNode) sceneNode.textContent = names[current];
+    if (sceneNodeRef) sceneNodeRef.textContent = names[current];
 
     ctx.fillStyle = "#05050A";
     ctx.fillRect(0, 0, width, height);
@@ -868,7 +872,8 @@ function initCosmos() {
   function drawStars(index, progress) {
     const density = (index === 3 || index === 7 || index === 8) ? 0.92 : 0.68;
     for (const s of stars) {
-      if (Math.random() > density) continue;
+      const visibility = (s.x * 17.371 + s.y * 31.913 + s.depth * 47.127 + index * 0.071) % 1;
+      if (visibility > density) continue;
       const parallax = 10 + s.depth * 38;
       const x = s.x * width + pointer.x * parallax;
       const y = s.y * height + pointer.y * parallax;
@@ -1121,11 +1126,19 @@ function initCosmos() {
   }
 
   resize();
-  window.addEventListener("resize",resize,{passive:true});
-  window.addEventListener("pointermove",(event)=>{
+  const onResize = () => resize();
+  const onPointer = (event) => {
     pointer.tx=event.clientX/Math.max(1,width)-.5;
     pointer.ty=event.clientY/Math.max(1,height)-.5;
-  },{passive:true});
+  };
+  window.addEventListener("resize",onResize,{passive:true});
+  window.addEventListener("pointermove",onPointer,{passive:true});
+
+  window.__salfCosmosCleanup = () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("resize",onResize);
+    window.removeEventListener("pointermove",onPointer);
+  };
 
   raf=requestAnimationFrame(function tick(now){ frame(now); });
 }
