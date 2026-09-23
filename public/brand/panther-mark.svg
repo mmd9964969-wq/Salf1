@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+<defs>
+<linearGradient id="metal" x1="90" y1="55" x2="420" y2="462" gradientUnits="userSpaceOnUse"><stop stop-color="#F5F7FA"/><stop offset=".22" stop-color="#8B95A0"/><stop offset=".5" stop-color="#E7EBEF"/><stop offset=".72" stop-color="#56606B"/><stop offset="1" stop-color="#F5F7FA"/></linearGradient>
+<linearGradient id="fur" x1="130" y1="100" x2="380" y2="410" gradientUnits="userSpaceOnUse"><stop stop-color="#11161B"/><stop offset=".5" stop-color="#020304"/><stop offset="1" stop-color="#161B20"/></linearGradient>
+<filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.8"/></filter>
+</defs>
+<path d="M116 118 69 57l96 39c20-25 55-44 91-44s71 19 91 44l96-39-47 61c17 29 27 64 27 101 0 122-75 203-167 203S89 341 89 219c0-37 10-72 27-101Z" fill="url(#fur)" stroke="url(#metal)" stroke-width="5"/>
+<path d="M157 185c20-25 49-38 79-38 31 0 60 13 80 38-11 73-40 126-80 126-39 0-68-53-79-126Z" fill="#080B0E" stroke="#2E3740" stroke-width="2"/>
+<path d="M144 187c19-18 42-26 65-26 13 0 25 2 35 7-17 12-28 25-33 39-23-11-45-15-67-20Z" fill="#141A20"/>
+<path d="M368 187c-19-18-42-26-65-26-13 0-25 2-35 7 17 12 28 25 33 39 23-11 45-15 67-20Z" fill="#141A20"/>
+<path d="M177 190c18-9 35-9 53 1-8 22-18 33-31 33-13 0-21-11-22-34Z" fill="#050607" stroke="#66717C" stroke-width="2"/>
+<path d="M335 190c-18-9-35-9-53 1 8 22 18 33 31 33 13 0 21-11 22-34Z" fill="#050607" stroke="#66717C" stroke-width="2"/>
+<ellipse cx="206" cy="205" rx="12" ry="7" fill="#DDE4EA"/><ellipse cx="306" cy="205" rx="12" ry="7" fill="#DDE4EA"/>
+<circle cx="208" cy="205" r="3" fill="#050608"/><circle cx="304" cy="205" r="3" fill="#050608"/>
+<path d="M231 278c16 10 34 10 50 0" stroke="#8A949E" stroke-width="3" stroke-linecap="round"/>
+<path d="M245 253c7-5 15-5 22 0l-4 15c-6 3-11 3-17 0l-4-15Z" fill="#141A20" stroke="#707B85" stroke-width="2"/>
+<path d="M128 246c37 0 65 5 86 15M384 246c-37 0-65 5-86 15" stroke="#454F59" stroke-width="2" stroke-linecap="round" filter="url(#soft)"/>
+<path d="M171 319c22 17 42 25 85 25s63-8 85-25" stroke="#343C44" stroke-width="3" stroke-linecap="round"/>
+<path d="M113 145 94 102M399 145l19-43M137 128l-13-59M375 128l13-59" stroke="#69747F" stroke-opacity=".42" stroke-width="4" stroke-linecap="round"/>
+</svg>
