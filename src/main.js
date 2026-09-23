@@ -577,14 +577,6 @@ function initCosmos() {
     return "rgba("+r+","+g+","+b+","+alpha+")";
   }
 
-  const resize = () => {
-    width=window.innerWidth; height=window.innerHeight;
-    dpr=Math.min(window.devicePixelRatio||1,window.innerWidth>=2560?2:1.65);
-    canvas.width=Math.floor(width*dpr); canvas.height=Math.floor(height*dpr);
-    canvas.style.width=width+"px"; canvas.style.height=height+"px";
-    ctx.setTransform(dpr,0,0,dpr,0,0);
-  };
-
   resize();
   window.addEventListener("resize",resize,{passive:true});
   window.addEventListener("pointermove",(event)=>{
