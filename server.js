@@ -729,7 +729,7 @@ async function verifyMasterPassword(password, encoded) {
 
 function validMasterPassword(password) {
   const value = String(password || "");
-  return value.length >= 12 && /[A-Z]/.test(value) && /[a-z]/.test(value) && /\\d/.test(value) && /[^A-Za-z0-9]/.test(value);
+  return value.length >= 12 && /[A-Z]/.test(value) && /[a-z]/.test(value) && /\d/.test(value) && /[^A-Za-z0-9]/.test(value);
 }
 
 async function masterSetup(req,res) {
@@ -803,6 +803,23 @@ async function directAuth(req,res,route) {
         "Content-Type":"application/json; charset=utf-8",
         "Cache-Control":"no-store",
         "Set-Cookie":cookie("salf_session",packSigned(session),{maxAge:7*24*60*60})
+      });
+      res.end(JSON.stringify(result.data));
+      return;
+    }
+    if(route==="/auth/2fa" && result.data?.account){
+      const account=result.data.account;
+      const pending=packSigned({
+        id:account.id ?? account.telegram_user_id,
+        username:account.username || "",
+        name:account.name || account.first_name || "",
+        createdAt:Date.now()
+      });
+      res.writeHead(200,{
+        ...securityHeaders(req),
+        "Content-Type":"application/json; charset=utf-8",
+        "Cache-Control":"no-store",
+        "Set-Cookie":cookie("salf_pending_auth",pending,{maxAge:900})
       });
       res.end(JSON.stringify(result.data));
       return;
