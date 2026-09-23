@@ -335,7 +335,7 @@ async def verify_code(flow_id, code):
     flow = get_flow(flow_id)
     code = (code or "").strip()
 
-    if not re.fullmatch(r"\d{5,6}", code):
+    if not re.fullmatch(r"\d{5}", code):
         raise ValueError("CODE_INVALID")
 
     try:
