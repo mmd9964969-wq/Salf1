@@ -511,13 +511,15 @@ function bindCommon() {
       .finally(()=>{setTimeout(()=>{const b=document.querySelector("#resendButton");if(b)b.disabled=false;},900);});
   });
 
-  ["masterEye","masterConfirmEye","masterLoginEye"].forEach(id=>{
-    document.querySelector("#"+id)?.addEventListener("click",()=>{
-      state.passwordVisible=id==="masterEye"||id==="masterLoginEye" ? !state.passwordVisible : state.confirmVisible;
-      if(id==="masterConfirmEye")state.confirmVisible=!state.confirmVisible;
-      render();
-    });
-  });
+  const togglePassword=(inputId,key)=>{
+    const input=document.querySelector("#"+inputId);
+    if(!input)return;
+    state[key]=!state[key];
+    input.type=state[key]?"text":"password";
+  };
+  document.querySelector("#masterEye")?.addEventListener("click",()=>togglePassword("master","passwordVisible"));
+  document.querySelector("#masterConfirmEye")?.addEventListener("click",()=>togglePassword("masterConfirm","confirmVisible"));
+  document.querySelector("#masterLoginEye")?.addEventListener("click",()=>togglePassword("masterLogin","passwordVisible"));
 
   document.querySelector("#biometricButton")?.addEventListener("click",()=>{
     showToast("ورود زیستی در لایه Passkey سیستم فعال خواهد شد.");
