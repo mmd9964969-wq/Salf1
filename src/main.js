@@ -453,12 +453,6 @@ function bindCommon() {
   document.querySelector("#twofaForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
     const password=document.querySelector("#twofa")?.value||"";
-    if(!/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{6,}$/.test(password)){
-      setLive(t("passwordRule"));
-      document.querySelector("#twofa")?.classList.add("invalid");
-      setTimeout(()=>document.querySelector("#twofa")?.classList.remove("invalid"),520);
-      return;
-    }
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
     setLive(t("verifying"));
