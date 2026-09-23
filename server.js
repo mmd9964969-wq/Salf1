@@ -518,6 +518,84 @@ function authSession(req,res) {
   });
 }
 
+async function proxyAuth(req, res, pathName) {
+  const workerBase = String(process.env.SALF1_EVENT_BRIDGE_URL || "http://salf1-telegram-worker:8080").replace(/\/$/, "");
+  const token = String(process.env.WORKER_API_TOKEN || "");
+  if (!token) {
+    sendJson(res, req, 503, {ok:false, error:"WORKER_API_NOT_CONFIGURED"});
+    return;
+  }
+
+  let body = "";
+  for await (const chunk of req) body += chunk;
+
+  const response = await fetch(workerBase + pathName, {
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "X-Worker-Token":token
+    },
+    body
+  });
+
+  const data = await response.json().catch(() => ({ok:false,error:"WORKER_INVALID_RESPONSE"}));
+
+  if (response.ok && data.ok && data.account) {
+    const session = {
+      sub:String(data.account.id),
+      id:data.account.id,
+      name:data.account.name || "",
+      username:data.account.username || "",
+      authAt:Math.floor(Date.now()/1000),
+      expiresAt:Math.floor(Date.now()/1000) + 7*24*60*60
+    };
+
+    res.writeHead(response.status,{
+      ...securityHeaders(req),
+      "Content-Type":"application/json; charset=utf-8",
+      "Cache-Control":"no-store",
+      "Set-Cookie":cookie("salf_session",packSigned(session),{maxAge:7*24*60*60})
+    });
+    res.end(JSON.stringify(data));
+    return;
+  }
+
+  sendJson(res, req, response.status, data);
+}
+
+async function proxySiteEvent(req, res) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  const session = unpackSigned(cookies.salf_session);
+  if (!session?.id) {
+    sendJson(res, req, 401, {ok:false,error:"AUTH_REQUIRED"});
+    return;
+  }
+
+  const workerBase = String(process.env.SALF1_EVENT_BRIDGE_URL || "http://salf1-telegram-worker:8080").replace(/\/$/, "");
+  const token = String(process.env.WORKER_API_TOKEN || "");
+  let body = {};
+  try {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    body = JSON.parse(raw || "{}");
+  } catch {
+    sendJson(res, req, 400, {ok:false,error:"INVALID_JSON"});
+    return;
+  }
+
+  const response = await fetch(workerBase + "/internal/event", {
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-Worker-Token":token},
+    body:JSON.stringify({
+      telegram_id:session.id,
+      message:String(body.message || "◈ سلف\n\nعملیات جدید در پنل انجام شد.").slice(0,4000)
+    })
+  });
+
+  const data = await response.json().catch(() => ({ok:false}));
+  sendJson(res, req, response.status, data);
+}
+
 function logout(req,res) {
   redirect(res, req, "/", { "Set-Cookie":clearCookie("salf_session") });
 }
@@ -962,6 +1040,16 @@ const server = createServer(async (req,res) => {
 
     if (url.pathname === "/api/auth/telegram" && req.method === "POST") {
       await telegramLogin(req,res);
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/auth/") && req.method === "POST") {
+      await proxyAuth(req, res, url.pathname);
+      return;
+    }
+
+    if (url.pathname === "/api/site/event" && req.method === "POST") {
+      await proxySiteEvent(req, res);
       return;
     }
 
