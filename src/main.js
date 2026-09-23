@@ -274,7 +274,7 @@ function pageHtml() {
         '<form id="masterLoginForm" class="auth-form">' +
           '<div class="minimal-field">' +
             '<input id="masterLoginIdentifier" type="text" placeholder=" " value="' + (state.identifier || "").replaceAll('"',"&quot;") + '" autocomplete="username" required>' +
-            '<label for="masterLoginIdentifier">' + t("identifier") + '</label><span class="field-line"></span>' +
+            '<label for="masterLoginIdentifier">' + (state.lang==="fa" ? "نام کاربری انتخاب‌شده در سلف" : "SALF USERNAME") + '</label><span class="field-line"></span>' +
           '</div>' +
           '<div class="minimal-field password-field">' +
             '<input id="masterLogin" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="current-password" required>' +
