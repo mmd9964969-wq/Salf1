@@ -651,6 +651,31 @@ const server = createServer(async (req,res) => {
   try {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
 
+    if (url.pathname === "/api/auth/start" && req.method === "POST") {
+      await directAuth(req,res,"/auth/start");
+      return;
+    }
+
+    if (url.pathname === "/api/auth/code" && req.method === "POST") {
+      await directAuth(req,res,"/auth/code");
+      return;
+    }
+
+    if (url.pathname === "/api/auth/2fa" && req.method === "POST") {
+      await directAuth(req,res,"/auth/2fa");
+      return;
+    }
+
+    if (url.pathname === "/api/auth/master/setup" && req.method === "POST") {
+      await directAuth(req,res,"/auth/master/setup");
+      return;
+    }
+
+    if (url.pathname === "/api/auth/master/login" && req.method === "POST") {
+      await directAuth(req,res,"/auth/master/login");
+      return;
+    }
+
     if (url.pathname === "/api/telegram-login/config" && req.method === "GET") {
       await telegramLoginConfig(req,res);
       return;
