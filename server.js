@@ -1024,6 +1024,11 @@ const server = createServer(async (req,res) => {
   }
 });
 
-server.listen(port,"0.0.0.0",()=> {
-  console.log(`SALF1 web listening on 0.0.0.0:${port}`);
+initPasskeyDb().then(()=>{
+  server.listen(port,"0.0.0.0",()=> {
+    console.log(`SALF1 web listening on 0.0.0.0:${port}`);
+  });
+}).catch((error)=>{
+  console.error("SALF1 passkey database initialization failed:",error?.message || error);
+  process.exit(1);
 });
