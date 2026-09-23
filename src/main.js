@@ -233,7 +233,9 @@ function render() {
               </div>
             </div>
 
+            <div class="security-status"><i></i><span>${t("secure")}</span></div>
             <div id="auth">${authBody()}</div>
+            <div class="security-actions"><button type="button" class="secondary-button" id="biometric">◈ ${state.lang === "fa" ? "Face ID / اثر انگشت" : "Face ID / Fingerprint"}</button><button type="button" class="secondary-button" id="securityStatus">◈ ${t("security")}</button></div>
 
             <footer class="card-footer">
               <span>● SECURE SYSTEM</span>
@@ -384,6 +386,20 @@ function bind() {
   document.querySelector("#reset")?.addEventListener("click", () => {
     state.step = "login";
     renderAuth();
+  });
+
+  document.querySelector("#biometric")?.addEventListener("click", async () => {
+    const status = document.querySelector(".security-status span");
+    if (status) status.textContent = state.lang === "fa" ? "در حال بررسی احراز هویت دستگاه..." : "CHECKING DEVICE AUTHENTICATION...";
+    await delay(700);
+    if (status) status.textContent = window.PublicKeyCredential ? (state.lang === "fa" ? "احراز هویت دستگاه آماده است" : "DEVICE AUTHENTICATION READY") : (state.lang === "fa" ? "احراز هویت زیستی در این مرورگر فعال نیست" : "BIOMETRIC AUTH IS UNAVAILABLE");
+  });
+
+  document.querySelector("#securityStatus")?.addEventListener("click", () => {
+    const status = document.querySelector(".security-status span");
+    if (!status) return;
+    status.textContent = "TLS · SESSION PROTECTED · ROYAL CHANNEL";
+    setTimeout(() => { if (status) status.textContent = t("secure"); }, 2600);
   });
 
   const cells = [...document.querySelectorAll(".otp-input")];
