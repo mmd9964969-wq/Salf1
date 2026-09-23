@@ -237,12 +237,12 @@ function pageHtml() {
         '<p class="stage-subtitle">' + t("masterSetupText") + '</p>' +
         '<form id="masterSetupForm" class="auth-form">' +
           '<div class="minimal-field password-field">' +
-            '<input id="master" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required>' +
+            '<input minlength="6" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*\\d).{6,}" title="حداقل ۶ کاراکتر؛ حرف بزرگ، حرف کوچک و عدد" id="master" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required>' +
             '<label for="master">' + t("master") + '</label><span class="field-line"></span>' +
             '<button class="eye-toggle" id="masterEye" type="button">◌</button>' +
           '</div>' +
           '<div class="minimal-field password-field">' +
-            '<input id="masterConfirm" type="' + (state.confirmVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required>' +
+            '<input minlength="6" pattern="(?=.*[A-Z])(?=.*[a-z])(?=.*\\d).{6,}" title="حداقل ۶ کاراکتر؛ حرف بزرگ، حرف کوچک و عدد" id="masterConfirm" type="' + (state.confirmVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required>' +
             '<label for="masterConfirm">' + t("masterConfirm") + '</label><span class="field-line"></span>' +
             '<button class="eye-toggle" id="masterConfirmEye" type="button">◌</button>' +
           '</div>' +
@@ -319,6 +319,17 @@ function pageHtml() {
     '<footer class="site-footer"><span>' + t("footer1") + '</span><span>' + t("footer2") + '</span><span>' + t("footer3") + '</span></footer>' +
     '<div class="toast" id="toast"></div>' +
   '</main>';
+}
+
+
+async function siteEvent(message) {
+  try {
+    await fetch("/api/site/event", {
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message})
+    });
+  } catch {}
 }
 
 function setLive(text) {
