@@ -265,7 +265,7 @@ function pageHtml() {
           '<p class="master-rule">' + t("masterRule") + '</p>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("save") + '</span><span class="button-mark">♛</span></button>' +
         '</form>' +
-      '</div>  } else if (state.stage === "master_login") {
+      '</div>\n    } else if (state.stage === "master_login") {
     body =
       '<div class="auth-stage" data-stage="master-login">' +
         '<div class="stage-mark">04</div>' +
@@ -500,6 +500,19 @@ function bindCommon() {
       setTimeout(()=>document.querySelector(".auth-stage")?.classList.remove("error-shake"),520);
       resetButton(button);
     }
+  });
+
+  document.querySelector("#siteUsername")?.addEventListener("input",async e=>{
+    const value=e.target.value.trim().replace(/^@/,"");
+    const status=document.querySelector("#usernameState");
+    if(!status)return;
+    if(!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(value)){status.textContent="نام کاربری آزاد را انتخاب کن";status.dataset.state="idle";return;}
+    status.textContent="در حال بررسی قلمرو...";
+    try{
+      const data=await postJson("/api/username/check",{username:value});
+      status.textContent=data.available?"نام آزاد است":"این نام قبلاً گرفته شده است";
+      status.dataset.state=data.available?"available":"taken";
+    }catch{status.textContent="بررسی نام کاربری ممکن نیست";}
   });
 
   document.querySelector("#masterSetupForm")?.addEventListener("submit",async e=>{
@@ -769,7 +782,7 @@ function initCosmos() {
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
   const sceneNodeRef = document.querySelector("#sceneName");
 
-  for (let i = 0; i < 1450; i++) {
+  for (let i = 0; i < 850; i++) {
     stars.push({
       x: Math.random(),
       y: Math.random(),
@@ -802,6 +815,7 @@ function initCosmos() {
 
   function frame(now) {
     const duration = 15000;
+    ctx.globalCompositeOperation = "source-over";
     const cycle = (now - start) % (duration * 9);
     const current = Math.floor(cycle / duration);
     const next = (current + 1) % 9;
@@ -870,7 +884,7 @@ function initCosmos() {
   }
 
   function drawStars(index, progress) {
-    const density = (index === 3 || index === 7 || index === 8) ? 0.92 : 0.68;
+    const density = (index === 3 || index === 7 || index === 8) ? 0.86 : 0.58;
     for (const s of stars) {
       const visibility = (s.x * 17.371 + s.y * 31.913 + s.depth * 47.127 + index * 0.071) % 1;
       if (visibility > density) continue;
@@ -900,7 +914,7 @@ function initCosmos() {
   function sceneOne(progress) {
     const x=width*.58+pointer.x*16, y=height*.52+pointer.y*8, r=Math.min(width,height)*.18;
     drawPlanet(x,y,r,["#E6E3DA","#88847F","#35363A","#090A0E"]);
-    drawCraters(x,y,r,70,.62);
+    drawCraters(x,y,r,42,.62);
     const solar=ctx.createRadialGradient(width*.03,height*.38,0,width*.03,height*.38,width*.55);
     solar.addColorStop(0,"rgba(255,220,160,.86)"); solar.addColorStop(.28,"rgba(255,155,75,.22)"); solar.addColorStop(1,"rgba(255,100,30,0)");
     ctx.fillStyle=solar; ctx.fillRect(0,0,width,height);
@@ -1021,7 +1035,7 @@ function initCosmos() {
     for(let i=0;i<count;i++){
       const a=i*2.399,rr=r*(.12+((i*37)%100)/100*coverage);
       const cx=x+Math.cos(a)*rr,cy=y+Math.sin(a)*rr;
-      const cr=1.4+((i*17)%10)*1.5;
+      const cr=1.1+((i*17)%7)*1.1;
       ctx.fillStyle=i%2?"rgba(24,24,28,.23)":"rgba(248,246,240,.07)";
       ctx.beginPath();ctx.arc(cx,cy,cr,0,Math.PI*2);ctx.fill();
       ctx.strokeStyle="rgba(0,0,0,.13)";ctx.lineWidth=1;ctx.stroke();
