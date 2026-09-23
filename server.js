@@ -670,6 +670,16 @@ async function callWorker(req,route,payload) {
   if((route==="/auth/code" || route==="/auth/2fa") && raw.status==="2fa_required"){
     return {ok:false,status:401,data:{ok:false,status:"2fa_required",error:"TWOFA_REQUIRED"}};
   }
+  if((route==="/auth/code" || route==="/auth/2fa") && raw.status){
+    const statusMap={
+      code_invalid:"CODE_INVALID",
+      code_expired:"CODE_EXPIRED",
+      phone_invalid:"PHONE_INVALID",
+      twofa_invalid:"TWOFA_INVALID",
+      flood_wait:"RATE_LIMITED"
+    };
+    if(statusMap[raw.status]) return {ok:false,status:400,data:{ok:false,error:statusMap[raw.status]}};
+  }
   if((route==="/auth/code" || route==="/auth/2fa") && raw.ok && raw.status==="connected"){
     const user=raw.user || {};
     const account={
