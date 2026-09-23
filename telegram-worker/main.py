@@ -2504,7 +2504,7 @@ async def process_callback(callback_query: dict):
         }
         item = package_names.get(package_id)
         if not item:
-            await bot_edit(chat_id, message_id, "⛂ بسته موردنظر پیدا نشد.", shop_packages_markup())
+            await bot_edit(chat_id, message_id, "⛂ بسته موردنظر پیدا نشد.", package_markup())
             return
         title, amount = item
         await bot_edit(
