@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { createHash, createHmac, createPublicKey, randomBytes, timingSafeEqual, verify } from "node:crypto";
+import { createHash, createHmac, createPublicKey, randomBytes, timingSafeEqual, verify, scrypt as scryptCallback } from "node:crypto";
+import { promisify } from "node:util";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +8,7 @@ import { Pool } from "pg";
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "dist");
+const scrypt = promisify(scryptCallback);
 const port = Number(process.env.PORT || 4173);
 
 const authDb = process.env.DATABASE_URL ? new Pool({
@@ -693,7 +695,90 @@ function authUser(account) {
 }
 
 
+async function ensureMasterTable() {
+  if (!authDb) throw new Error("DATABASE_UNAVAILABLE");
+  await authDb.query(
+    "CREATE TABLE IF NOT EXISTS salf_master_credentials (" +
+    "telegram_user_id TEXT PRIMARY KEY," +
+    "username TEXT," +
+    "name TEXT," +
+    "password_hash TEXT NOT NULL," +
+    "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()," +
+    "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()" +
+    ")"
+  );
+  await authDb.query("CREATE INDEX IF NOT EXISTS salf_master_username_idx ON salf_master_credentials (lower(username))");
+}
+
+async function hashMasterPassword(password) {
+  const salt = randomBytes(16).toString("hex");
+  const derived = await scrypt(String(password), salt, 64, { N:16384, r:8, p:1 });
+  return "scrypt$16384$8$1$" + salt + "$" + Buffer.from(derived).toString("hex");
+}
+
+async function verifyMasterPassword(password, encoded) {
+  const parts = String(encoded || "").split("$");
+  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  const [, nRaw, rRaw, pRaw, salt, hex] = parts;
+  const derived = await scrypt(String(password), salt, 64, {
+    N:Number(nRaw), r:Number(rRaw), p:Number(pRaw)
+  });
+  const expected = Buffer.from(hex, "hex");
+  return expected.length === derived.length && timingSafeEqual(expected, Buffer.from(derived));
+}
+
+function validMasterPassword(password) {
+  const value = String(password || "");
+  return value.length >= 12 && /[A-Z]/.test(value) && /[a-z]/.test(value) && /\\d/.test(value) && /[^A-Za-z0-9]/.test(value);
+}
+
+async function masterSetup(req,res) {
+  if (!directOrigin(req)) return sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+  if (directLimited(req,"master_setup",5,10*60*1000)) return sendJson(res,req,429,{ok:false,code:"RATE_LIMITED",error:"تعداد تلاش‌ها بیش از حد مجاز است."});
+  const body=await directBody(req);
+  const pending=unpackSigned(parseCookies(req.headers.cookie || "").salf_pending_auth);
+  const telegramId=String(body.telegram_id || pending?.id || "");
+  const password=String(body.password || "");
+  if(!pending?.id || String(pending.id)!==telegramId) return sendJson(res,req,401,{ok:false,error:"TELEGRAM_REAUTH_REQUIRED"});
+  if(!validMasterPassword(password)) return sendJson(res,req,400,{ok:false,error:"MASTER_PASSWORD_WEAK",code:"MASTER_TOO_SHORT"});
+  await ensureMasterTable();
+  const account={telegram_user_id:telegramId,username:pending.username||"",name:pending.name||""};
+  const hash=await hashMasterPassword(password);
+  await authDb.query(
+    "INSERT INTO salf_master_credentials (telegram_user_id,username,name,password_hash) VALUES ($1,$2,$3,$4) " +
+    "ON CONFLICT (telegram_user_id) DO UPDATE SET username=EXCLUDED.username,name=EXCLUDED.name,password_hash=EXCLUDED.password_hash,updated_at=NOW()",
+    [account.telegram_user_id,account.username,account.name,hash]
+  );
+  const session=authUser(account);
+  res.writeHead(200,{...securityHeaders(req),"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Set-Cookie":[cookie("salf_session",packSigned(session),{maxAge:7*24*60*60}),clearCookie("salf_pending_auth")]});
+  res.end(JSON.stringify({ok:true,account}));
+}
+
+async function masterLogin(req,res) {
+  if (!directOrigin(req)) return sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+  if (directLimited(req,"master_login",6,10*60*1000)) return sendJson(res,req,429,{ok:false,code:"RATE_LIMITED",error:"تعداد تلاش‌ها بیش از حد مجاز است."});
+  const body=await directBody(req);
+  const identifier=String(body.identifier || "").trim();
+  const password=String(body.password || "");
+  if(!identifier || !password) return sendJson(res,req,400,{ok:false,error:"MASTER_INVALID",code:"MASTER_INVALID"});
+  await ensureMasterTable();
+  const result=await authDb.query(
+    "SELECT telegram_user_id,username,name,password_hash FROM salf_master_credentials WHERE telegram_user_id=$1 OR lower(username)=lower($1) LIMIT 1",
+    [identifier.replace(/^@/,"")]
+  );
+  if(!result.rowCount || !(await verifyMasterPassword(password,result.rows[0].password_hash))) {
+    return sendJson(res,req,401,{ok:false,error:"MASTER_INVALID",code:"MASTER_INVALID"});
+  }
+  const row=result.rows[0];
+  const account={telegram_user_id:row.telegram_user_id,username:row.username||"",name:row.name||""};
+  const session=authUser(account);
+  res.writeHead(200,{...securityHeaders(req),"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Set-Cookie":cookie("salf_session",packSigned(session),{maxAge:7*24*60*60})});
+  res.end(JSON.stringify({ok:true,account}));
+}
+
 async function directAuth(req,res,route) {
+  if(route==="/auth/master/setup") return masterSetup(req,res);
+  if(route==="/auth/master/login") return masterLogin(req,res);
   if(!directOrigin(req)){
     sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
     return;
