@@ -477,7 +477,7 @@ function bindCommon() {
     document.body.classList.add("security-sequence");
     document.querySelector("#brandShield")?.classList.add("active");
     try{
-      const data=await postJson("/api/auth/master/setup",{flow_id:state.flowId,password});
+      const data=await postJson("/api/auth/master/setup",{telegram_id:state.account?.id,password});
       state.stage="success";
       state.account=data.account||state.account;
       setLive(t("access"));
