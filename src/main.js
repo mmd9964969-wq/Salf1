@@ -169,6 +169,7 @@ function render() {
   bindUI();
   initCosmos();
   startLogoMorph();
+  prepareTelegramLogin();
 }
 
 function bindUI() {
@@ -198,8 +199,26 @@ function bindUI() {
     await delay(620);
     consoleText.textContent = t("ready");
 
-    await delay(360);
-    window.location.assign("/auth/telegram");
+    const config = window.__salfTelegramLogin;
+    if (!config || !window.Telegram?.Login) {
+      consoleText.textContent = t("error");
+      showToast(t("error"));
+      button.classList.remove("pressed");
+      document.body.classList.remove("security-sequence");
+      shield?.classList.remove("active");
+      document.querySelector("#brandSystem")?.classList.remove("security-verified");
+      document.querySelector("#securityScan")?.classList.remove("complete");
+      state.sequence = false;
+      prepareTelegramLogin();
+      return;
+    }
+
+    window.Telegram.Login.auth({
+      client_id: config.clientId,
+      scope: ["profile"],
+      lang: state.lang,
+      nonce: config.nonce
+    }, completeTelegramLogin);
   });
 
   document.querySelectorAll(".lang-item").forEach((item) => {
@@ -215,6 +234,87 @@ function bindUI() {
       setTimeout(() => document.documentElement.classList.remove("language-changing"), 430);
     });
   });
+}
+
+async function prepareTelegramLogin() {
+  try {
+    const response = await fetch("/api/telegram-login/config", {
+      credentials: "include",
+      cache: "no-store"
+    });
+
+    if (!response.ok) throw new Error("CONFIG_FAILED");
+    const payload = await response.json();
+
+    if (payload.ok && payload.clientId && payload.nonce) {
+      window.__salfTelegramLogin = payload;
+    }
+  } catch (error) {
+    console.warn("Telegram login config unavailable:", error);
+  }
+}
+
+async function completeTelegramLogin(data) {
+  const consoleText = document.querySelector("#consoleText");
+  const button = document.querySelector("#enterButton");
+  const shield = document.querySelector("#brandShield");
+
+  if (!data || data.error || !data.id_token) {
+    if (consoleText) consoleText.textContent = t("error");
+    showToast(t("error"));
+    button?.classList.remove("pressed");
+    document.body.classList.remove("security-sequence");
+    shield?.classList.remove("active");
+    document.querySelector("#brandSystem")?.classList.remove("security-verified");
+    document.querySelector("#securityScan")?.classList.remove("complete");
+    state.sequence = false;
+    prepareTelegramLogin();
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/auth/telegram", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_token: data.id_token })
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "AUTH_FAILED");
+    }
+
+    if (consoleText) {
+      const name = payload.user?.name ? " · " + payload.user.name : "";
+      consoleText.textContent = t("success") + name;
+    }
+
+    document.querySelector("#brandSystem")?.classList.add("security-verified");
+    document.body.classList.add("realm-open");
+    showToast(t("success"));
+
+    setTimeout(() => {
+      document.body.classList.remove("realm-open");
+      button?.classList.remove("pressed");
+      shield?.classList.remove("active");
+      document.querySelector("#securityScan")?.classList.remove("complete");
+      state.sequence = false;
+      prepareTelegramLogin();
+    }, 1400);
+  } catch (error) {
+    console.error("Telegram authentication failed:", error);
+    if (consoleText) consoleText.textContent = t("error");
+    showToast(t("error"));
+    button?.classList.remove("pressed");
+    document.body.classList.remove("security-sequence");
+    shield?.classList.remove("active");
+    document.querySelector("#brandSystem")?.classList.remove("security-verified");
+    document.querySelector("#securityScan")?.classList.remove("complete");
+    state.sequence = false;
+    prepareTelegramLogin();
+  }
 }
 
 function showToast(text) {
