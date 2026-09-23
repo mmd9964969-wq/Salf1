@@ -11,9 +11,7 @@ const state = {
   identifier: "",
   account: null,
   loading: false,
-  passwordRule:"حداقل ۶ کاراکتر؛ شامل حرف بزرگ، حرف کوچک و عدد",
-    passwordRule:"Minimum 6 characters with uppercase, lowercase and number",
-    passwordVisible: false,
+  passwordVisible: false,
   confirmVisible: false
 };
 
@@ -51,6 +49,7 @@ const copy = {
     success:"ورود با موفقیت انجام شد",
     invalid:"اطلاعات ورود معتبر نیست.",
     mismatch:"دو رمز یکسان نیستند.",
+    passwordRule:"حداقل ۶ کاراکتر؛ شامل حرف بزرگ، حرف کوچک و عدد",
     masterRule:"حداقل ۱۲ کاراکتر · حرف بزرگ · حرف کوچک · عدد · نماد",
     scene:"میدان کیهانی /",
     footer1:"سازنده : Jawati",
@@ -91,6 +90,7 @@ const copy = {
     success:"ACCESS GRANTED",
     invalid:"Authentication data is not valid.",
     mismatch:"The passwords do not match.",
+    passwordRule:"Minimum 6 characters with uppercase, lowercase and number",
     masterRule:"12+ chars · upper · lower · number · symbol",
     scene:"COSMIC FIELD /",
     footer1:"Creator : Jawati",
