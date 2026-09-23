@@ -138,9 +138,9 @@ function securityHeaders(req) {
     "X-Frame-Options":"DENY",
     "Referrer-Policy":"no-referrer",
     "Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=()",
-    "Cross-Origin-Opener-Policy":"same-origin",
+    "Cross-Origin-Opener-Policy":"same-origin-allow-popups",
     "Cross-Origin-Resource-Policy":"same-origin",
-    "Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';",
+    "Content-Security-Policy":"default-src 'self'; script-src 'self' https://oauth.telegram.org; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://oauth.telegram.org; frame-src https://oauth.telegram.org; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';",
   };
 
   if (forwarded === "https" || process.env.NODE_ENV === "production") {
@@ -190,7 +190,7 @@ async function loadJwks() {
   return jwksCache.keys;
 }
 
-async function verifyIdToken(idToken, expectedClientId) {
+async function verifyIdToken(idToken, expectedClientId, expectedNonce = null) {
   const parts = String(idToken || "").split(".");
   if (parts.length !== 3) throw new Error("INVALID_ID_TOKEN");
 
@@ -209,13 +209,13 @@ async function verifyIdToken(idToken, expectedClientId) {
     const refreshed = await loadJwks();
     const retryKey = refreshed.find((item) => item.kid === header.kid);
     if (!retryKey) throw new Error("SIGNING_KEY_NOT_FOUND");
-    return verifyIdTokenWithKey(encodedHeader, encodedPayload, encodedSignature, header, payload, retryKey, expectedClientId);
+    return verifyIdTokenWithKey(encodedHeader, encodedPayload, encodedSignature, header, payload, retryKey, expectedClientId, expectedNonce);
   }
 
-  return verifyIdTokenWithKey(encodedHeader, encodedPayload, encodedSignature, header, payload, jwk, expectedClientId);
+  return verifyIdTokenWithKey(encodedHeader, encodedPayload, encodedSignature, header, payload, jwk, expectedClientId, expectedNonce);
 }
 
-function verifyIdTokenWithKey(encodedHeader, encodedPayload, encodedSignature, header, payload, jwk, expectedClientId) {
+function verifyIdTokenWithKey(encodedHeader, encodedPayload, encodedSignature, header, payload, jwk, expectedClientId, expectedNonce = null) {
   if (payload.iss !== OIDC_ISSUER) throw new Error("INVALID_ISSUER");
 
   const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
@@ -225,6 +225,7 @@ function verifyIdTokenWithKey(encodedHeader, encodedPayload, encodedSignature, h
   if (!Number.isFinite(payload.exp) || payload.exp <= now) throw new Error("TOKEN_EXPIRED");
   if (payload.iat && payload.iat > now + 300) throw new Error("TOKEN_FROM_FUTURE");
   if (!payload.sub) throw new Error("MISSING_SUB");
+  if (expectedNonce && payload.nonce !== expectedNonce) throw new Error("INVALID_NONCE");
 
   const publicKey = createPublicKey({ key:jwk, format:"jwk" });
   const data = Buffer.from(encodedHeader + "." + encodedPayload);
@@ -295,6 +296,100 @@ function sessionFromClaims(claims) {
     authAt:claims.iat || Math.floor(Date.now()/1000),
     expiresAt:claims.exp
   };
+}
+
+async function telegramLoginConfig(req, res) {
+  const clientId = getClientId();
+  if (!clientId) {
+    sendJson(res, req, 503, { ok:false, error:"TELEGRAM_CLIENT_ID_UNAVAILABLE" });
+    return;
+  }
+
+  const nonce = randomBytes(24).toString("base64url");
+  const payload = packSigned({ nonce, createdAt: Date.now() });
+
+  res.writeHead(200, {
+    ...securityHeaders(req),
+    "Content-Type":"application/json; charset=utf-8",
+    "Cache-Control":"no-store",
+    "Set-Cookie":cookie("tg_login_nonce", payload, { maxAge:600 })
+  });
+  res.end(JSON.stringify({ ok:true, clientId:Number(clientId), nonce, expiresIn:600 }));
+}
+
+async function telegramLogin(req, res) {
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 300_000) {
+      sendJson(res, req, 413, { ok:false, error:"PAYLOAD_TOO_LARGE" });
+      return;
+    }
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(body || "{}");
+  } catch {
+    sendJson(res, req, 400, { ok:false, error:"INVALID_JSON" });
+    return;
+  }
+
+  const idToken = String(payload.id_token || "").trim();
+  if (!idToken) {
+    sendJson(res, req, 400, { ok:false, error:"MISSING_ID_TOKEN" });
+    return;
+  }
+
+  const cookies = parseCookies(req.headers.cookie || "");
+  const nonceState = unpackSigned(cookies.tg_login_nonce);
+
+  if (!nonceState || Date.now() - Number(nonceState.createdAt || 0) > 10 * 60 * 1000) {
+    res.writeHead(401, {
+      ...securityHeaders(req),
+      "Content-Type":"application/json; charset=utf-8",
+      "Cache-Control":"no-store",
+      "Set-Cookie":clearCookie("tg_login_nonce")
+    });
+    res.end(JSON.stringify({ ok:false, error:"NONCE_EXPIRED" }));
+    return;
+  }
+
+  try {
+    const clientId = getClientId();
+    const claims = await verifyIdToken(idToken, clientId, nonceState.nonce);
+    const session = sessionFromClaims(claims);
+
+    res.writeHead(200, {
+      ...securityHeaders(req),
+      "Content-Type":"application/json; charset=utf-8",
+      "Cache-Control":"no-store",
+      "Set-Cookie":[
+        clearCookie("tg_login_nonce"),
+        cookie("salf_session", packSigned(session), { maxAge:7 * 24 * 60 * 60 })
+      ]
+    });
+
+    res.end(JSON.stringify({
+      ok:true,
+      user:{
+        id:session.id,
+        sub:session.sub,
+        name:session.name,
+        username:session.username,
+        picture:session.picture
+      }
+    }));
+  } catch (error) {
+    console.error("Telegram Login verification failed:", error?.message || error);
+    res.writeHead(401, {
+      ...securityHeaders(req),
+      "Content-Type":"application/json; charset=utf-8",
+      "Cache-Control":"no-store",
+      "Set-Cookie":clearCookie("tg_login_nonce")
+    });
+    res.end(JSON.stringify({ ok:false, error:"INVALID_TELEGRAM_ID_TOKEN" }));
+  }
 }
 
 async function authStart(req, res) {
@@ -427,6 +522,16 @@ const safePath = (urlPath) => {
 const server = createServer(async (req,res) => {
   try {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
+
+    if (url.pathname === "/api/telegram-login/config" && req.method === "GET") {
+      await telegramLoginConfig(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/auth/telegram" && req.method === "POST") {
+      await telegramLogin(req,res);
+      return;
+    }
 
     if (url.pathname === "/auth/telegram" && req.method === "GET") {
       await authStart(req,res);
