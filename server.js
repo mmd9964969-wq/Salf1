@@ -688,6 +688,218 @@ function passkeyStateCookie(value) {
   return cookie("webauthn_state",packSigned(value),{maxAge:300});
 }
 
+
+async function passkeyRegistrationOptions(req,res) {
+  const session=currentPasskeySession(req);
+  if(!session) return sendJson(res,req,401,{ok:false,error:"UNAUTHORIZED"});
+  if(!authDb) return sendJson(res,req,503,{ok:false,error:"DATABASE_UNAVAILABLE"});
+
+  const rows=await authDb.query(
+    "SELECT credential_id, transports FROM salf_passkeys WHERE telegram_user_id=$1",
+    [String(session.id)]
+  );
+
+  const options=await generateRegistrationOptions({
+    rpName:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",
+    rpID:passkeyRpId(),
+    userID:Buffer.from(String(session.id)),
+    userName:session.username || String(session.id),
+    userDisplayName:session.name || session.username || String(session.id),
+    attestationType:"none",
+    excludeCredentials:rows.rows.map(row=>({
+      id:row.credential_id,
+      transports:row.transports || undefined
+    })),
+    authenticatorSelection:{
+      residentKey:"preferred",
+      userVerification:"required",
+      authenticatorAttachment:"platform"
+    },
+    supportedAlgorithmIDs:[-7,-257]
+  });
+
+  res.writeHead(200,{
+    ...securityHeaders(req),
+    "Content-Type":"application/json; charset=utf-8",
+    "Cache-Control":"no-store",
+    "Set-Cookie":passkeyStateCookie({
+      kind:"register",
+      challenge:options.challenge,
+      userId:String(session.id),
+      createdAt:Date.now()
+    })
+  });
+  res.end(JSON.stringify(options));
+}
+
+async function passkeyRegistrationVerify(req,res) {
+  const session=currentPasskeySession(req);
+  if(!session) return sendJson(res,req,401,{ok:false,error:"UNAUTHORIZED"});
+  if(!authDb) return sendJson(res,req,503,{ok:false,error:"DATABASE_UNAVAILABLE"});
+
+  const cookies=parseCookies(req.headers.cookie || "");
+  const state=unpackSigned(cookies.webauthn_state);
+  if(!state || state.kind!=="register" || state.userId!==String(session.id)) {
+    return sendJson(res,req,400,{ok:false,error:"PASSKEY_CHALLENGE_EXPIRED"});
+  }
+
+  const body=await directBody(req);
+  const verification=await verifyRegistrationResponse({
+    response:body,
+    expectedChallenge:state.challenge,
+    expectedOrigin:passkeyOrigin(),
+    expectedRPID:passkeyRpId(),
+    requireUserVerification:true
+  });
+
+  if(!verification.verified || !verification.registrationInfo) {
+    return sendJson(res,req,400,{ok:false,error:"PASSKEY_REGISTRATION_FAILED"});
+  }
+
+  const info=verification.registrationInfo;
+  const credential=info.credential || {};
+  const credentialId=credential.id || info.credentialID;
+  const publicKey=credential.publicKey || info.credentialPublicKey;
+  const counter=credential.counter ?? info.counter ?? 0;
+  const transports=body.response?.transports || [];
+
+  if(!credentialId || !publicKey) {
+    return sendJson(res,req,400,{ok:false,error:"PASSKEY_DATA_MISSING"});
+  }
+
+  await authDb.query(
+    "INSERT INTO salf_passkeys (credential_id,telegram_user_id,public_key,counter,transports) VALUES ($1,$2,$3,$4,$5) " +
+    "ON CONFLICT (credential_id) DO UPDATE SET public_key=EXCLUDED.public_key,counter=EXCLUDED.counter,transports=EXCLUDED.transports,updated_at=NOW()",
+    [String(credentialId),String(session.id),Buffer.from(publicKey).toString("base64url"),Number(counter),transports]
+  );
+
+  res.writeHead(200,{
+    ...securityHeaders(req),
+    "Content-Type":"application/json; charset=utf-8",
+    "Cache-Control":"no-store",
+    "Set-Cookie":clearCookie("webauthn_state")
+  });
+  res.end(JSON.stringify({ok:true,verified:true}));
+}
+
+async function passkeyAuthenticationOptions(req,res) {
+  if(!sameOriginDirect(req)){
+    return sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+  }
+  if(!authDb) return sendJson(res,req,503,{ok:false,error:"DATABASE_UNAVAILABLE"});
+
+  const body=await directBody(req);
+  const identifier=String(body.identifier || "").trim();
+  if(!identifier) return sendJson(res,req,400,{ok:false,error:"IDENTIFIER_REQUIRED"});
+
+  const result=await callWorker(req,"/auth/start",{identifier});
+  if(!result.ok || result.data?.step!=="master_login") {
+    return sendJson(res,req,400,{ok:false,error:"PASSKEY_NOT_AVAILABLE"});
+  }
+
+  const userId=String(result.data.account.telegram_user_id);
+  const rows=await authDb.query(
+    "SELECT credential_id, transports FROM salf_passkeys WHERE telegram_user_id=$1",
+    [userId]
+  );
+
+  if(!rows.rowCount) return sendJson(res,req,404,{ok:false,error:"PASSKEY_NOT_REGISTERED"});
+
+  const options=await generateAuthenticationOptions({
+    rpID:passkeyRpId(),
+    allowCredentials:rows.rows.map(row=>({
+      id:row.credential_id,
+      transports:row.transports || undefined
+    })),
+    userVerification:"required",
+    supportedAlgorithmIDs:[-7,-257]
+  });
+
+  res.writeHead(200,{
+    ...securityHeaders(req),
+    "Content-Type":"application/json; charset=utf-8",
+    "Cache-Control":"no-store",
+    "Set-Cookie":passkeyStateCookie({
+      kind:"authenticate",
+      challenge:options.challenge,
+      userId,
+      identifier,
+      createdAt:Date.now()
+    })
+  });
+  res.end(JSON.stringify(options));
+}
+
+async function passkeyAuthenticationVerify(req,res) {
+  if(!sameOriginDirect(req)){
+    return sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+  }
+  if(!authDb) return sendJson(res,req,503,{ok:false,error:"DATABASE_UNAVAILABLE"});
+
+  const cookies=parseCookies(req.headers.cookie || "");
+  const state=unpackSigned(cookies.webauthn_state);
+  if(!state || state.kind!=="authenticate") {
+    return sendJson(res,req,400,{ok:false,error:"PASSKEY_CHALLENGE_EXPIRED"});
+  }
+
+  const body=await directBody(req);
+  const rowResult=await authDb.query(
+    "SELECT credential_id,public_key,counter,transports FROM salf_passkeys WHERE credential_id=$1 AND telegram_user_id=$2 LIMIT 1",
+    [String(body.id || ""),String(state.userId)]
+  );
+
+  if(!rowResult.rowCount) return sendJson(res,req,404,{ok:false,error:"PASSKEY_NOT_REGISTERED"});
+
+  const row=rowResult.rows[0];
+  const verification=await verifyAuthenticationResponse({
+    response:body,
+    expectedChallenge:state.challenge,
+    expectedOrigin:passkeyOrigin(),
+    expectedRPID:passkeyRpId(),
+    credential:{
+      id:row.credential_id,
+      publicKey:Buffer.from(row.public_key,"base64url"),
+      counter:Number(row.counter),
+      transports:row.transports || undefined
+    },
+    requireUserVerification:true
+  });
+
+  if(!verification.verified) {
+    return sendJson(res,req,401,{ok:false,error:"PASSKEY_VERIFICATION_FAILED"});
+  }
+
+  await authDb.query(
+    "UPDATE salf_passkeys SET counter=$1,updated_at=NOW() WHERE credential_id=$2",
+    [Number(verification.authenticationInfo.newCounter),row.credential_id]
+  );
+
+  const worker=await callWorker(req,"/auth/session",{telegram_user_id:state.userId});
+  if(!worker.ok){
+    return sendJson(res,req,401,{ok:false,error:"SESSION_RESTORE_FAILED"});
+  }
+
+  const session=authUser(worker.data.account);
+  res.writeHead(200,{
+    ...securityHeaders(req),
+    "Content-Type":"application/json; charset=utf-8",
+    "Cache-Control":"no-store",
+    "Set-Cookie":[
+      clearCookie("webauthn_state"),
+      cookie("salf_session",packSigned(session),{maxAge:7*24*60*60})
+    ]
+  });
+  res.end(JSON.stringify({ok:true,account:worker.data.account}));
+}
+
+function sameOriginDirect(req) {
+  const origin=req.headers.origin;
+  if(!origin) return true;
+  const domain=process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || "";
+  const expected=(process.env.PUBLIC_ORIGIN || (domain ? "https://"+domain : "")).replace(/\/+$/,"");
+  return !expected || origin===expected;
+}
+
 const safePath = (urlPath) => {
   const raw = decodeURIComponent((urlPath || "/").split("?")[0] || "/");
   const normalized = path.normalize(raw).replace(/^\/+/, "");
