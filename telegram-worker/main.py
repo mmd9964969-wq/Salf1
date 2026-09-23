@@ -20,7 +20,7 @@ state = {
     "bot_username": "",
     "last_error": None,
 }
-bot_application = None
+bot_application = None\nbot_loop = None
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
