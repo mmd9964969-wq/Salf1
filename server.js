@@ -548,6 +548,63 @@ async function directBody(req) {
   catch{throw new Error("INVALID_JSON");}
 }
 
+
+function workerUrl() {
+  return String(process.env.SALF1_WORKER_URL || "http://salf1-telegram-worker:8080").replace(/\/+$/,"");
+}
+
+async function callWorker(req,route,payload) {
+  const token=String(process.env.WORKER_API_TOKEN||"");
+  if(!token) throw new Error("WORKER_API_TOKEN_MISSING");
+  const response=await fetch(workerUrl()+route,{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "X-Worker-Token":token,
+      "X-Client-IP":directIp(req)
+    },
+    body:JSON.stringify(payload),
+    signal:AbortSignal.timeout(35000)
+  });
+  const data=await response.json().catch(()=>({ok:false,error:"WORKER_INVALID_RESPONSE"}));
+  return {ok:response.ok,status:response.status,data};
+}
+
+function authErrorMessage(code) {
+  const map={
+    IDENTIFIER_REQUIRED:"شناسه اکانت الزامی است.",
+    PHONE_INVALID:"شماره باید با فرمت بین‌المللی وارد شود.",
+    USERNAME_INVALID:"نام کاربری تلگرام معتبر نیست.",
+    PHONE_REQUIRED_FOR_FIRST_LOGIN:"برای اتصال اولیه، شماره تلفن بین‌المللی لازم است.",
+    CODE_INVALID:"کد تلگرام معتبر نیست.",
+    CODE_EXPIRED:"کد تأیید منقضی شده است.",
+    FLOW_EXPIRED:"نشست ورود منقضی شده است.",
+    TWOFA_INVALID:"رمز دو مرحله‌ای اشتباه است.",
+    TWOFA_REQUIRED:"رمز دو مرحله‌ای را وارد کن.",
+    MASTER_TOO_SHORT:"رمز اصلی باید حداقل ۱۲ کاراکتر باشد.",
+    MASTER_NEEDS_UPPER:"رمز اصلی باید یک حرف بزرگ داشته باشد.",
+    MASTER_NEEDS_LOWER:"رمز اصلی باید یک حرف کوچک داشته باشد.",
+    MASTER_NEEDS_NUMBER:"رمز اصلی باید یک عدد داشته باشد.",
+    MASTER_NEEDS_SYMBOL:"رمز اصلی باید یک نماد داشته باشد.",
+    MASTER_INVALID:"رمز اصلی اشتباه است.",
+    ACCOUNT_NOT_FOUND:"اکانت موردنظر پیدا نشد.",
+    SESSION_REVOKED:"نشست تلگرام دیگر معتبر نیست.",
+    RATE_LIMITED:"تعداد تلاش‌ها بیش از حد مجاز است."
+  };
+  return map[code] || "احراز هویت ناموفق بود.";
+}
+
+function authUser(account) {
+  return {
+    id:String(account.telegram_user_id),
+    sub:String(account.telegram_user_id),
+    name:account.name||"",
+    username:account.username||"",
+    authAt:Math.floor(Date.now()/1000),
+    expiresAt:Math.floor(Date.now()/1000)+7*24*60*60
+  };
+}
+
 const safePath = (urlPath) => {
   const raw = decodeURIComponent((urlPath || "/").split("?")[0] || "/");
   const normalized = path.normalize(raw).replace(/^\/+/, "");
