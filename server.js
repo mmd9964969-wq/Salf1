@@ -605,6 +605,42 @@ function authUser(account) {
   };
 }
 
+
+async function directAuth(req,res,route) {
+  if(!directOrigin(req)){
+    sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+    return;
+  }
+  if(directLimited(req,route,route.includes("master")?6:10,route.includes("master")?10*60*1000:5*60*1000)){
+    sendJson(res,req,429,{ok:false,error:"RATE_LIMITED"});
+    return;
+  }
+  try{
+    const body=await directBody(req);
+    const result=await callWorker(req,route,body);
+    if(!result.ok){
+      const code=result.data?.error||"AUTH_FAILED";
+      sendJson(res,req,result.status,{ok:false,code,error:authErrorMessage(code)});
+      return;
+    }
+    if(route==="/auth/master/setup"||route==="/auth/master/login"){
+      const account=result.data.account;
+      const session=authUser(account);
+      res.writeHead(200,{
+        ...securityHeaders(req),
+        "Content-Type":"application/json; charset=utf-8",
+        "Cache-Control":"no-store",
+        "Set-Cookie":cookie("salf_session",packSigned(session),{maxAge:7*24*60*60})
+      });
+      res.end(JSON.stringify(result.data));
+      return;
+    }
+    sendJson(res,req,200,result.data);
+  }catch(error){
+    sendJson(res,req,400,{ok:false,error:authErrorMessage(error.message)});
+  }
+}
+
 const safePath = (urlPath) => {
   const raw = decodeURIComponent((urlPath || "/").split("?")[0] || "/");
   const normalized = path.normalize(raw).replace(/^\/+/, "");
