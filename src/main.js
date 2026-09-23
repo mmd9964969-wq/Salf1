@@ -294,13 +294,10 @@ function pageHtml() {
         '<h1>' + (state.lang==="fa" ? "قلمرو آماده است" : "THE REALM IS READY") + '</h1>' +
         '<p class="stage-subtitle">' + (state.account?.name || state.account?.username || "") + '</p>' +
         '<div class="dashboard-line"><span>TELEGRAM ID</span><strong>' + (state.account?.id ?? state.account?.telegram_user_id ?? "—") + '</strong></div>' +
-        '<div class="dashboard-line"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : (state.lang==="fa" ? "ندارد" : "NONE")) + '</strong></div>' +
-        '<div class="dashboard-line"><span>ACCOUNT</span><strong>' + (state.account?.name || "CONNECTED") + '</strong></div>' +
-        '<div class="dashboard-line"><span>SECURITY</span><strong>' + (state.lang==="fa" ? "MASTER · SESSION PROTECTED" : "MASTER · SESSION PROTECTED") + '</strong></div>' +
-        '<button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button>' +
-        '<button class="ghost-action" id="logoutButton" type="button">' + (state.lang==="fa" ? "خروج از قلمرو" : "SIGN OUT") + '</button>' +
-      '</div>';
-  } else {
+        '<div class="dashboard-line"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : "—") + '</strong></div>' +
+        '<div class="dashboard-line"><span>SECURITY</span><strong>MASTER · SESSION PROTECTED</strong></div>' +
+        '<div class="dashboard-actions"><button class="royal-button compact" id="openGems" type="button"><span class="button-light"></span><span class="button-label">◈ خرید جم</span><span class="button-mark">↗</span></button><button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button><button class="ghost-action" id="logoutButton" type="button">' + (state.lang==="fa" ? "خروج از قلمرو" : "SIGN OUT") + '</button></div>' +
+      '</div>  } else {
     body =
       '<div class="auth-stage success-stage">' +
         '<div class="success-core">♛</div>' +
