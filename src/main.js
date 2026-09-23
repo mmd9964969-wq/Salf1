@@ -564,6 +564,8 @@ function bindCommon() {
   document.querySelector("#backButton")?.addEventListener("click",()=>{
     if(state.stage==="code")state.stage="identifier";
     else if(state.stage==="twofa")state.stage="code";
+    else if(state.stage==="gems")state.stage="dashboard";
+    else if(state.stage==="gem_detail")state.stage="gems";
     render();
   });
 
