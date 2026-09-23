@@ -419,6 +419,33 @@ async def master_login(identifier, password):
         await client.disconnect()
 
 
+
+async def restore_session(telegram_user_id):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT session_enc
+                FROM salf_accounts
+                WHERE telegram_user_id = %s
+                LIMIT 1
+                """,
+                (str(telegram_user_id),),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        raise ValueError("ACCOUNT_NOT_FOUND")
+
+    client = await create_client(decrypt_session(row[0]))
+    try:
+        if not await client.is_user_authorized():
+            raise ValueError("SESSION_REVOKED")
+        user = await client.get_me()
+        return {"ok": True, "account": account_payload(user)}
+    finally:
+        await client.disconnect()
+
 def cleanup_flows():
     while True:
         time.sleep(60)
@@ -570,6 +597,14 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("RATE_LIMITED")
                 result = asyncio.run_coroutine_threadsafe(
                     setup_master(data.get("flow_id", ""), data.get("password", "")), LOOP
+                ).result(timeout=30)
+                self.send_json(200, result)
+                return
+
+
+            if self.path == "/auth/session":
+                result = asyncio.run_coroutine_threadsafe(
+                    restore_session(data.get("telegram_user_id", "")), LOOP
                 ).result(timeout=30)
                 self.send_json(200, result)
                 return
