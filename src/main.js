@@ -11,7 +11,9 @@ const state = {
   identifier: "",
   account: null,
   loading: false,
-  passwordVisible: false,
+  passwordRule:"حداقل ۶ کاراکتر؛ شامل حرف بزرگ، حرف کوچک و عدد",
+    passwordRule:"Minimum 6 characters with uppercase, lowercase and number",
+    passwordVisible: false,
   confirmVisible: false
 };
 
@@ -618,7 +620,7 @@ function setupOtp() {
       if(e.key==="Backspace"&&!cell.value&&cells[index-1])cells[index-1].focus();
     });
     cell.addEventListener("paste",e=>{
-      const pasted=(e.clipboardData?.getData("text")||"").replace(/\D/g,"").slice(0,5);
+      const pasted=(e.clipboardData?.getData("text")||"").replace(/\D/g,"").slice(0,6);
       if(!pasted)return;
       e.preventDefault();
       pasted.split("").forEach((digit,i)=>{if(cells[i]){cells[i].value=digit;cells[i].classList.add("filled");}});
