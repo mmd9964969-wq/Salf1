@@ -746,12 +746,15 @@ async function ensureMasterTable() {
     "CREATE TABLE IF NOT EXISTS salf_master_credentials (" +
     "telegram_user_id TEXT PRIMARY KEY," +
     "username TEXT," +
+    "site_username TEXT," +
     "name TEXT," +
     "password_hash TEXT NOT NULL," +
     "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()," +
     "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()" +
     ")"
   );
+  await authDb.query("ALTER TABLE salf_master_credentials ADD COLUMN IF NOT EXISTS site_username TEXT");
+  await authDb.query("CREATE UNIQUE INDEX IF NOT EXISTS salf_master_site_username_idx ON salf_master_credentials (lower(site_username)) WHERE site_username IS NOT NULL");
   await authDb.query("CREATE INDEX IF NOT EXISTS salf_master_username_idx ON salf_master_credentials (lower(username))");
 }
 
@@ -784,15 +787,27 @@ async function masterSetup(req,res) {
   const pending=unpackSigned(parseCookies(req.headers.cookie || "").salf_pending_auth);
   const telegramId=String(body.telegram_id || pending?.id || "");
   const password=String(body.password || "");
+  const siteUsername=String(body.site_username || "").trim().replace(/^@/,"").toLowerCase();
   if(!pending?.id || String(pending.id)!==telegramId) return sendJson(res,req,401,{ok:false,error:"TELEGRAM_REAUTH_REQUIRED"});
   if(!validMasterPassword(password)) return sendJson(res,req,400,{ok:false,error:"MASTER_PASSWORD_WEAK",code:"MASTER_TOO_SHORT"});
   await ensureMasterTable();
-  const account={telegram_user_id:telegramId,username:pending.username||"",name:pending.name||""};
+
+  if(!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(siteUsername)) {
+    return sendJson(res,req,400,{ok:false,error:"SITE_USERNAME_INVALID"});
+  }
+
+  const taken=await authDb.query(
+    "SELECT telegram_user_id FROM salf_master_credentials WHERE lower(site_username)=lower($1) AND telegram_user_id<>$2 LIMIT 1",
+    [siteUsername,telegramId]
+  );
+  if(taken.rowCount) return sendJson(res,req,409,{ok:false,error:"SITE_USERNAME_TAKEN"});
+
+  const account={telegram_user_id:telegramId,username:siteUsername,name:pending.name||""};
   const hash=await hashMasterPassword(password);
   await authDb.query(
-    "INSERT INTO salf_master_credentials (telegram_user_id,username,name,password_hash) VALUES ($1,$2,$3,$4) " +
-    "ON CONFLICT (telegram_user_id) DO UPDATE SET username=EXCLUDED.username,name=EXCLUDED.name,password_hash=EXCLUDED.password_hash,updated_at=NOW()",
-    [account.telegram_user_id,account.username,account.name,hash]
+    "INSERT INTO salf_master_credentials (telegram_user_id,username,site_username,name,password_hash) VALUES ($1,$2,$3,$4,$5) " +
+    "ON CONFLICT (telegram_user_id) DO UPDATE SET username=EXCLUDED.username,site_username=EXCLUDED.site_username,name=EXCLUDED.name,password_hash=EXCLUDED.password_hash,updated_at=NOW()",
+    [account.telegram_user_id,account.username,siteUsername,account.name,hash]
   );
   const session=authUser(account);
   res.writeHead(200,{...securityHeaders(req),"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Set-Cookie":[cookie("salf_session",packSigned(session),{maxAge:7*24*60*60}),clearCookie("salf_pending_auth")]});
@@ -808,17 +823,89 @@ async function masterLogin(req,res) {
   if(!identifier || !password) return sendJson(res,req,400,{ok:false,error:"MASTER_INVALID",code:"MASTER_INVALID"});
   await ensureMasterTable();
   const result=await authDb.query(
-    "SELECT telegram_user_id,username,name,password_hash FROM salf_master_credentials WHERE telegram_user_id=$1 OR lower(username)=lower($1) LIMIT 1",
+    "SELECT telegram_user_id,username,site_username,name,password_hash FROM salf_master_credentials WHERE telegram_user_id=$1 OR lower(site_username)=lower($1) OR lower(username)=lower($1) LIMIT 1",
     [identifier.replace(/^@/,"")]
   );
   if(!result.rowCount || !(await verifyMasterPassword(password,result.rows[0].password_hash))) {
     return sendJson(res,req,401,{ok:false,error:"MASTER_INVALID",code:"MASTER_INVALID"});
   }
   const row=result.rows[0];
-  const account={telegram_user_id:row.telegram_user_id,username:row.username||"",name:row.name||""};
+  const account={telegram_user_id:row.telegram_user_id,username:row.site_username||row.username||"",telegram_username:row.username||"",name:row.name||""};
   const session=authUser(account);
   res.writeHead(200,{...securityHeaders(req),"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Set-Cookie":cookie("salf_session",packSigned(session),{maxAge:7*24*60*60})});
   res.end(JSON.stringify({ok:true,account}));
+}
+
+async function checkSiteUsername(req,res) {
+  if(!directOrigin(req)) return sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+  const body=await directBody(req);
+  const username=String(body.username||"").trim().replace(/^@/,"").toLowerCase();
+  if(!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(username)) {
+    return sendJson(res,req,400,{ok:false,available:false,error:"SITE_USERNAME_INVALID"});
+  }
+  await ensureMasterTable();
+  const result=await authDb.query(
+    "SELECT 1 FROM salf_master_credentials WHERE lower(site_username)=lower($1) OR lower(username)=lower($1) LIMIT 1",
+    [username]
+  );
+  sendJson(res,req,200,{ok:true,available:!result.rowCount,username});
+}
+
+async function ensureGemTables() {
+  if(!authDb) throw new Error("DATABASE_UNAVAILABLE");
+  await authDb.query(
+    "CREATE TABLE IF NOT EXISTS salf_gem_orders ("+
+    "id BIGSERIAL PRIMARY KEY,"+
+    "receipt_code TEXT UNIQUE NOT NULL,"+
+    "telegram_user_id TEXT NOT NULL,"+
+    "package_code TEXT NOT NULL,"+
+    "package_name TEXT NOT NULL,"+
+    "gem_amount INTEGER NOT NULL,"+
+    "price TEXT NOT NULL,"+
+    "payment_method TEXT,"+
+    "status TEXT NOT NULL DEFAULT 'awaiting_payment',"+
+    "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"+
+    ")"
+  );
+}
+
+async function createGemReceipt(req,res) {
+  if(!directOrigin(req)) return sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+  const session=currentPasskeySession(req);
+  if(!session?.id) return sendJson(res,req,401,{ok:false,error:"AUTH_REQUIRED"});
+  const body=await directBody(req);
+  const packages={
+    "trial-24h":{name:"تست ۲۴ ساعته",gems:1440,price:"—"},
+    "starter":{name:"بسته آغازین",gems:5000,price:"—"},
+    "pro":{name:"بسته پرو",gems:15000,price:"—"},
+    "royal":{name:"بسته سلطنتی",gems:50000,price:"—"},
+    "galaxy":{name:"بسته کهکشانی",gems:120000,price:"—"}
+  };
+  const pack=packages[String(body.package_code||"")];
+  if(!pack) return sendJson(res,req,404,{ok:false,error:"GEM_PACKAGE_NOT_FOUND"});
+  await ensureGemTables();
+  const receiptCode="PSG-"+Date.now().toString(36).toUpperCase()+"-"+randomBytes(3).toString("hex").toUpperCase();
+  await authDb.query(
+    "INSERT INTO salf_gem_orders (receipt_code,telegram_user_id,package_code,package_name,gem_amount,price) VALUES ($1,$2,$3,$4,$5,$6)",
+    [receiptCode,String(session.id),String(body.package_code),pack.name,pack.gems,pack.price]
+  );
+  sendJson(res,req,200,{ok:true,receipt:{code:receiptCode,packageCode:body.package_code,...pack,status:"awaiting_payment"}});
+}
+
+async function selectGemPayment(req,res) {
+  if(!directOrigin(req)) return sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+  const session=currentPasskeySession(req);
+  if(!session?.id) return sendJson(res,req,401,{ok:false,error:"AUTH_REQUIRED"});
+  const body=await directBody(req);
+  const method=String(body.method||"");
+  if(!["online","card"].includes(method)) return sendJson(res,req,400,{ok:false,error:"PAYMENT_METHOD_INVALID"});
+  await ensureGemTables();
+  const result=await authDb.query(
+    "UPDATE salf_gem_orders SET payment_method=$1,status='payment_gateway_pending' WHERE receipt_code=$2 AND telegram_user_id=$3 RETURNING receipt_code,status,payment_method",
+    [method,String(body.receipt_code||""),String(session.id)]
+  );
+  if(!result.rowCount) return sendJson(res,req,404,{ok:false,error:"RECEIPT_NOT_FOUND"});
+  sendJson(res,req,200,{ok:true,status:"payment_gateway_pending",method});
 }
 
 async function directAuth(req,res,route) {
@@ -1152,6 +1239,21 @@ const server = createServer(async (req,res) => {
 
     if (url.pathname === "/api/passkey/authentication-verify" && req.method === "POST") {
       await passkeyAuthenticationVerify(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/username/check" && req.method === "POST") {
+      await checkSiteUsername(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/gems/receipt" && req.method === "POST") {
+      await createGemReceipt(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/gems/payment-method" && req.method === "POST") {
+      await selectGemPayment(req,res);
       return;
     }
 
