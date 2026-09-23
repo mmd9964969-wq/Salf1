@@ -3,9 +3,18 @@ import { createHash, createHmac, createPublicKey, randomBytes, timingSafeEqual, 
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Pool } from "pg";
+import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "dist");
 const port = Number(process.env.PORT || 4173);
+
+const authDb = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 8000
+}) : null;
 
 const mime = {
   ".html":"text/html; charset=utf-8",
