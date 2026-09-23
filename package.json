@@ -1,0 +1,15 @@
+{
+  "name": "salf1-panther-auth",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "three": "^0.180.0",
+    "vite": "^7.1.5"
+  }
+}
