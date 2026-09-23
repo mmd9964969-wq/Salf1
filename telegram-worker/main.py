@@ -1469,6 +1469,23 @@ def balance_markup():
     ]}
 
 
+def payment_markup(package_key: str):
+    payment_url = str(os.getenv("SALF1_PAYMENT_URL", "")).strip()
+    card_url = str(os.getenv("SALF1_CARD_PAYMENT_URL", "")).strip()
+    support_url = str(os.getenv("SALF1_PAYMENT_SUPPORT_URL", "")).strip()
+    rows = []
+    if payment_url:
+        rows.append([{"text":"‹ پرداخت آنلاین","url":payment_url}])
+    if card_url:
+        rows.append([{"text":"‹ پرداخت کارت‌به‌کارت","url":card_url}])
+    if support_url:
+        rows.append([{"text":"‹ پشتیبانی پرداخت","url":support_url}])
+    if not rows:
+        rows.append([{"text":"‹ پشتیبانی پرداخت","callback_data":"shop_support"}])
+    rows.append([{"text":"‹ بازگشت به بسته‌ها","callback_data":"shop_packages"}])
+    return {"inline_keyboard": rows}
+
+
 def package_markup():
     return {"inline_keyboard": [
         [{"text": "‹ 1 ساعت · 60 جم", "callback_data": "package_60"}],
@@ -1678,15 +1695,27 @@ def trial_remaining_text(row) -> str:
 
 
 async def mini_main_text(user_id: int, user_first_name: str | None):
-    name = html.escape(user_first_name or "کاربر")
+    row = await db_user(str(user_id))
+    name = html.escape(user_first_name or (str(row["first_name"]) if row else "کاربر"))
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    balance = int(row["tron_balance"]) if row else 0
     return f"""
 <b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-سلام <b>[ {name} ]</b> 🌹
+خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
-به مرکز SALF1 خوش آمدید.
+⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
+⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
+⛂ تست رایگان 24 ساعت : {trial_remaining_text(row)}
+⛂ موجودی : {balance:,} جم ترون
+⛂ مصرف فعال : 1 جم ترون در دقیقه
 
 ─────━━───── ◈ ─────━━─────
+
+<b>◈ وضـعیـت سـرویـس</b>
+
+★ - برای شروع، اکانت خود را متصل کنید.
 """
     
 
@@ -2459,10 +2488,39 @@ async def process_callback(callback_query: dict):
 - پس از تایید پرداخت جم‌ها به موجودی شما اضافه می‌شوند.
 - تا قبل از تایید نهایی موجودی حساب شما تغییری نمی‌کند.""",
                 {"inline_keyboard": [
-                    [{"text": "‹ پرداخت", "callback_data": f"pay_{data.removeprefix('package_')}"}],
+                    [{"text": "‹ ادامه پرداخت", "callback_data": f"payment_{data.removeprefix('package_')}"}],
                     [{"text": "‹ بازگشت", "callback_data": "shop_packages"}],
                 ]})
             return
+
+    if data.startswith("payment_"):
+        package_id = data.removeprefix("payment_")
+        package_names = {
+            "60": ("1 ساعت", 60),
+            "1440": ("24 ساعت", 1440),
+            "10080": ("7 روز", 10080),
+            "43200": ("30 روز", 43200),
+            "86400": ("60 روز", 86400),
+        }
+        item = package_names.get(package_id)
+        if not item:
+            await bot_edit(chat_id, message_id, "⛂ بسته موردنظر پیدا نشد.", shop_packages_markup())
+            return
+        title, amount = item
+        await bot_edit(
+            chat_id, message_id,
+            f"""<b>◈ پرداخت جم</b>
+
+⛂ بسته : <b>{title}</b>
+⛂ مقدار : <b>{amount:,} جم ترون</b>
+⛂ مصرف : <b>1 جم / دقیقه</b>
+
+─────━━───── ◈ ─────━━─────
+
+روش پرداخت را انتخاب کنید.""",
+            payment_markup(package_id),
+        )
+        return
 
     if data == "shop_balance":
         text, markup = await balance_text(user_id)
