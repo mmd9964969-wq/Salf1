@@ -436,8 +436,8 @@ function bindCommon() {
   });
 
   document.querySelector("#existingLogin")?.addEventListener("click",()=>{ state.recovery=false; state.stage="master_login"; render(); });
-  document.querySelector("#newConnection")?.addEventListener("click",()=>{ state.recovery=false; state.stage="identifier"; render(); });
-  document.querySelector("#forgotPassword")?.addEventListener("click",()=>{ state.recovery=true; state.stage="identifier"; render(); });
+  document.querySelector("#newConnection")?.addEventListener("click",()=>{ state.recovery=false; state.siteUsername=""; state.stage="identifier"; render(); });
+  document.querySelector("#forgotPassword")?.addEventListener("click",()=>{ state.recovery=true; state.siteUsername=""; state.stage="identifier"; render(); });
 
   document.querySelector("#identifierForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
@@ -506,7 +506,7 @@ function bindCommon() {
     e.preventDefault();
     const password=document.querySelector("#master")?.value||"";
     const confirm=document.querySelector("#masterConfirm")?.value||"";
-    if(!/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{6,}$/.test(password)){setLive(t("passwordRule"));return;}
+    if(!/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,}$/.test(password)){setLive(t("masterRule"));return;}
     if(password!==confirm){setLive(t("mismatch"));return;}
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
@@ -514,7 +514,14 @@ function bindCommon() {
     document.body.classList.add("security-sequence");
     document.querySelector("#brandShield")?.classList.add("active");
     try{
-      const data=await postJson("/api/auth/master/setup",{telegram_id:state.account?.id,password});
+      const siteUsername=(document.querySelector("#siteUsername")?.value||"").trim().replace(/^@/,"").toLowerCase();
+      if(!state.recovery && !siteUsername){setLive("نام کاربری سلف را انتخاب کن.");return;}
+      if(!state.recovery){
+        const check=await postJson("/api/username/check",{username:siteUsername});
+        if(!check.available){setLive("این نام کاربری قبلاً گرفته شده است.");return;}
+        state.siteUsername=siteUsername;
+      }
+      const data=await postJson("/api/auth/master/setup",{telegram_id:state.account?.id,password,site_username:state.siteUsername});
       state.stage="success";
       state.account=data.account||state.account;
       setLive(t("access"));
@@ -625,10 +632,45 @@ function bindCommon() {
     render();
   });
 
+  document.querySelector("#openGems")?.addEventListener("click",()=>{state.stage="gems";render();});
+  document.querySelectorAll(".gem-card").forEach(btn=>btn.addEventListener("click",()=>{
+    state.selectedGem=state.gemPackages.find(p=>p.code===btn.dataset.gem)||null;
+    state.stage="gem_detail"; render();
+  }));
+  document.querySelector("#payGem")?.addEventListener("click",async()=>{
+    try{
+      const data=await postJson("/api/gems/receipt",{package_code:state.selectedGem?.code});
+      state.receipt=data.receipt; state.stage="receipt"; render();
+    }catch(error){setLive(error.message||t("invalid"));}
+  });
+  document.querySelectorAll(".glass-gate").forEach(btn=>btn.addEventListener("click",async()=>{
+    try{
+      await postJson("/api/gems/payment-method",{receipt_code:state.receipt?.code,method:btn.dataset.method});
+      state.paymentStatus=btn.dataset.method;
+      showToast(btn.dataset.method==="online"?"درگاه آنلاین فعلاً اسکلت است.":"درگاه کارت به کارت فعلاً اسکلت است.");
+    }catch(error){showToast(error.message||t("invalid"));}
+  }));
+  document.querySelector("#backToGems")?.addEventListener("click",()=>{state.stage="gems";render();});
   document.querySelector("#logoutButton")?.addEventListener("click",()=>{
     window.location.assign("/auth/logout");
   });
 
+  const usernameInput=document.querySelector("#siteUsername");
+  usernameInput?.addEventListener("input",()=>{
+    const value=usernameInput.value.trim().replace(/^@/,"");
+    const node=document.querySelector("#usernameState");
+    if(!node)return;
+    clearTimeout(window.__usernameTimer);
+    if(!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(value)){node.textContent="۵ تا ۳۲ کاراکتر؛ حروف، عدد و _";node.className="username-state invalid";return;}
+    node.textContent="در حال بررسی...";
+    window.__usernameTimer=setTimeout(async()=>{
+      try{
+        const data=await postJson("/api/username/check",{username:value});
+        node.textContent=data.available?"نام کاربری آزاد است":"این نام قبلاً گرفته شده است";
+        node.className="username-state "+(data.available?"available":"taken");
+      }catch{node.textContent="بررسی ناموفق بود";node.className="username-state invalid";}
+    },420);
+  });
   setupFieldFocus();
 }
 
