@@ -353,9 +353,11 @@ def get_customer_id(request: web.Request) -> str | None:
 
 
 def authorized(request: web.Request) -> bool:
-    return bool(WORKER_API_TOKEN) and request.headers.get(
-        "X-Salf1-Worker-Token", ""
-    ) == WORKER_API_TOKEN
+    provided = (
+        request.headers.get("X-Salf1-Worker-Token", "")
+        or request.headers.get("X-Worker-Token", "")
+    )
+    return bool(WORKER_API_TOKEN) and hmac.compare_digest(provided, WORKER_API_TOKEN)
 
 
 def auth_error():
@@ -670,11 +672,7 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
             raise RuntimeError("start login first")
 
         await client.connect()
-        print(
-            f"Login verify for {customer_id}: "
-            f"pending_2fa={customer_id in pending_2fa}, "
-            f"authorized_before={await client.is_user_authorized()}"
-        )
+
 
         if not phone:
             raise RuntimeError("start login first")
@@ -699,20 +697,17 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
                 await client.sign_in(phone, code, phone_code_hash=code_hash)
         except SessionPasswordNeededError:
             pending_2fa.add(customer_id)
-            print(f"Login verify for {customer_id}: Telegram requires 2FA password.")
             return {"status": "2fa_required"}
         except PasswordHashInvalidError:
-            print(f"Login verify for {customer_id}: invalid 2FA password.")
             return {"status": "2fa_invalid"}
         except PhoneCodeInvalidError:
-            print(f"Login verify for {customer_id}: invalid or already-used login code.")
             return {"status": "code_invalid"}
         except PhoneCodeExpiredError:
             pending_phones.pop(customer_id, None)
             pending_codes.pop(customer_id, None)
             pending_code_hashes.pop(customer_id, None)
             pending_2fa.discard(customer_id)
-            print(f"Login verify for {customer_id}: login code expired.")
+
             return {"status": "code_expired"}
         except PhoneNumberInvalidError:
             return {"status": "phone_invalid"}
@@ -720,10 +715,7 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
             return {"status": "flood_wait", "seconds": int(exc.seconds)}
 
         authorized_now = await client.is_user_authorized()
-        print(
-            f"Login authorization check for {customer_id}: "
-            f"authorized={authorized_now}; 2fa_pending={customer_id in pending_2fa}"
-        )
+
         if not authorized_now:
             raise RuntimeError(
                 "Telegram authorization did not complete; account was not connected"
@@ -732,18 +724,53 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
         try:
             client.session.save()
         except Exception as exc:
-            print(f"Session save warning for {customer_id}: {exc}")
+            print(f"Session save warning: {type(exc).__name__}")
 
         me = await client.get_me()
 
-    pending_phones.pop(customer_id, None)
+    # Convert the temporary login key (phone / flow identity) into the stable
+    # Telegram numeric user ID. The account session then follows the numeric ID.
+    previous_customer_id = customer_id
+    stable_customer_id = str(int(me.id))
+    if previous_customer_id != stable_customer_id:
+        old_dir = SESSION_DIR / f"customer-{customer_key(previous_customer_id)}"
+        new_dir = SESSION_DIR / f"customer-{customer_key(stable_customer_id)}"
+
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+        new_dir.parent.mkdir(parents=True, exist_ok=True)
+        if old_dir.exists() and not new_dir.exists():
+            shutil.move(str(old_dir), str(new_dir))
+
+        clients.pop(previous_customer_id, None)
+
+        client = TelegramClient(
+            session_path(stable_customer_id),
+            int(API_ID_RAW),
+            API_HASH,
+        )
+        attach_events(client, stable_customer_id)
+        clients[stable_customer_id] = client
+        await client.connect()
+        me = await client.get_me()
+        customer_id = stable_customer_id
+
+    pending_phones.pop(previous_customer_id, None)
+    pending_codes.pop(previous_customer_id, None)
+    pending_code_hashes.pop(previous_customer_id, None)
+    pending_2fa.discard(previous_customer_id)
+    login_locks.pop(previous_customer_id, None)
     pending_codes.pop(customer_id, None)
     pending_code_hashes.pop(customer_id, None)
     pending_2fa.discard(customer_id)
     login_locks.pop(customer_id, None)
     me_cache[customer_id] = int(me.id)
-    await update_account_state(customer_id, True)
-    await set_salf_enabled(customer_id, False)
+    await ensure_bot_user(int(me.id), me.username, me.first_name)
+    await update_account_state(str(me.id), True)
+    await set_salf_enabled(str(me.id), False)
 
     # Start the one-time 24-hour trial only after the account login succeeds.
     if db_pool is not None:
