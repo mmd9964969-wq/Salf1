@@ -1,3 +1,4 @@
+import { startRegistration, startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import "./style.css";
 
 const app = document.querySelector("#app");
