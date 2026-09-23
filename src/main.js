@@ -13,7 +13,18 @@ const state = {
   account: null,
   loading: false,
   passwordVisible: false,
-  confirmVisible: false
+  confirmVisible: false,
+  siteUsername: "",
+  selectedGem: null,
+  receipt: null,
+  paymentStatus: "",
+  gemPackages: [
+    {code:"trial-24h",name:"تست ۲۴ ساعته",gems:1440,price:"—",duration:"تا 24 ساعت فعالیت مداوم"},
+    {code:"starter",name:"بسته آغازین",gems:5000,price:"—",duration:"تا 83 ساعت و 20 دقیقه فعالیت"},
+    {code:"pro",name:"بسته پرو",gems:15000,price:"—",duration:"تا 250 ساعت فعالیت"},
+    {code:"royal",name:"بسته سلطنتی",gems:50000,price:"—",duration:"تا 833 ساعت فعالیت"},
+    {code:"galaxy",name:"بسته کهکشانی",gems:120000,price:"—",duration:"تا 2000 ساعت فعالیت"}
+  ]
 };
 
 const copy = {
