@@ -7,6 +7,7 @@ const LANGS = ["fa","en","ar","zh","es","fr","de"];
 const state = {
   lang: localStorage.getItem("salf1_lang") || "fa",
   stage: "entry",
+  entryOpen: false,
   recovery: false,
   flowId: "",
   identifier: "",
@@ -198,30 +199,33 @@ function pageHtml() {
   if (state.stage === "entry") {
     body =
       '<div class="auth-stage" data-stage="entry">' +
-        '<div class="stage-mark">00</div>' +
+        '<div class="stage-mark">00 · ROYAL GATE</div>' +
         '<h1>' + t("login") + '</h1>' +
-        '<p class="stage-subtitle">' + (state.lang==="fa" ? "درگاه ورود و اتصال اکانت" : t("management")) + '</p>' +
-        '<div class="entry-options">' +
-          '<button class="royal-button" id="existingLogin" type="button"><span class="button-light"></span><span class="button-label">' + (state.lang==="fa" ? "ورود به اکانت" : "ACCOUNT LOGIN") + '</span><span class="button-mark">↗</span></button>' +
-          '<button class="ghost-action entry-secondary" id="newConnection" type="button">' + (state.lang==="fa" ? "اتصال اکانت جدید" : "CONNECT NEW ACCOUNT") + ' ↗</button>' +
+        '<p class="stage-subtitle">' + (state.lang==="fa" ? "درگاه خصوصی مدیریت اکانت" : t("management")) + '</p>' +
+        '<div class="entry-options ' + (state.entryOpen ? "open" : "") + '">' +
+          '<button class="royal-button" id="entryLogin" type="button"><span class="button-light"></span><span class="button-label">' + t("login") + '</span><span class="button-mark">↗</span></button>' +
+          '<div class="entry-choice-row">' +
+            '<button class="choice-button" id="existingLogin" type="button"><span class="choice-index">01</span><strong>' + (state.lang==="fa" ? "ورود به اکانت" : "ACCOUNT LOGIN") + '</strong><small>' + (state.lang==="fa" ? "برای اکانت ساخته‌شده" : "FOR AN EXISTING ACCOUNT") + '</small><b>↗</b></button>' +
+            '<button class="choice-button" id="newConnection" type="button"><span class="choice-index">02</span><strong>' + (state.lang==="fa" ? "اتصال اکانت جدید" : "CONNECT NEW ACCOUNT") + '</strong><small>' + (state.lang==="fa" ? "اتصال و ساخت دسترسی" : "CONNECT & CREATE ACCESS") + '</small><b>↗</b></button>' +
+          '</div>' +
         '</div>' +
       '</div>';
   } else if (state.stage === "identifier") {
     body =
       '<div class="auth-stage" data-stage="identifier">' +
         '<div class="stage-mark">01</div>' +
-        '<h1>' + t("login") + '</h1>' +
-        '<p class="stage-subtitle">' + t("management") + '</p>' +
+        '<h1>' + (state.recovery ? (state.lang==="fa" ? "بازیابی رمز" : "PASSWORD RECOVERY") : t("login")) + '</h1>' +
+        '<p class="stage-subtitle">' + (state.recovery ? (state.lang==="fa" ? "شماره موبایل متصل به تلگرام را وارد کن." : "Enter the Telegram-linked mobile number.") : t("management")) + '</p>' +
         '<form id="identifierForm" class="auth-form">' +
           '<div class="minimal-field">' +
             '<input id="identifier" type="text" placeholder=" " autocomplete="username tel" required>' +
-            '<label for="identifier">' + t("identifier") + '</label>' +
+            '<label for="identifier">' + (state.recovery ? (state.lang==="fa" ? "شماره موبایل متصل به تلگرام" : "Telegram-linked mobile number") : t("identifier")) + '</label>' +
             '<span class="field-line"></span><span class="field-particles"></span>' +
           '</div>' +
-          '<p class="field-hint">' + t("identifierHint") + '</p>' +
+          '<p class="field-hint">' + (state.recovery ? (state.lang==="fa" ? "کد بازیابی به حساب تلگرام شما ارسال خواهد شد." : "A recovery code will be sent to your Telegram account.") : t("identifierHint")) + '</p>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("continue") + '</span><span class="button-mark">↗</span></button>' +
         '</form>' +
-      '</div>';
+      '</div>;
   } else if (state.stage === "code") {
     body =
       '<div class="auth-stage" data-stage="code">' +
@@ -439,9 +443,10 @@ function bindCommon() {
     });
   });
 
-  document.querySelector("#existingLogin")?.addEventListener("click",()=>{ state.recovery=false; state.stage="master_login"; render(); });
-  document.querySelector("#newConnection")?.addEventListener("click",()=>{ state.recovery=false; state.siteUsername=""; state.stage="identifier"; render(); });
-  document.querySelector("#forgotPassword")?.addEventListener("click",()=>{ state.recovery=true; state.siteUsername=""; state.stage="identifier"; render(); });
+  document.querySelector("#entryLogin")?.addEventListener("click",()=>{ state.entryOpen=true; render(); });
+  document.querySelector("#existingLogin")?.addEventListener("click",()=>{ state.recovery=false; state.entryOpen=false; state.stage="master_login"; render(); });
+  document.querySelector("#newConnection")?.addEventListener("click",()=>{ state.recovery=false; state.entryOpen=false; state.siteUsername=""; state.stage="identifier"; render(); });
+  document.querySelector("#forgotPassword")?.addEventListener("click",()=>{ state.recovery=true; state.siteUsername=state.siteUsername||""; state.stage="identifier"; render(); });
 
   document.querySelector("#identifierForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
@@ -538,7 +543,7 @@ function bindCommon() {
         if(!check.available){setLive("این نام کاربری قبلاً گرفته شده است.");return;}
         state.siteUsername=siteUsername;
       }
-      const data=await postJson("/api/auth/master/setup",{telegram_id:state.account?.id,password,site_username:state.siteUsername});
+      const data=await postJson("/api/auth/master/setup",{telegram_id:state.account?.id,password,site_username:state.siteUsername,recovery:state.recovery});
       state.stage="success";
       state.account=data.account||state.account;
       setLive(t("access"));
@@ -753,6 +758,7 @@ function showToast(text) {
 }
 
 function startLogoMorph() {
+  if (window.__salfLogoTimer) clearTimeout(window.__salfLogoTimer);
   const logo=document.querySelector("#brandWordmark");
   if(!logo)return;
   const effects=["weight","wave","shatter","tilt","glitch","energy","particles"];
@@ -760,9 +766,9 @@ function startLogoMorph() {
     if(!document.body.contains(logo))return;
     logo.dataset.effect=effects[Math.floor(Math.random()*effects.length)];
     setTimeout(()=>{if(document.body.contains(logo))logo.removeAttribute("data-effect");},900+Math.random()*260);
-    setTimeout(run,1500+Math.random()*1000);
+    window.__salfLogoTimer=setTimeout(run,1500+Math.random()*1000);
   };
-  setTimeout(run,1400);
+  window.__salfLogoTimer=setTimeout(run,1400);
 }
 
 function initCosmos() {
@@ -835,12 +841,17 @@ function initCosmos() {
     ctx.fillStyle = "#05050A";
     ctx.fillRect(0, 0, width, height);
 
-    if (transition > 0) {
-      drawScene(current, local / duration, 1 - eased);
-      drawScene(next, 0.02, eased);
-      drawDissolve(eased);
-    } else {
-      drawScene(current, local / duration, 1);
+    try {
+      if (transition > 0) {
+        drawScene(current, local / duration, 1 - eased);
+        drawScene(next, 0.02, eased);
+        drawDissolve(eased);
+      } else {
+        drawScene(current, local / duration, 1);
+      }
+    } catch (error) {
+      console.error("SALF1 cosmic scene error:", error);
+      drawFallback(current);
     }
 
     const vignette = ctx.createRadialGradient(width/2, height/2, Math.min(width,height)*0.08, width/2, height/2, Math.max(width,height)*0.78);
@@ -851,6 +862,18 @@ function initCosmos() {
     ctx.fillRect(0, 0, width, height);
 
     raf = requestAnimationFrame(frame);
+  }
+
+  function drawFallback(index) {
+    const colors=[
+      ["#070712","#211047"],["#09070B","#42140C"],["#090B12","#173051"],
+      ["#0B0711","#431E30"],["#050C16","#123B62"],["#061012","#124D53"],
+      ["#0E0B08","#4E3A20"],["#0D0909","#4A2017"],["#130904","#65240E"]
+    ];
+    const pair=colors[index]||colors[0];
+    const g=ctx.createRadialGradient(width*.5,height*.45,0,width*.5,height*.45,Math.max(width,height)*.72);
+    g.addColorStop(0,pair[1]); g.addColorStop(1,"#05050A");
+    ctx.globalAlpha=1; ctx.fillStyle=g; ctx.fillRect(0,0,width,height);
   }
 
   function drawScene(index, progress, opacity) {
