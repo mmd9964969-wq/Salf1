@@ -471,7 +471,7 @@ function bindCommon() {
   document.querySelector("#codeForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
     const code=[...document.querySelectorAll(".otp-cell")].map(x=>x.value).join("");
-    if(code.length!==6)return;
+    if(code.length<5 || code.length>6)return;
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
     setLive(t("verifying"));
