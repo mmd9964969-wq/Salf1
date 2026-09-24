@@ -94,7 +94,7 @@ export async function handleApi(req,res,sendJson) {
 
   if (req.method === "POST" && req.url === "/api/username/check") {
     const body = await readJson(req);
-    const username = String(body.username || "").trim().replace(/^@/,"").toLowerCase();
+    const username = String(body.username || body.site_username || "").trim().replace(/^@/,"").toLowerCase();
     const valid = /^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(username);
     let available = valid;
     if (valid && pool) {
