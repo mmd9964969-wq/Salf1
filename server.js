@@ -4,7 +4,6 @@ import { promisify } from "node:util";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { handleApi } from "./src/api.js";
 import { Pool } from "pg";
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
 
@@ -788,6 +787,7 @@ async function masterSetup(req,res) {
   const pending=unpackSigned(parseCookies(req.headers.cookie || "").salf_pending_auth);
   const telegramId=String(body.telegram_id || pending?.id || "");
   const password=String(body.password || "");
+  const recovery=Boolean(body.recovery);
   let siteUsername=String(body.site_username || "").trim().replace(/^@/,"").toLowerCase();
   if(!pending?.id || String(pending.id)!==telegramId) return sendJson(res,req,401,{ok:false,error:"TELEGRAM_REAUTH_REQUIRED"});
   if(!validMasterPassword(password)) return sendJson(res,req,400,{ok:false,error:"MASTER_PASSWORD_WEAK",code:"MASTER_TOO_SHORT"});
@@ -802,6 +802,16 @@ async function masterSetup(req,res) {
     return sendJson(res,req,400,{ok:false,error:"SITE_USERNAME_INVALID"});
   }
 
+  if(recovery){
+    const existing=await authDb.query(
+      "SELECT telegram_user_id,site_username,username,name FROM salf_master_credentials WHERE telegram_user_id=$1 LIMIT 1",
+      [telegramId]
+    );
+    if(!existing.rowCount) return sendJson(res,req,404,{ok:false,error:"ACCOUNT_NOT_FOUND"});
+    siteUsername=String(existing.rows[0].site_username || existing.rows[0].username || "").trim().replace(/^@/,"").toLowerCase();
+    if(!siteUsername) return sendJson(res,req,400,{ok:false,error:"SITE_USERNAME_INVALID"});
+  }
+
   const taken=await authDb.query(
     "SELECT telegram_user_id FROM salf_master_credentials WHERE lower(site_username)=lower($1) AND telegram_user_id<>$2 LIMIT 1",
     [siteUsername,telegramId]
@@ -810,11 +820,19 @@ async function masterSetup(req,res) {
 
   const account={telegram_user_id:telegramId,username:siteUsername,name:pending.name||""};
   const hash=await hashMasterPassword(password);
-  await authDb.query(
-    "INSERT INTO salf_master_credentials (telegram_user_id,username,site_username,name,password_hash) VALUES ($1,$2,$3,$4,$5) " +
-    "ON CONFLICT (telegram_user_id) DO UPDATE SET username=EXCLUDED.username,site_username=EXCLUDED.site_username,name=EXCLUDED.name,password_hash=EXCLUDED.password_hash,updated_at=NOW()",
-    [account.telegram_user_id,account.username,siteUsername,account.name,hash]
-  );
+
+  if(recovery){
+    await authDb.query(
+      "UPDATE salf_master_credentials SET password_hash=$1,name=$2,updated_at=NOW() WHERE telegram_user_id=$3",
+      [hash,account.name,telegramId]
+    );
+  } else {
+    await authDb.query(
+      "INSERT INTO salf_master_credentials (telegram_user_id,username,site_username,name,password_hash) VALUES ($1,$2,$3,$4,$5) " +
+      "ON CONFLICT (telegram_user_id) DO UPDATE SET username=EXCLUDED.username,site_username=EXCLUDED.site_username,name=EXCLUDED.name,password_hash=EXCLUDED.password_hash,updated_at=NOW()",
+      [account.telegram_user_id,account.username,siteUsername,account.name,hash]
+    );
+  }
   const session=authUser(account);
   res.writeHead(200,{...securityHeaders(req),"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Set-Cookie":[cookie("salf_session",packSigned(session),{maxAge:7*24*60*60}),clearCookie("salf_pending_auth")]});
   res.end(JSON.stringify({ok:true,account}));
@@ -857,6 +875,22 @@ async function checkSiteUsername(req,res) {
   sendJson(res,req,200,{ok:true,available:!result.rowCount,username});
 }
 
+const GEM_PACKAGES = {
+  "trial-24h": { code:"trial-24h", name:"تست ۲۴ ساعته", gems:1440, duration:"تا 24 ساعت فعالیت مداوم", type:"بسته مصرفی" },
+  starter: { code:"starter", name:"بسته آغازین", gems:5000, duration:"تا 83 ساعت و 20 دقیقه فعالیت", type:"بسته مصرفی" },
+  pro: { code:"pro", name:"بسته پرو", gems:15000, duration:"تا 250 ساعت فعالیت", type:"بسته مصرفی" },
+  royal: { code:"royal", name:"بسته سلطنتی", gems:50000, duration:"تا 833 ساعت فعالیت", type:"بسته مصرفی" },
+  galaxy: { code:"galaxy", name:"بسته کهکشانی", gems:120000, duration:"تا 2000 ساعت فعالیت", type:"بسته مصرفی" }
+};
+
+function gemPackage(code) {
+  return GEM_PACKAGES[String(code || "")] || null;
+}
+
+async function listGemPackages(req,res) {
+  sendJson(res,req,200,{ok:true,packages:Object.values(GEM_PACKAGES)});
+}
+
 async function ensureGemTables() {
   if(!authDb) throw new Error("DATABASE_UNAVAILABLE");
   await authDb.query(
@@ -880,14 +914,7 @@ async function createGemReceipt(req,res) {
   const session=currentPasskeySession(req);
   if(!session?.id) return sendJson(res,req,401,{ok:false,error:"AUTH_REQUIRED"});
   const body=await directBody(req);
-  const packages={
-    "trial-24h":{name:"تست ۲۴ ساعته",gems:1440,price:"—"},
-    "starter":{name:"بسته آغازین",gems:5000,price:"—"},
-    "pro":{name:"بسته پرو",gems:15000,price:"—"},
-    "royal":{name:"بسته سلطنتی",gems:50000,price:"—"},
-    "galaxy":{name:"بسته کهکشانی",gems:120000,price:"—"}
-  };
-  const pack=packages[String(body.package_code||"")];
+  const pack=gemPackage(body.package_code);
   if(!pack) return sendJson(res,req,404,{ok:false,error:"GEM_PACKAGE_NOT_FOUND"});
   await ensureGemTables();
   const receiptCode="PSG-"+Date.now().toString(36).toUpperCase()+"-"+randomBytes(3).toString("hex").toUpperCase();
@@ -945,7 +972,7 @@ async function directAuth(req,res,route) {
       res.end(JSON.stringify(result.data));
       return;
     }
-    if(route==="/auth/2fa" && result.data?.account){
+    if((route==="/auth/code" || route==="/auth/2fa") && result.data?.account && result.data?.step==="master_setup"){
       const account=result.data.account;
       const pending=packSigned({
         id:account.id ?? account.telegram_user_id,
@@ -1226,7 +1253,6 @@ const safePath = (urlPath) => {
 
 const server = createServer(async (req,res) => {
   try {
-    if (await handleApi(req,res,sendJson)) return;
     const url = new URL(req.url || "/", `http://localhost:${port}`);
 
     if (url.pathname === "/api/passkey/registration-options" && req.method === "GET") {
@@ -1251,6 +1277,11 @@ const server = createServer(async (req,res) => {
 
     if (url.pathname === "/api/username/check" && req.method === "POST") {
       await checkSiteUsername(req,res);
+      return;
+    }
+
+    if (url.pathname === "/api/gems/packages" && req.method === "GET") {
+      await listGemPackages(req,res);
       return;
     }
 
