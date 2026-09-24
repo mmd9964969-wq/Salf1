@@ -265,7 +265,8 @@ function pageHtml() {
           '<p class="master-rule">' + t("masterRule") + '</p>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("save") + '</span><span class="button-mark">♛</span></button>' +
         '</form>' +
-      '</div>\n    } else if (state.stage === "master_login") {
+      '</div>';
+  } else if (state.stage === "master_login") {
     body =
       '<div class="auth-stage" data-stage="master-login">' +
         '<div class="stage-mark">04</div>' +
@@ -297,7 +298,8 @@ function pageHtml() {
         '<div class="dashboard-line"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : "—") + '</strong></div>' +
         '<div class="dashboard-line"><span>SECURITY</span><strong>MASTER · SESSION PROTECTED</strong></div>' +
         '<div class="dashboard-actions"><button class="royal-button compact" id="openGems" type="button"><span class="button-light"></span><span class="button-label">◈ خرید جم</span><span class="button-mark">↗</span></button><button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button><button class="ghost-action" id="logoutButton" type="button">' + (state.lang==="fa" ? "خروج از قلمرو" : "SIGN OUT") + '</button></div>' +
-      '</div>  } else if(state.stage === "gems") {
+      '</div>';
+  } else if(state.stage === "gems") {
     body =
       '<div class="auth-stage gem-stage"><button class="stage-back" id="backButton" type="button">← بازگشت</button><div class="stage-mark">GEM MARKET / 05</div><h1>بسته‌های جم</h1><p class="stage-subtitle">قلمرو خود را با بسته مصرفی انتخاب کن.</p><div class="gem-grid">' +
       state.gemPackages.map((p,i)=>'<button class="gem-card" data-gem="'+p.code+'" type="button"><span class="gem-index">0'+(i+1)+'</span><strong>'+p.name+'</strong><b>'+p.gems.toLocaleString("fa-IR")+' جم</b><small>1 جم / دقیقه</small><i>↗</i></button>').join("") +
