@@ -956,6 +956,10 @@ async function directAuth(req,res,route) {
     const body=await directBody(req);
     const result=await callWorker(req,route,body);
     if(!result.ok){
+      if(result.data?.status==="2fa_required"){
+        sendJson(res,req,200,{ok:true,step:"twofa"});
+        return;
+      }
       const code=result.data?.error||"AUTH_FAILED";
       sendJson(res,req,result.status,{ok:false,code,error:authErrorMessage(code)});
       return;
