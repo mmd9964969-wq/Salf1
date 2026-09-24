@@ -934,3 +934,167 @@ body{overflow:hidden}
 .glass-gate:hover{transform:translateY(-3px);border-color:rgba(220,225,242,.30);box-shadow:0 18px 45px rgba(0,0,0,.25)}
 .glass-gate b,.glass-gate small{display:block}.glass-gate b{font:600 11px "Vazirmatn"}.glass-gate small{margin-top:7px;color:rgba(225,230,242,.30);font:500 8px "Vazirmatn"}
 @media(max-width:620px){.gem-grid,.payment-gates{grid-template-columns:1fr}.gem-detail-stage,.receipt-stage{max-height:59vh}}
+
+
+/* =========================================================
+   ENTRY CHOICE SYSTEM
+========================================================= */
+
+.entry-options{
+  width:min(100%,420px);
+  display:grid;
+  gap:12px;
+  margin-top:26px;
+}
+
+.entry-options .royal-button{
+  width:100%;
+}
+
+.entry-choice-row{
+  width:100%;
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  max-height:0;
+  opacity:0;
+  overflow:hidden;
+  pointer-events:none;
+  transform:translateY(-9px);
+  transition:
+    max-height .42s var(--ease),
+    opacity .32s ease,
+    transform .42s var(--ease);
+}
+
+.entry-options.open .entry-choice-row{
+  max-height:150px;
+  opacity:1;
+  pointer-events:auto;
+  transform:translateY(0);
+}
+
+.choice-button{
+  position:relative;
+  min-height:104px;
+  padding:17px 16px 15px;
+  border:1px solid rgba(226,231,244,.10);
+  border-radius:18px;
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.045),rgba(71,45,105,.035)),
+    rgba(7,7,13,.30);
+  color:rgba(241,243,249,.78);
+  text-align:right;
+  direction:rtl;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.035),
+    0 15px 38px rgba(0,0,0,.20);
+  backdrop-filter:blur(16px);
+  transition:
+    transform .28s var(--ease),
+    border-color .28s ease,
+    background .28s ease,
+    box-shadow .28s ease;
+}
+
+.choice-button:hover{
+  transform:translateY(-3px);
+  border-color:rgba(222,226,243,.24);
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.065),rgba(89,59,127,.06)),
+    rgba(7,7,13,.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.06),
+    0 22px 48px rgba(0,0,0,.28);
+}
+
+.choice-index{
+  display:block;
+  margin-bottom:14px;
+  color:rgba(222,227,241,.24);
+  font:700 8px/1 "Inter";
+  letter-spacing:.18em;
+  direction:ltr;
+  text-align:left;
+}
+
+.choice-button strong{
+  display:block;
+  color:rgba(241,243,249,.78);
+  font:600 11px/1.6 "Vazirmatn","Inter",sans-serif;
+}
+
+.choice-button small{
+  display:block;
+  margin-top:4px;
+  color:rgba(225,230,242,.30);
+  font:500 8px/1.6 "Vazirmatn","Inter",sans-serif;
+}
+
+.choice-button b{
+  position:absolute;
+  left:15px;
+  bottom:14px;
+  color:rgba(227,231,242,.36);
+  font:500 12px/1 "Inter";
+}
+
+.username-field{
+  margin-bottom:24px!important;
+}
+
+.username-state{
+  transition:color .25s ease,opacity .25s ease;
+}
+
+.gem-stage .stage-subtitle{
+  margin-bottom:18px;
+}
+
+.gem-grid{
+  scrollbar-width:thin;
+  scrollbar-color:rgba(214,218,235,.14) transparent;
+}
+
+.gem-detail-stage,
+.receipt-stage{
+  scrollbar-width:thin;
+  scrollbar-color:rgba(214,218,235,.14) transparent;
+}
+
+.payment-gates{
+  position:relative;
+}
+
+.glass-gate{
+  position:relative;
+  overflow:hidden;
+}
+
+.glass-gate::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  background:linear-gradient(115deg,transparent 25%,rgba(255,255,255,.08) 48%,transparent 70%);
+  transform:translateX(-120%);
+  transition:transform .75s var(--ease);
+  pointer-events:none;
+}
+
+.glass-gate:hover::after{
+  transform:translateX(120%);
+}
+
+.receipt-box strong{
+  word-break:break-word;
+}
+
+@media(max-width:620px){
+  .entry-choice-row{
+    grid-template-columns:1fr;
+    max-height:230px;
+  }
+  .choice-button{
+    min-height:92px;
+  }
+}
