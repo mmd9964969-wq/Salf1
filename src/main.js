@@ -225,7 +225,7 @@ function pageHtml() {
           '<p class="field-hint">' + (state.recovery ? (state.lang==="fa" ? "کد بازیابی به حساب تلگرام شما ارسال خواهد شد." : "A recovery code will be sent to your Telegram account.") : t("identifierHint")) + '</p>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("continue") + '</span><span class="button-mark">↗</span></button>' +
         '</form>' +
-      '</div>;
+      '</div>';
   } else if (state.stage === "code") {
     body =
       '<div class="auth-stage" data-stage="code">' +
@@ -656,7 +656,23 @@ function bindCommon() {
     render();
   });
 
-  document.querySelector("#openGems")?.addEventListener("click",()=>{state.stage="gems";render();});
+  document.querySelector("#openGems")?.addEventListener("click",async()=>{
+    state.stage="gems";
+    render();
+    try{
+      const data=await fetch("/api/gems/packages",{credentials:"same-origin",cache:"no-store"});
+      if(data.ok){
+        const payload=await data.json();
+        if(Array.isArray(payload.packages)&&payload.packages.length){
+          state.gemPackages=payload.packages.map(p=>({
+            code:p.code,name:p.name,gems:Number(p.gems||0),
+            price:p.price||"—",duration:p.duration||"تا پایان موجودی"
+          }));
+          render();
+        }
+      }
+    }catch{}
+  });
   document.querySelectorAll(".gem-card").forEach(btn=>btn.addEventListener("click",()=>{
     state.selectedGem=state.gemPackages.find(p=>p.code===btn.dataset.gem)||null;
     state.stage="gem_detail"; render();
