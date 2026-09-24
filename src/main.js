@@ -312,7 +312,8 @@ function pageHtml() {
     const r=state.receipt||{};
     body='<div class="auth-stage receipt-stage"><div class="stage-mark">RECEIPT / 06</div><h1>رسید خرید جم</h1><div class="receipt-box"><span>کد رسید</span><strong>'+r.code+'</strong><span>بسته</span><strong>'+r.name+'</strong><span>مقدار</span><strong>'+Number(r.gems||0).toLocaleString("fa-IR")+' جم</strong><span>وضعیت</span><strong>در انتظار پرداخت</strong></div><div class="payment-gates"><button class="glass-gate" data-method="online" type="button"><b>درگاه آنلاین</b><small>فعلاً اسکلت درگاه</small></button><button class="glass-gate" data-method="card" type="button"><b>کارت به کارت</b><small>فعلاً اسکلت درگاه</small></button></div><button class="ghost-action" id="backToGems" type="button">بازگشت به بسته‌ها</button></div>';
   } else {
-    body =' +
+    body =
+        '<div class="auth-stage success-stage">' +
         '<div class="success-core">♛</div>' +
         '<div class="stage-mark">ACCESS</div>' +
         '<h1>' + t("success") + '</h1>' +
@@ -321,6 +322,7 @@ function pageHtml() {
         '<div class="identity-chip"><span>TELEGRAM ID</span><strong>' + (state.account?.id ?? state.account?.telegram_user_id ?? "—") + '</strong></div>' +
         '<div class="identity-chip"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : (state.lang==="fa" ? "ندارد" : "NONE")) + '</strong></div>' +
         '<button class="ghost-action" id="enterPanel" type="button">' + (state.lang==="fa" ? "ورود به قلمرو" : "ENTER THE REALM") + ' ↗</button>' +
+      '</div>' +
       '</div>';
   }
 
