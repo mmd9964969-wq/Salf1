@@ -30,8 +30,8 @@ const state = {
 
 const copy = {
   fa:{
-    brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",
-    management:"Self Persian Management",
+    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",
+    management:"مدیریت اکانت",
     login:"ورود",
     identifier:"شماره تلفن یا نام کاربری تلگرام",
     identifierHint:"برای اتصال اولیه، شماره را با فرمت بین‌المللی وارد کن.",
@@ -71,8 +71,8 @@ const copy = {
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   en:{
-    brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",
-    management:"Self Persian Management",
+    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",
+    management:"مدیریت اکانت",
     login:"ENTER",
     identifier:"Telegram phone number or username",
     identifierHint:"Use an international phone number for the first connection.",
@@ -112,7 +112,7 @@ const copy = {
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   ar:{
-    brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"دخول",
+    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"إدارة الحساب",login:"دخول",
     identifier:"رقم هاتف أو اسم مستخدم تيليجرام",identifierHint:"استخدم رقمًا دوليًا عند الاتصال الأول.",
     continue:"متابعة",codeTitle:"رمز التحقق",codeText:"أدخل الرمز الذي أرسله تيليجرام.",code:"رمز من 5 أرقام",
     resend:"إعادة الإرسال",verify:"تأكيد الرمز",twofaTitle:"التحقق بخطوتين",twofaText:"أكمل طبقة الأمان الثانية.",
@@ -126,7 +126,7 @@ const copy = {
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   zh:{
-    brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"进入",
+    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"账户管理",login:"进入",
     identifier:"Telegram 手机号或用户名",identifierHint:"首次连接请使用国际手机号。",
     continue:"继续",codeTitle:"验证码",codeText:"输入 Telegram 发送的验证码。",code:"5 位验证码",
     resend:"重新发送",verify:"验证代码",twofaTitle:"两步验证",twofaText:"完成第二层安全验证。",
@@ -140,7 +140,7 @@ const copy = {
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   es:{
-    brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"ENTRAR",
+    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"GESTIÓN DE CUENTAS",login:"ENTRAR",
     identifier:"Teléfono o usuario de Telegram",identifierHint:"Usa un número internacional para la primera conexión.",
     continue:"CONTINUAR",codeTitle:"CÓDIGO DE VERIFICACIÓN",codeText:"Introduce el código enviado por Telegram.",code:"CÓDIGO DE 5 DÍGITOS",
     resend:"REENVIAR",verify:"VERIFICAR CÓDIGO",twofaTitle:"VERIFICACIÓN EN DOS PASOS",twofaText:"Completa la segunda capa de seguridad.",
@@ -155,7 +155,7 @@ const copy = {
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   fr:{
-    brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"ENTRER",
+    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"GESTION DE COMPTE",login:"ENTRER",
     identifier:"Téléphone ou nom d'utilisateur Telegram",identifierHint:"Utilisez un numéro international pour la première connexion.",
     continue:"CONTINUER",codeTitle:"CODE DE VÉRIFICATION",codeText:"Saisissez le code envoyé par Telegram.",code:"CODE À 5 CHIFFRES",
     resend:"RENVOYER",verify:"VÉRIFIER LE CODE",twofaTitle:"VÉRIFICATION EN DEUX ÉTAPES",twofaText:"Complétez la seconde couche de sécurité.",
@@ -170,7 +170,7 @@ const copy = {
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   de:{
-    brand:"Pᴇʀsɪᴀɴ Sᴇʟғ",management:"Self Persian Management",login:"EINTRETEN",
+    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"KONTOVERWALTUNG",login:"EINTRETEN",
     identifier:"Telegram-Telefonnummer oder Benutzername",identifierHint:"Für die erste Verbindung internationale Nummer verwenden.",
     continue:"WEITER",codeTitle:"BESTÄTIGUNGSCODE",codeText:"Gib den von Telegram gesendeten Code ein.",code:"5-STELLIGER CODE",
     resend:"ERNEUT SENDEN",verify:"CODE BESTÄTIGEN",twofaTitle:"ZWEI-SCHRITT-VERIFIZIERUNG",twofaText:"Schließe die zweite Sicherheitsebene ab.",
@@ -198,10 +198,8 @@ function pageHtml() {
 
   if (state.stage === "entry") {
     body =
-      '<div class="auth-stage" data-stage="entry">' +
+      '<div class="auth-stage entry-minimal" data-stage="entry">' +
         '<div class="stage-mark">00 · ROYAL GATE</div>' +
-        '<h1>' + t("login") + '</h1>' +
-        '<p class="stage-subtitle">' + (state.lang==="fa" ? "درگاه خصوصی مدیریت اکانت" : t("management")) + '</p>' +
         '<div class="entry-options ' + (state.entryOpen ? "open" : "") + '">' +
           '<button class="royal-button" id="entryLogin" type="button"><span class="button-light"></span><span class="button-label">' + t("login") + '</span><span class="button-mark">↗</span></button>' +
           '<div class="entry-choice-row">' +
@@ -311,7 +309,7 @@ function pageHtml() {
   } else if(state.stage === "gem_detail") {
     const p=state.selectedGem||state.gemPackages[0];
     body =
-      '<div class="auth-stage gem-detail-stage"><button class="stage-back" id="backButton" type="button">← بازگشت</button><div class="stage-mark">GEM PACKAGE</div><h1>◈ Pᴇʀsɪᴀɴ Sᴇʟғ Bᴏᴛ · Gᴇᴍ Pᴀᴄᴋᴀɢᴇ</h1><div class="gem-copy"><h3>مـشـخـصـات بـسـتـه</h3><p>⛂ - بسته : '+p.name+'<br>⛂ - مقدار : '+p.gems.toLocaleString("fa-IR")+' جم<br>⛂ - مصرف : 1 جم / دقیقه<br>⛂ - مدت استفاده : '+p.duration+'<br>⛂ - نوع : بسته مصرفی</p><hr><h3>نـحـوه مـصـرف</h3><p>هر 1 دقیقه فعالیت سلف برابر با 1 جم مصرف است.<br><br>⛂ - سلف فعال : مصرف جم<br>⛂ - سلف خاموش : بدون مصرف<br>⛂ - اکانت متصل نباشد : بدون مصرف<br>⛂ - موجودی 0 جم : توقف مصرف و فعالیت</p><hr><h3>مـوجـودی و مـصـرف</h3><p>موجودی حساب شما به‌ صورت خودکار از مقدار جم مصرف‌ شده کسر میشود.<br><br>⛂ - موجودی هیچ‌ وقت منفی نمیشود.<br>⛂ - مصرف فقط هنگام فعالیت سلف انجام میشود.<br>⛂ - با پایان موجودی مصرف متوقف میشود.<br>⛂ - مقدار باقی‌ مانده از طریق بخش «موجودی من» قابل مشاهده است.</p><hr><h3>شـرایـط بـسـتـه</h3><p>⛂ - جم پس از تایید خرید به حساب اضافه میشود.<br>⛂ - قبل از تایید پرداخت موجودی تغییر نمیکند.<br>⛂ - بسته بر اساس مقدار جم تعریف شده است.<br>⛂ - استفاده از جم فقط برای سرویس‌های فعال انجام میشود.<br>⛂ - انتقال یا تبدیل جم به وجه نقد ، در صورت فعال نبودن این قابلیت ، امکان‌ پذیر نیست.</p><hr><h3>هـشـدار مـوجـودی</h3><p>⛂ - موجودی کم : هشدار شارژ حساب<br>⛂ - موجودی 0 : توقف مصرف<br>⛂ - بدون موجودی : ادامه فعالیت نیازمند شارژ حساب است.</p><hr><h3>پـس از خـریـد</h3><p>پس از تأیید پرداخت مقدار جم خریداری‌ شده به موجودی حساب شما اضافه میشود و میتوانید از آن برای فعال نگه‌ داشتن سرویس استفاده کنید.</p><hr><p><strong>نکته :</strong> مدت قابل استفاده به میزان مصرف سلف بستگی دارد؛ فعال بودن مداوم سلف باعث مصرف مداوم جم میشود.</p></div><button class="royal-button" id="payGem" type="button"><span class="button-light"></span><span class="button-label">پرداخت</span><span class="button-mark">↗</span></button></div>';
+      '<div class="auth-stage gem-detail-stage"><button class="stage-back" id="backButton" type="button">← بازگشت</button><div class="stage-mark">GEM PACKAGE</div><h1>◈ Pᴇʀsɪᴀɴ ᴮᵒᵗ Bᴏᴛ · Gᴇᴍ Pᴀᴄᴋᴀɢᴇ</h1><div class="gem-copy"><h3>مـشـخـصـات بـسـتـه</h3><p>⛂ - بسته : '+p.name+'<br>⛂ - مقدار : '+p.gems.toLocaleString("fa-IR")+' جم<br>⛂ - مصرف : 1 جم / دقیقه<br>⛂ - مدت استفاده : '+p.duration+'<br>⛂ - نوع : بسته مصرفی</p><hr><h3>نـحـوه مـصـرف</h3><p>هر 1 دقیقه فعالیت سلف برابر با 1 جم مصرف است.<br><br>⛂ - سلف فعال : مصرف جم<br>⛂ - سلف خاموش : بدون مصرف<br>⛂ - اکانت متصل نباشد : بدون مصرف<br>⛂ - موجودی 0 جم : توقف مصرف و فعالیت</p><hr><h3>مـوجـودی و مـصـرف</h3><p>موجودی حساب شما به‌ صورت خودکار از مقدار جم مصرف‌ شده کسر میشود.<br><br>⛂ - موجودی هیچ‌ وقت منفی نمیشود.<br>⛂ - مصرف فقط هنگام فعالیت سلف انجام میشود.<br>⛂ - با پایان موجودی مصرف متوقف میشود.<br>⛂ - مقدار باقی‌ مانده از طریق بخش «موجودی من» قابل مشاهده است.</p><hr><h3>شـرایـط بـسـتـه</h3><p>⛂ - جم پس از تایید خرید به حساب اضافه میشود.<br>⛂ - قبل از تایید پرداخت موجودی تغییر نمیکند.<br>⛂ - بسته بر اساس مقدار جم تعریف شده است.<br>⛂ - استفاده از جم فقط برای سرویس‌های فعال انجام میشود.<br>⛂ - انتقال یا تبدیل جم به وجه نقد ، در صورت فعال نبودن این قابلیت ، امکان‌ پذیر نیست.</p><hr><h3>هـشـدار مـوجـودی</h3><p>⛂ - موجودی کم : هشدار شارژ حساب<br>⛂ - موجودی 0 : توقف مصرف<br>⛂ - بدون موجودی : ادامه فعالیت نیازمند شارژ حساب است.</p><hr><h3>پـس از خـریـد</h3><p>پس از تأیید پرداخت مقدار جم خریداری‌ شده به موجودی حساب شما اضافه میشود و میتوانید از آن برای فعال نگه‌ داشتن سرویس استفاده کنید.</p><hr><p><strong>نکته :</strong> مدت قابل استفاده به میزان مصرف سلف بستگی دارد؛ فعال بودن مداوم سلف باعث مصرف مداوم جم میشود.</p></div><button class="royal-button" id="payGem" type="button"><span class="button-light"></span><span class="button-label">پرداخت</span><span class="button-mark">↗</span></button></div>';
   } else if(state.stage === "receipt") {
     const r=state.receipt||{};
     body='<div class="auth-stage receipt-stage"><div class="stage-mark">RECEIPT / 06</div><h1>رسید خرید جم</h1><div class="receipt-box"><span>کد رسید</span><strong>'+r.code+'</strong><span>بسته</span><strong>'+r.name+'</strong><span>مقدار</span><strong>'+Number(r.gems||0).toLocaleString("fa-IR")+' جم</strong><span>وضعیت</span><strong>در انتظار پرداخت</strong></div><div class="payment-gates"><button class="glass-gate" data-method="online" type="button"><b>درگاه آنلاین</b><small>فعلاً اسکلت درگاه</small></button><button class="glass-gate" data-method="card" type="button"><b>کارت به کارت</b><small>فعلاً اسکلت درگاه</small></button></div><button class="ghost-action" id="backToGems" type="button">بازگشت به بسته‌ها</button></div>';
@@ -824,8 +822,12 @@ function initCosmos() {
   }
 
   const names = [
-    "MERCURY / 01", "MARS / 02", "VENUS / 03", "EARTH / 04", "NEPTUNE / 05",
-    "URANUS / 06", "SATURN / 07", "JUPITER / 08", "SUN / 09"
+    "PARTICLE FIELD / 01",
+    "METEOR FALL / 02",
+    "LUNAR SILENCE / 03",
+    "PLANET P / 04",
+    "STELLAR FIELD / 05",
+    "SOLAR ORBIT / 06"
   ];
 
   function resize() {
@@ -842,9 +844,9 @@ function initCosmos() {
   function frame(now) {
     const duration = 15000;
     ctx.globalCompositeOperation = "source-over";
-    const cycle = (now - start) % (duration * 9);
+    const cycle = (now - start) % (duration * 6);
     const current = Math.floor(cycle / duration);
-    const next = (current + 1) % 9;
+    const next = (current + 1) % 6;
     const local = cycle - current * duration;
     const transition = Math.max(0, (local - (duration - 2500)) / 2500);
     const eased = transition * transition * (3 - 2 * transition);
@@ -913,15 +915,12 @@ function initCosmos() {
 
     drawStars(index, progress);
 
-    if (index === 0) sceneOne(progress);
-    if (index === 1) sceneTwo(progress);
-    if (index === 2) sceneThree(progress);
-    if (index === 3) sceneFour(progress);
-    if (index === 4) sceneFive(progress);
-    if (index === 5) sceneSix(progress);
-    if (index === 6) sceneSeven(progress);
-    if (index === 7) sceneEight(progress);
-    if (index === 8) sceneNine(progress);
+    if (index === 0) cosmicSceneOne(progress);
+    if (index === 1) cosmicSceneTwo(progress);
+    if (index === 2) cosmicSceneThree(progress);
+    if (index === 3) cosmicSceneFour(progress);
+    if (index === 4) cosmicSceneFive(progress);
+    if (index === 5) cosmicSceneSix(progress);
 
     ctx.restore();
   }
@@ -1064,6 +1063,213 @@ function initCosmos() {
     for(let i=0;i<7;i++){const a=progress*5+i*.82,sx=x+Math.cos(a)*r*.96,sy=y+Math.sin(a)*r*.96;ctx.strokeStyle="rgba(255,225,147,.43)";ctx.lineWidth=3;ctx.beginPath();ctx.arc(sx,sy,24+(i%3)*11,a-.34,a+.34);ctx.stroke();}
     ctx.restore();
     for(let i=0;i<50;i++){const a=i*.49+progress*3.2,rr=r*(1.12+(i%8)*.11);ctx.fillStyle="rgba(255,214,132,.24)";ctx.beginPath();ctx.arc(x+Math.cos(a)*rr,y+Math.sin(a)*rr*.72,.8+(i%2),0,Math.PI*2);ctx.fill();}
+  }
+
+
+  function cosmicSceneOne(progress) {
+    // Deep particle field + thin violet-blue meteor trails.
+    meteorField(progress, 12, false);
+    dustBand(.48 + Math.sin(progress * Math.PI * 2) * .03, .44);
+
+    for (let i = 0; i < 22; i++) {
+      const x = width * ((i * 47) % 100) / 100 + pointer.x * (8 + i % 4 * 9);
+      const y = height * (((i * 83) % 100) / 100) + pointer.y * (5 + i % 3 * 5);
+      const a = .12 + (i % 6) * .035;
+      ctx.fillStyle = "rgba(180,194,235," + a + ")";
+      ctx.beginPath();
+      ctx.arc(x, y, .5 + (i % 3) * .45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function cosmicSceneTwo(progress) {
+    // Large falling meteors with warm controlled trails.
+    for (let i = 0; i < 8; i++) {
+      const p = (progress * (0.78 + i * .035) + i * .12) % 1;
+      const x = width * (.08 + i * .12) + Math.sin(p * 8 + i) * 36;
+      const y = -120 + p * (height + 260);
+      drawLargeMeteor(x, y, .66 + (i % 3) * .25, p);
+    }
+    dustBand(.62, .34);
+  }
+
+  function cosmicSceneThree(progress) {
+    // High-detail moon, crater structure, earthshine and surrounding dust.
+    const x = width * .68 + pointer.x * 18;
+    const y = height * .42 + pointer.y * 10;
+    const r = Math.min(width, height) * .19;
+
+    const halo = ctx.createRadialGradient(x, y, r * .45, x, y, r * 2.4);
+    halo.addColorStop(0, "rgba(215,228,255,.16)");
+    halo.addColorStop(1, "rgba(215,228,255,0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, width, height);
+
+    drawPlanet(x, y, r, ["#F1F3F5", "#AEB5BD", "#5E636A", "#1B1E23"]);
+    drawCraters(x, y, r, 70, .90);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = "rgba(100,128,178,.08)";
+    ctx.fillRect(x-r, y, r*2, r);
+    ctx.restore();
+
+    for (let i = 0; i < 55; i++) {
+      const a = i * .71 + progress * 4.1;
+      const rr = r * (1.15 + (i % 9) * .10);
+      ctx.fillStyle = "rgba(220,230,247,.16)";
+      ctx.beginPath();
+      ctx.arc(x + Math.cos(a) * rr, y + Math.sin(a) * rr * .58, .8 + (i % 2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function cosmicSceneFour(progress) {
+    // Unknown P planet + controlled meteor impact wave.
+    const x = width * .66 + pointer.x * 16;
+    const y = height * .55 + pointer.y * 9;
+    const r = Math.min(width, height) * .18;
+
+    drawPlanet(x, y, r, ["#A47AD2", "#5D347B", "#2A173C", "#090711"]);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.clip();
+
+    for (let i = 0; i < 10; i++) {
+      ctx.strokeStyle = i % 2 ? "rgba(123,197,225,.18)" : "rgba(210,161,247,.17)";
+      ctx.lineWidth = 2 + (i % 3);
+      ctx.beginPath();
+      ctx.arc(x + Math.sin(i * 1.5) * r * .28, y + Math.cos(i * 1.2) * r * .22, r * (.22 + i * .055), .2, 2.7);
+      ctx.stroke();
+    }
+
+    ctx.font = "700 " + Math.floor(r * .52) + "px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(245,238,255,.86)";
+    ctx.shadowBlur = 26;
+    ctx.shadowColor = "#B98BEA";
+    ctx.fillText("P", x, y);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    const impact = (progress * 1.25) % 1;
+    const mx = width * (.08 + impact * .70);
+    const my = height * (.10 + impact * .46);
+    drawLargeMeteor(mx, my, .78, impact);
+
+    if (progress > .55) {
+      const q = (progress - .55) / .45;
+      const wave = r * (.45 + q * 2.7);
+      ctx.strokeStyle = "rgba(255,107,53," + (.34 * (1-q)) + ")";
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(x, y, wave, 0, Math.PI * 2);
+      ctx.stroke();
+
+      for (let i = 0; i < 72; i++) {
+        const a = i * .51;
+        const rr = wave * (.16 + (i % 10) / 17);
+        ctx.fillStyle = "rgba(255,184,128," + (.16 * (1-q)) + ")";
+        ctx.fillRect(x + Math.cos(a) * rr, y + Math.sin(a) * rr, 1.5, 1.5);
+      }
+    }
+  }
+
+  function cosmicSceneFive(progress) {
+    // Thousands of stars: twinkle handled by drawStars plus an elevated foreground layer.
+    for (let i = 0; i < 34; i++) {
+      const a = i * .53 + progress * .20;
+      const rr = Math.min(width, height) * (.16 + (i % 8) * .062);
+      const x = width * .50 + Math.cos(a) * rr + pointer.x * 26;
+      const y = height * .47 + Math.sin(a) * rr * .56 + pointer.y * 18;
+      const size = .8 + (i % 4) * .55;
+      ctx.fillStyle = i % 3 === 0 ? "#E7EEFF" : "#B5C2DB";
+      ctx.globalAlpha = .28 + (i % 5) * .08;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    dustBand(.48, .22);
+  }
+
+  function cosmicSceneSix(progress) {
+    // Solar system + long comet tail. Returns to scene one naturally through the 6-scene cycle.
+    const cx = width * .50 + pointer.x * 12;
+    const cy = height * .53 + pointer.y * 8;
+    const sunR = Math.min(width, height) * .065;
+
+    const sunGlow = ctx.createRadialGradient(cx, cy, sunR * .1, cx, cy, sunR * 2.8);
+    sunGlow.addColorStop(0, "rgba(255,239,189,.44)");
+    sunGlow.addColorStop(.24, "rgba(255,164,74,.23)");
+    sunGlow.addColorStop(1, "rgba(255,94,32,0)");
+    ctx.fillStyle = sunGlow;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = "#FFC96B";
+    ctx.beginPath();
+    ctx.arc(cx, cy, sunR, 0, Math.PI * 2);
+    ctx.fill();
+
+    const planets = [
+      [ .82, .055, "#9AA0A8" ],
+      [ 1.15, .085, "#D09D78" ],
+      [ 1.48, .095, "#71A0C9" ],
+      [ 1.92, .115, "#C98263" ]
+    ];
+
+    planets.forEach((p, i) => {
+      const angle = p[0] + progress * (.34 - i * .035);
+      const orbitX = sunR * (3.0 + i * 1.55);
+      const orbitY = orbitX * .52;
+      const x = cx + Math.cos(angle) * orbitX;
+      const y = cy + Math.sin(angle) * orbitY;
+
+      ctx.strokeStyle = "rgba(192,204,229,.10)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, orbitX, orbitY, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const g = ctx.createRadialGradient(x-p[1]*.35, y-p[1]*.30, 0, x, y, p[1]);
+      g.addColorStop(0, "#FFFFFF");
+      g.addColorStop(.16, p[2]);
+      g.addColorStop(1, "#12141A");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, p[1], 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    if (planets[3]) {
+      const satAngle = planets[3][0] + progress * .20;
+      const sx = cx + Math.cos(satAngle) * sunR * 7.6;
+      const sy = cy + Math.sin(satAngle) * sunR * 4.0;
+      ctx.strokeStyle = "rgba(225,222,207,.30)";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, sunR * 1.9, sunR * .58, -.18, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    const cp = (progress * 1.05) % 1;
+    const cometX = width * (.10 + cp * .80);
+    const cometY = height * (.22 + Math.sin(cp * Math.PI * 2.6) * .14);
+    const tail = ctx.createLinearGradient(cometX - 260, cometY, cometX + 8, cometY);
+    tail.addColorStop(0, "rgba(116,196,255,0)");
+    tail.addColorStop(.66, "rgba(116,196,255,.16)");
+    tail.addColorStop(1, "rgba(239,246,255,.80)");
+    ctx.fillStyle = tail;
+    ctx.fillRect(cometX - 260, cometY - 2, 270, 4);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.beginPath();
+    ctx.arc(cometX, cometY, 3.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function drawPlanet(x,y,r,colors){
