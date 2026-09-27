@@ -1690,6 +1690,27 @@ async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
     return result
 
 
+
+async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: int = 60):
+    """Delete a Telegram message after a short delay without blocking updates."""
+    if not message_id:
+        return
+    try:
+        await asyncio.sleep(max(1, int(delay_seconds)))
+        await bot_api(
+            "deleteMessage",
+            {"chat_id": chat_id, "message_id": int(message_id)},
+            timeout=15,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(
+            f"Delayed message deletion error for chat={chat_id} "
+            f"message={message_id}: {type(exc).__name__}: {exc}"
+        )
+
+
 async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
     payload = {
         "chat_id": chat_id,
@@ -2154,7 +2175,36 @@ async def process_bot_message(message: dict):
         # The panel command is slashless and private-chat only.
         if text.startswith("/") or chat.get("type") != "private":
             return
-        await bot_send(chat["id"], await salf_panel_text(user_id), salf_panel_markup())
+
+        sent = await bot_send(
+            chat["id"],
+            await salf_panel_text(user_id),
+            salf_panel_markup(),
+        )
+
+        # Keep the chat clean: remove both the panel command sent by the user
+        # and the panel message itself after 60 seconds.
+        if sent and sent.get("ok"):
+            sent_message = sent.get("result") or {}
+            panel_message_id = int(sent_message.get("message_id") or 0)
+            if panel_message_id:
+                asyncio.create_task(
+                    schedule_message_delete(
+                        int(chat["id"]),
+                        panel_message_id,
+                        delay_seconds=60,
+                    )
+                )
+
+        command_message_id = int(message.get("message_id") or 0)
+        if command_message_id:
+            asyncio.create_task(
+                schedule_message_delete(
+                    int(chat["id"]),
+                    command_message_id,
+                    delay_seconds=60,
+                )
+            )
         return
 
     if normalized in {"مدیریت سلف", "مدیریت", "salf", "self"}:
