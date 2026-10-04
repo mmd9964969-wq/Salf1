@@ -1816,7 +1816,7 @@ async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
     return await bot_api("sendRichMessage", payload)
 
 
-async def schedule_message_deleteasync def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: int = 60):
+async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: int = 60):
     """Delete a Telegram message after a short delay without blocking updates."""
     if not message_id:
         return
