@@ -2726,6 +2726,7 @@ async def clock_settings_text(user_id: int):
             "destination_profile",
         ) if config.get(key)
     )
+    effective_interval = max(60, int(config.get("update_interval_seconds") or 60))
     return f"""<b>Sᴀʟғ1 · مرکز ساعت</b>
 
 <b>وضعیت ساعت</b>
@@ -2736,7 +2737,8 @@ async def clock_settings_text(user_id: int):
 زمان محلی : {html.escape(time_text)}
 فرمت : {CLOCK_FORMAT_NAMES.get(str(config.get("format")), "24 ساعته + ثانیه")}
 فونت : {CLOCK_FONT_NAMES.get(str(config.get("font")), "ساده")}
-بروزرسانی داخلی : هر {int(config.get("update_interval_seconds") or 1)} ثانیه
+بروزرسانی داخلی : چرخه بررسی ۱ ثانیه
+فاصله تغییر پروفایل : حداقل {effective_interval} ثانیه
 
 <b>مقصدهای فعال</b>
 
@@ -2865,19 +2867,20 @@ IANA : {html.escape(tz_name)}
 
 زمان شروع و پایان را مشخص کنید و روزهای فعال را انتخاب کنید. بیرون از این بازه، ساعت روی مقصدهای انتخاب‌شده اجرا نمی‌شود."""
     if page == "engine":
+        effective_interval = max(60, int(config.get("update_interval_seconds") or 60))
         return f"""<b>Sᴀʟғ1 · موتور بروزرسانی</b>
 
 چرخه داخلی : ۱ ثانیه
-فاصله ارسال : هر {int(config.get("update_interval_seconds") or 1)} ثانیه
 محاسبه منطقه زمانی : فعال
+فاصله امن تغییر پروفایل : حداقل {effective_interval} ثانیه
 تشخیص تغییر : {"فعال" if config.get("smart_update") else "خاموش"}
 تلاش مجدد : {"فعال" if config.get("retry") else "خاموش"}
 صف بروزرسانی : {"فعال" if config.get("queue") else "خاموش"}
-محافظ Rate Limit : {"فعال" if config.get("rate_limit_guard") else "خاموش"}
+محافظ Rate Limit : اجباری
 
 راهنما
 
-چرخه داخلی هر ثانیه زمان را بررسی می‌کند. تشخیص تغییر و محافظ Rate Limit را روشن نگه دارید تا فقط تغییرات لازم ارسال شوند."""
+چرخه داخلی هر ثانیه زمان را محاسبه می‌کند؛ تغییرات پروفایل برای جلوگیری از محدودیت Telegram با فاصله امن اعمال می‌شوند. نمایش ثانیه در قالب فعال است، اما خود پروفایل نمی‌تواند هر ثانیه با یک درخواست جداگانه بروزرسانی شود."""
     if page == "preview":
         preview_name, _ = clock_render_value(
             config.get("name_template") or "{BASE_NAME} | {TIME}",
@@ -3866,10 +3869,13 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
 
     if data.startswith("clock_interval_"):
         value = int(data.removeprefix("clock_interval_"))
-        if value in {1,5,10,30}:
+        if value in {60,120,300}:
             config = await clock_get_settings(user_id)
             config["update_interval_seconds"] = value
             await clock_save_settings(user_id, config)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
             await bot_edit(chat_id,message_id,await clock_page_text(user_id,"engine"),clock_page_markup("engine",config))
         return
 
