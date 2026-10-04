@@ -1248,32 +1248,139 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 RICH_DIVIDER = "─────━━───── ◈ ─────━━─────"
 
 
+def _clean_rich_inline(value: str) -> str:
+    source = str(value or "").strip()
+    source = source.replace("● ", "").replace("○ ", "")
+    source = source.replace("●", "").replace("○", "")
+    source = __import__("re").sub(r"^\s*[-•]\s*", "", source)
+    source = __import__("re").sub(r"\s+-\s+", " ", source)
+    return source.strip()
+
+
+def _clean_rich_heading(value: str) -> str:
+    source = str(value or "").strip()
+    if source.startswith("<b>") and source.endswith("</b>"):
+        source = source[3:-4].strip()
+    source = __import__("re").sub(r"^\s*◈\s*", "", source)
+    return _clean_rich_inline(source)
+
+
+def _clean_rich_data_line(value: str):
+    source = str(value or "").strip()
+    source = __import__("re").sub(r"^\s*◈\s*", "", source)
+    source = __import__("re").sub(r"^\s*⛂\s*", "", source)
+    source = __import__("re").sub(r"^\s*★\s*", "", source)
+    source = source.replace(" - ", " ", 1)
+    if " : " not in source:
+        return None
+    label, data = source.split(" : ", 1)
+    label = _clean_rich_inline(label)
+    data = _clean_rich_inline(data)
+    if not label or not data:
+        return None
+    return label, data
+
+
 def rich_message_html(text: str) -> str:
     """
-    Normalize every bot-facing system message into one Telegram Rich Message
-    structure without adding explanatory filler.
+    Build Telegram's native Rich Message HTML structure.
+    Legacy decorative symbols are converted into native headings,
+    paragraphs, lists, tables and dividers instead of being displayed.
     """
+    import re
+
     source = str(text or "").strip()
     if not source:
-        source = "<b>◈ Sᴀʟғ1</b>"
+        source = "<b>SALF1</b>"
 
-    first_line = next((line.strip() for line in source.splitlines() if line.strip()), "")
-    if not (
-        first_line.startswith("<b>")
-        or first_line.startswith("◈")
-        or first_line.startswith("[[")
-    ):
-        source = "<b>◈ Sᴀʟғ1</b>\n\n" + source
+    lines = source.splitlines()
+    parts: list[str] = []
+    data_rows: list[tuple[str, str]] = []
+    list_items: list[str] = []
 
-    if RICH_DIVIDER not in source:
-        source = source.rstrip() + "\n\n" + RICH_DIVIDER
+    def flush_table():
+        nonlocal data_rows
+        if not data_rows:
+            return
+        rows = [
+            "<tr><td><b>عنوان</b></td><td><b>مقدار</b></td></tr>"
+        ]
+        rows.extend(
+            f"<tr><td>{label}</td><td>{value}</td></tr>"
+            for label, value in data_rows
+        )
+        parts.append(
+            "<table is-bordered=\"true\" is-compact=\"true\">"
+            + "".join(rows)
+            + "</table>"
+        )
+        data_rows = []
 
-    return source
+    def flush_list():
+        nonlocal list_items
+        if not list_items:
+            return
+        parts.append("<ul>" + "".join(f"<li>{item}</li>" for item in list_items) + "</ul>")
+        list_items = []
+
+    for raw_line in lines:
+        line = raw_line.strip()
+
+        if not line:
+            flush_table()
+            flush_list()
+            continue
+
+        if line == RICH_DIVIDER:
+            flush_table()
+            flush_list()
+            parts.append("<hr/>")
+            continue
+
+        if line.startswith("<b>") and line.endswith("</b>"):
+            inner = _clean_rich_heading(line)
+            if inner:
+                flush_table()
+                flush_list()
+                parts.append(f"<h2>{inner}</h2>")
+            continue
+
+        if line.startswith("◈"):
+            cleaned = _clean_rich_heading(line)
+            if cleaned:
+                flush_table()
+                flush_list()
+                parts.append(f"<h2>{cleaned}</h2>")
+            continue
+
+        data = _clean_rich_data_line(line)
+        if data:
+            flush_list()
+            data_rows.append(data)
+            continue
+
+        bullet = re.sub(r"^\s*★\s*-\s*", "", line)
+        if bullet != line:
+            flush_table()
+            list_items.append(_clean_rich_inline(bullet))
+            continue
+
+        # Legacy separators/symbol-only prefixes become normal rich text.
+        cleaned = re.sub(r"^\s*[⛂★]\s*", "", line)
+        cleaned = _clean_rich_inline(cleaned)
+        if cleaned:
+            flush_table()
+            flush_list()
+            parts.append(f"<p>{cleaned}</p>")
+
+    flush_table()
+    flush_list()
+
+    return "\n".join(parts)
 
 
 async def self_respond(event, text: str, **kwargs):
     return await event.respond(rich_message_html(text), **kwargs)
-
 
 async def handle_self_command(event, customer_id: str, text: str):
     # Self-account commands are intentionally slashless.
@@ -1700,28 +1807,16 @@ async def bot_api(method: str, payload: dict | None = None, timeout: int = 35):
 async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
     payload = {
         "chat_id": chat_id,
-        "text": render_custom_emoji(rich_message_html(text)),
-        "parse_mode": "HTML",
+        "rich_message": {
+            "html": render_custom_emoji(rich_message_html(text)),
+            "is_rtl": True,
+        },
         **({"reply_markup": reply_markup} if reply_markup else {}),
     }
-    result = await bot_api("sendMessage", payload)
-    if result and result.get("ok"):
-        return result
-
-    # If Telegram rejects custom-emoji entities (for example when the bot
-    # owner lacks the required Premium entitlement), retry with the Unicode
-    # fallback so the panel itself never breaks.
-    if "[[" in str(text):
-        fallback = dict(payload)
-        fallback["text"] = strip_custom_emoji(rich_message_html(text))
-        if reply_markup:
-            fallback["reply_markup"] = _strip_invalid_button_emojis(reply_markup)
-        return await bot_api("sendMessage", fallback)
-    return result
+    return await bot_api("sendRichMessage", payload)
 
 
-
-async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: int = 60):
+async def schedule_message_deleteasync def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: int = 60):
     """Delete a Telegram message after a short delay without blocking updates."""
     if not message_id:
         return
@@ -1745,21 +1840,13 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
-        "text": render_custom_emoji(rich_message_html(text)),
-        "parse_mode": "HTML",
+        "rich_message": {
+            "html": render_custom_emoji(rich_message_html(text)),
+            "is_rtl": True,
+        },
         **({"reply_markup": reply_markup} if reply_markup else {}),
     }
-    result = await bot_api("editMessageText", payload)
-    if result and result.get("ok"):
-        return result
-    if "[[" in str(text):
-        fallback = dict(payload)
-        fallback["text"] = strip_custom_emoji(rich_message_html(text))
-        if reply_markup:
-            fallback["reply_markup"] = _strip_invalid_button_emojis(reply_markup)
-        return await bot_api("editMessageText", fallback)
-    return result
-
+    return await bot_api("editMessageText", payload)
 
 async def bot_answer_callback(callback_id: str):
     return await bot_api(
