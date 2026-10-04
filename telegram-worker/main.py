@@ -16,6 +16,7 @@ import time
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events, functions
+from telethon.sessions import MemorySession
 from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.errors import (
     PasswordHashInvalidError,
@@ -200,6 +201,74 @@ clock_next_allowed: dict[str, float] = {}
 
 def configured():
     return API_ID_RAW.isdigit() and bool(API_HASH)
+
+
+async def validate_telegram_api_configuration():
+    """
+    Validate TELEGRAM_API_ID + TELEGRAM_API_HASH against Telegram before
+    starting any customer phone-login flow.
+
+    This uses a temporary in-memory session and a harmless help.getConfig
+    request, so it never creates or modifies the customer's persistent
+    login session.
+    """
+    api_id = API_ID_RAW.strip()
+    api_hash = API_HASH.strip()
+
+    if not api_id:
+        raise RuntimeError(
+            "تنظیمات API ناقص است: TELEGRAM_API_ID در Railway تنظیم نشده است."
+        )
+    if not api_id.isdigit() or int(api_id) <= 0:
+        raise RuntimeError(
+            "تنظیمات API نامعتبر است: TELEGRAM_API_ID باید یک عدد مثبت باشد."
+        )
+    if not api_hash:
+        raise RuntimeError(
+            "تنظیمات API ناقص است: TELEGRAM_API_HASH در Railway تنظیم نشده است."
+        )
+    if len(api_hash) != 32:
+        raise RuntimeError(
+            "تنظیمات API نامعتبر است: TELEGRAM_API_HASH باید ۳۲ کاراکتر باشد."
+        )
+
+    test_client = TelegramClient(
+        MemorySession(),
+        int(api_id),
+        api_hash,
+    )
+
+    try:
+        await test_client.connect()
+        await test_client(functions.help.GetConfigRequest())
+    except Exception as exc:
+        error_name = type(exc).__name__
+        error_text = str(exc).strip()
+
+        if (
+            error_name == "ApiIdInvalidError"
+            or "API_ID_INVALID" in error_text.upper()
+            or "api_id/api_hash combination is invalid" in error_text.lower()
+        ):
+            raise RuntimeError(
+                "API تلگرام نامعتبر است: ترکیب TELEGRAM_API_ID و "
+                "TELEGRAM_API_HASH توسط Telegram رد شد. هر دو مقدار را "
+                "از یک Application در my.telegram.org بردارید و در Railway "
+                "بررسی کنید."
+            ) from exc
+
+        raise RuntimeError(
+            f"اتصال آزمایشی Telegram API ناموفق بود: "
+            f"{error_name}: {error_text or 'خطای نامشخص'}"
+        ) from exc
+    finally:
+        try:
+            if test_client.is_connected():
+                await test_client.disconnect()
+        except Exception:
+            pass
+
+    return True
 
 
 def bot_configured():
@@ -655,8 +724,10 @@ async def account_status(customer_id: str):
 
 
 async def start_customer_login(customer_id: str, phone: str):
-    if not configured():
-        raise RuntimeError("TELEGRAM_API_ID and TELEGRAM_API_HASH are not configured")
+    # Validate the API configuration before touching the user's phone/login
+    # flow. This makes API credential problems explicit instead of surfacing
+    # as a raw SendCodeRequest error.
+    await validate_telegram_api_configuration()
 
     lock = login_locks.setdefault(customer_id, asyncio.Lock())
     async with lock:
