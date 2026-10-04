@@ -1230,21 +1230,21 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 
     text = f"""◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ
 
-[[account]] - نام : {name}
-[[account]] - شناسه : {customer_id}
-[[account]] - اکانت : {"● متصل" if connected else "○ متصل نیست"}
-[[self]] - سلف : {"● فعال" if enabled else "○ خاموش"}
-[[system]] - پلن : رایگان
-[[system]] - زمان باقی‌مانده : {trial_left}
-[[balance]] - موجودی : {balance:,} جم
+نام : {name}
+شناسه : {customer_id}
+اکانت : {"متصل" if connected else "متصل نیست"}
+سلف : {"فعال" if enabled else "خاموش"}
+پلن : رایگان
+زمان باقی‌مانده : {trial_left}
+موجودی : {balance:,} جم
 
-[[system]] - وضعیت سیستم : ● پایدار
-[[system]] - وضعیت Worker : ● آنلاین
-[[tools]] - مصرف فعال : 1 جم / دقیقه
+وضعیت سیستم : پایدار
+وضعیت Worker : آنلاین
+مصرف فعال : 1 جم / دقیقه
 
 ─────━━───── ◈ ─────━━─────
 
-[[protection]] - دسترسی اختصاصی برای این حساب"""
+دسترسی اختصاصی برای این حساب"""
 
     client = client_for(customer_id)
     rendered_text, custom_entities = await render_telethon_custom_emoji(client, text)
