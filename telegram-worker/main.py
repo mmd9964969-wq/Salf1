@@ -2530,7 +2530,35 @@ async def clock_loop():
         await asyncio.sleep(1)
 
 async def salf_settings_text(user_id: int):
-    return """<b>Sᴀʟғ1 · تنظیمات سلف</b>"""
+    row = await db_user(str(user_id))
+    config = await clock_get_settings(user_id)
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    clock_enabled = bool(config.get("enabled"))
+
+    return f"""<b>Sᴀʟғ1 · تنظیمات سلف</b>
+
+─────━━───── ◈ ─────━━─────
+
+<b>وضعیت سرویس</b>
+
+<code>عنوان            مقدار</code>
+<code>اکانت            {"متصل" if connected else "متصل نیست"}</code>
+<code>سلف              {"فعال" if enabled else "خاموش"}</code>
+
+─────━━───── ◈ ─────━━─────
+
+<b>قابلیت‌های سلف</b>
+
+<code>عنوان            مقدار</code>
+<code>ساعت             {"فعال" if clock_enabled else "خاموش"}</code>
+<code>ماژول‌های فعال    {"۱" if clock_enabled else "۰"}</code>
+
+─────━━───── ◈ ─────━━─────
+
+<b>راهنما</b>
+
+برای استفاده از قابلیت‌های سلف، ابتدا وضعیت اتصال اکانت و سلف را بررسی کنید. سپس از «قابلیت‌های سلف» وارد تنظیمات ساعت شوید و گزینه‌های موردنظر را تنظیم کنید. تغییرات پس از ذخیره و فعال‌سازی، برای اجرای ساعت روی مقصدهای انتخاب‌شده اعمال می‌شوند."""
 
 def salf_settings_markup():
     return {"inline_keyboard": [
@@ -2540,30 +2568,35 @@ def salf_settings_markup():
 
 async def self_features_text(user_id: int):
     config = await clock_get_settings(user_id)
+    clock_enabled = bool(config.get("enabled"))
+
     return f"""<b>Sᴀʟғ1 · قابلیت‌های سلف</b>
 
-<b>قابلیت‌های فعال</b>
+─────━━───── ◈ ─────━━─────
 
-ساعت : {"فعال" if config.get("enabled") else "خاموش"}
+<b>قابلیت فعال</b>
 
-<b>ماژول‌های موجود</b>
+<code>عنوان            وضعیت</code>
+<code>ساعت             {"فعال" if clock_enabled else "خاموش"}</code>
 
-تاریخ و تقویم
-شمارنده
-وضعیت فعالیت
-متن و Bio خودکار
+─────━━───── ◈ ─────━━─────
 
-راهنما
+<b>قابلیت قابل استفاده</b>
 
-برای شروع، ساعت را انتخاب کنید. تنظیمات هر قابلیت در صفحه اختصاصی همان قابلیت انجام می‌شود و تغییرات پس از ذخیره برای اجرای آن قابلیت استفاده می‌شوند."""
+◈ <b>ساعت</b>
+
+⛂ - تنظیم و بروزرسانی خودکار ساعت بر اساس منطقه زمانی و قالب انتخاب‌شده.
+⛂ - امکان تنظیم مقصد، ظاهر، زمان‌بندی و قالب نمایش.
+
+─────━━───── ◈ ─────━━─────
+
+<b>راهنما</b>
+
+قابلیت «ساعت» را انتخاب کنید تا تنظیمات آن باز شود. در صفحه ساعت می‌توانید مقصد، منطقه زمانی، قالب نمایش، ظاهر و زمان‌بندی را مشخص کنید. پس از ذخیره و فعال‌سازی، تنظیمات انتخاب‌شده روی مقصدهای فعال اعمال می‌شوند."""
 
 def self_features_markup():
     return {"inline_keyboard": [
         [{"text":"› ساعت","callback_data":"clock"}],
-        [{"text":"› تاریخ و تقویم","callback_data":"feature_date"}],
-        [{"text":"› شمارنده","callback_data":"feature_counter"}],
-        [{"text":"› وضعیت فعالیت","callback_data":"feature_activity"}],
-        [{"text":"› متن و Bio خودکار","callback_data":"feature_auto_text"}],
         [{"text":"‹ بازگشت","callback_data":"panel_self"}],
     ]}
 
