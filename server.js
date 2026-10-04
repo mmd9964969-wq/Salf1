@@ -673,8 +673,23 @@ async function callWorker(req,route,payload) {
     signal:AbortSignal.timeout(35000)
   });
   const raw=await response.json().catch(()=>({ok:false,error:"WORKER_INVALID_RESPONSE"}));
-  if(route==="/auth/start" && raw.ok){
-    return {ok:true,status:200,data:{ok:true,step:"code"}};
+  if(route==="/auth/start"){
+    if(raw.ok){
+      return {
+        ok:true,
+        status:200,
+        data:{
+          ok:true,
+          step:raw.step || "code",
+          status:raw.status || "code_sent",
+          timeout:Number(raw.timeout || 0),
+          resend_after:Number(raw.resend_after || 60),
+          delivery:raw.delivery || "Telegram",
+          delivery_message:raw.delivery_message || ""
+        }
+      };
+    }
+    return {ok:false,status:response.status,data:raw};
   }
   if((route==="/auth/code" || route==="/auth/2fa") && raw.status==="2fa_required"){
     return {ok:false,status:401,data:{ok:false,status:"2fa_required",error:"TWOFA_REQUIRED"}};
@@ -723,7 +738,10 @@ function authErrorMessage(code) {
     MASTER_INVALID:"رمز اصلی اشتباه است.",
     ACCOUNT_NOT_FOUND:"اکانت موردنظر پیدا نشد.",
     SESSION_REVOKED:"نشست تلگرام دیگر معتبر نیست.",
-    RATE_LIMITED:"تعداد تلاش‌ها بیش از حد مجاز است."
+    RATE_LIMITED:"تعداد تلاش‌ها بیش از حد مجاز است.",
+    API_CONFIG_INVALID:"اتصال Telegram API روی Worker معتبر نیست.",
+    LOGIN_START_FAILED:"شروع ورود به تلگرام ناموفق بود.",
+    PHONE_REQUIRED:"شماره تلفن الزامی است."
   };
   return map[code] || "احراز هویت ناموفق بود.";
 }
