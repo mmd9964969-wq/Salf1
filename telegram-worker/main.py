@@ -1499,6 +1499,9 @@ async def handle_self_command(event, customer_id: str, text: str):
     # Self-account commands are intentionally slashless.
     if text.lstrip().startswith("/"):
         return False
+
+    user_id = int(customer_id)
+    chat = {"id": getattr(event, "chat_id", None)}
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
@@ -2558,11 +2561,25 @@ async def clock_apply_now(user_id: int, force: bool = False):
             return {"ok": True, "changed": False, "local": local}
 
         now_mono = time.monotonic()
-        if config.get("rate_limit_guard") and not force:
+
+        # Telegram profile changes are server-side API calls and can trigger
+        # FLOOD_WAIT when repeated too frequently. Keep a hard safety floor
+        # while still allowing the configured interval to be increased.
+        requested_interval = max(
+            1, int(config.get("update_interval_seconds") or 60)
+        )
+        safe_interval = max(60, requested_interval)
+
+        if not force:
             next_allowed = clock_next_allowed.get(str(user_id), 0.0)
             if now_mono < next_allowed:
                 await clock_stats_update(user_id, "skipped")
-                return {"ok": True, "changed": False, "rate_limited": True, "local": local}
+                return {
+                    "ok": True,
+                    "changed": False,
+                    "rate_limited": True,
+                    "local": local,
+                }
 
         try:
             await client(
@@ -2589,8 +2606,13 @@ async def clock_apply_now(user_id: int, force: bool = False):
             return {"ok": False, "reason": "update_failed"}
 
         clock_last_outputs[str(user_id)] = output
+
+        # Align regular updates to the next minute so an enabled clock keeps
+        # advancing predictably without hammering account.updateProfile.
+        delay_to_next_minute = max(1, 60 - int(local.second))
         clock_next_allowed[str(user_id)] = time.monotonic() + max(
-            1, int(config.get("update_interval_seconds") or 1)
+            60 if requested_interval <= 60 else requested_interval,
+            delay_to_next_minute,
         )
         await clock_stats_update(user_id, "success")
         return {"ok": True, "changed": True, "local": local}
