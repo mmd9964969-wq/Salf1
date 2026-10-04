@@ -9,7 +9,9 @@ import random
 import secrets
 import shutil
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time as dt_time
+from zoneinfo import ZoneInfo
+import time
 
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
@@ -192,6 +194,8 @@ http_session: ClientSession | None = None
 db_pool: asyncpg.Pool | None = None
 bot_username = ""
 web_login_tokens: dict[str, dict] = {}
+clock_last_outputs: dict[str, dict] = {}
+clock_next_allowed: dict[str, float] = {}
 
 
 def configured():
@@ -1403,6 +1407,79 @@ async def handle_self_command(event, customer_id: str, text: str):
     # Self-account commands are intentionally slashless.
     if text.lstrip().startswith("/"):
         return False
+    current_state = bot_states.get(user_id)
+    if isinstance(current_state, dict):
+        state = str(current_state.get("state") or "")
+        if state == "clock_timezone_custom":
+            try:
+                tz = ZoneInfo(text)
+            except Exception:
+                tz = None
+            if tz is None:
+                await bot_send(
+                    chat["id"],
+                    "<b>Sᴀʟғ1 · منطقه زمانی</b>\n\nمنطقه IANA معتبر نیست. نمونه: <code>Asia/Baku</code>",
+                )
+                return
+            config = await clock_get_settings(user_id)
+            config["timezone"] = text
+            config["city"] = text.split("/")[-1].replace("_", " ")
+            await clock_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_send(chat["id"], await clock_page_text(user_id, "timezone"), clock_page_markup("timezone", config))
+            return
+
+        if state in {"clock_template_name", "clock_template_bio"}:
+            cleaned = text.replace("\\n", " ").strip()
+            if not cleaned:
+                return
+            if len(cleaned) > 70:
+                await bot_send(chat["id"], "<b>Sᴀʟғ1 · قالب ساعت</b>\n\nقالب بیش از ۷۰ کاراکتر است.")
+                return
+            config = await clock_get_settings(user_id)
+            if state == "clock_template_name":
+                config["name_template"] = cleaned[:64]
+            else:
+                config["bio_template"] = cleaned[:70]
+            await clock_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_send(chat["id"], await clock_page_text(user_id, "template"), clock_page_markup("template", config))
+            return
+
+        if state == "clock_schedule_start":
+            import re
+            if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", text):
+                await bot_send(chat["id"], "<b>Sᴀʟғ1 · زمان‌بندی</b>\n\nزمان را با فرمت <code>HH:MM</code> ارسال کنید.")
+                return
+            config = await clock_get_settings(user_id)
+            config["schedule_start"] = text
+            config["schedule_enabled"] = True
+            await clock_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            clock_last_outputs.pop(str(user_id), None)
+            await bot_send(chat["id"], await clock_page_text(user_id, "schedule"), clock_page_markup("schedule", config))
+            return
+
+        if state == "clock_schedule_end":
+            import re
+            if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", text):
+                await bot_send(chat["id"], "<b>Sᴀʟғ1 · زمان‌بندی</b>\n\nزمان را با فرمت <code>HH:MM</code> ارسال کنید.")
+                return
+            config = await clock_get_settings(user_id)
+            config["schedule_end"] = text
+            config["schedule_enabled"] = True
+            await clock_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            clock_last_outputs.pop(str(user_id), None)
+            await bot_send(chat["id"], await clock_page_text(user_id, "schedule"), clock_page_markup("schedule", config))
+            return
+
     normalized = normalize_text(text)
     if normalized not in {
         "پنل",
@@ -1938,6 +2015,804 @@ async def mini_manage_text(user_id: int):
 """
 
 
+CLOCK_DEFAULTS = {
+    "enabled": False,
+    "timezone": "UTC",
+    "city": "UTC",
+    "format": "24_seconds",
+    "digits": "latin",
+    "separator": ":",
+    "font": "simple",
+    "destination_name": False,
+    "destination_bio": False,
+    "destination_last_name": False,
+    "destination_profile": False,
+    "name_template": "{BASE_NAME} | {TIME}",
+    "bio_template": "{TIME}",
+    "last_name_template": "{TIME}",
+    "show_city": False,
+    "show_timezone": False,
+    "show_date": False,
+    "show_day": False,
+    "show_seconds": True,
+    "schedule_enabled": False,
+    "schedule_start": "00:00",
+    "schedule_end": "23:59",
+    "schedule_days": [0, 1, 2, 3, 4, 5, 6],
+    "update_interval_seconds": 1,
+    "smart_update": True,
+    "retry": True,
+    "queue": True,
+    "rate_limit_guard": True,
+    "logging": True,
+    "debug": False,
+    "cache": True,
+    "custom_template": "",
+    "profiles": [],
+}
+
+CLOCK_FONT_NAMES = {
+    "simple": "ساده",
+    "bold": "Bold",
+    "light": "Light",
+    "monospace": "Monospace",
+    "digital": "Digital",
+    "elegant": "Elegant",
+    "compact": "Compact",
+    "minimal": "Minimal",
+    "custom": "Custom",
+}
+
+CLOCK_FORMAT_NAMES = {
+    "24": "24 ساعته",
+    "12": "12 ساعته",
+    "24_seconds": "24 ساعته + ثانیه",
+    "12_seconds": "12 ساعته + ثانیه",
+}
+
+CLOCK_TIMEZONE_PRESETS = [
+    ("Asia/Baku", "Baku"),
+    ("Asia/Tehran", "Tehran"),
+    ("Europe/Berlin", "Berlin"),
+    ("Europe/London", "London"),
+    ("America/New_York", "New York"),
+    ("Asia/Tokyo", "Tokyo"),
+    ("UTC", "UTC"),
+]
+
+CLOCK_DIGIT_NAMES = {
+    "latin": "انگلیسی",
+    "persian": "فارسی",
+    "arabic": "عربی",
+}
+
+def _clock_json(value, fallback):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else fallback
+        except Exception:
+            return fallback
+    return fallback
+
+def clock_default_config():
+    return json.loads(json.dumps(CLOCK_DEFAULTS))
+
+async def init_clock_settings_table():
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        create table if not exists salf1_clock_settings (
+            customer_id bigint primary key,
+            config jsonb not null default '{}'::jsonb,
+            base_profile jsonb not null default '{}'::jsonb,
+            stats jsonb not null default '{}'::jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        )
+        """
+    )
+
+async def clock_record(user_id: int):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        """
+        select customer_id, config, base_profile, stats, created_at, updated_at
+        from salf1_clock_settings
+        where customer_id = $1
+        """,
+        int(user_id),
+    )
+
+async def clock_get_settings(user_id: int):
+    defaults = clock_default_config()
+    row = await clock_record(user_id)
+    if not row:
+        if db_pool is not None:
+            await db_pool.execute(
+                """
+                insert into salf1_clock_settings (customer_id, config)
+                values ($1, $2::jsonb)
+                on conflict (customer_id) do nothing
+                """,
+                int(user_id),
+                json.dumps(defaults, ensure_ascii=False),
+            )
+        return defaults
+    stored = _clock_json(row["config"], {})
+    defaults.update(stored)
+    return defaults
+
+async def clock_save_settings(user_id: int, config: dict):
+    if db_pool is None:
+        return
+    clean = clock_default_config()
+    clean.update(config or {})
+    await db_pool.execute(
+        """
+        insert into salf1_clock_settings (customer_id, config)
+        values ($1, $2::jsonb)
+        on conflict (customer_id) do update set
+            config = excluded.config,
+            updated_at = now()
+        """,
+        int(user_id),
+        json.dumps(clean, ensure_ascii=False),
+    )
+
+def _clock_digits(value: str, mode: str) -> str:
+    maps = {
+        "persian": str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"),
+        "arabic": str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"),
+        "latin": str.maketrans("0123456789", "0123456789"),
+    }
+    return str(value).translate(maps.get(mode, maps["latin"]))
+
+def _clock_font(value: str, font: str) -> str:
+    sets = {
+        "bold": "𝟎𝟏𝟐𝟑𝟒𝟓𝟔𝟕𝟖𝟗",
+        "monospace": "𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿",
+        "digital": "０１２３４５６７８９",
+        "elegant": "𝟘𝟙𝟚𝟛𝟜𝟝𝟞𝟟𝟠𝟡",
+    }
+    target = sets.get(font)
+    if not target:
+        return str(value)
+    return str(value).translate(str.maketrans("0123456789", target))
+
+def _clock_safe_timezone(value: str):
+    try:
+        return ZoneInfo(value)
+    except Exception:
+        return ZoneInfo("UTC")
+
+def clock_format_time(now_utc: datetime, config: dict):
+    local = now_utc.astimezone(_clock_safe_timezone(str(config.get("timezone") or "UTC")))
+    fmt_key = str(config.get("format") or "24_seconds")
+    separator = str(config.get("separator") or ":")
+    if fmt_key.startswith("12"):
+        base = local.strftime("%I").lstrip("0") or "0"
+        base += separator + local.strftime("%M")
+        if fmt_key.endswith("seconds"):
+            base += separator + local.strftime("%S")
+        value = f"{base} {local.strftime('%p')}"
+    else:
+        value = local.strftime("%H") + separator + local.strftime("%M")
+        if fmt_key.endswith("seconds"):
+            value += separator + local.strftime("%S")
+    value = _clock_digits(value, str(config.get("digits") or "latin"))
+    if str(config.get("digits") or "latin") == "latin":
+        value = _clock_font(value, str(config.get("font") or "simple"))
+    return value, local
+
+def clock_render_value(template: str, now_utc: datetime, config: dict, base_name: str = ""):
+    time_text, local = clock_format_time(now_utc, config)
+    offset = local.strftime("%z")
+    utc_offset = f"UTC{offset[:3]}:{offset[3:]}" if len(offset) == 5 else "UTC"
+    values = {
+        "{BASE_NAME}": base_name,
+        "{HH}": local.strftime("%H"),
+        "{MM}": local.strftime("%M"),
+        "{SS}": local.strftime("%S"),
+        "{TIME}": time_text,
+        "{DATE}": local.strftime("%Y-%m-%d"),
+        "{DAY}": local.strftime("%A"),
+        "{CITY}": str(config.get("city") or config.get("timezone") or "UTC"),
+        "{TZ}": str(config.get("timezone") or "UTC"),
+        "{UTC}": utc_offset,
+    }
+    rendered = str(template or "{TIME}")
+    for token, value in values.items():
+        rendered = rendered.replace(token, value)
+    return rendered[:70], local
+
+def _clock_schedule_active(config: dict, local: datetime) -> bool:
+    if not bool(config.get("schedule_enabled")):
+        return True
+    days = {int(x) for x in (config.get("schedule_days") or [])}
+    if local.weekday() not in days:
+        return False
+    try:
+        sp = str(config.get("schedule_start", "00:00")).split(":")
+        ep = str(config.get("schedule_end", "23:59")).split(":")
+        start = dt_time(int(sp[0]), int(sp[1]))
+        end = dt_time(int(ep[0]), int(ep[1]))
+    except Exception:
+        return True
+    current = local.time().replace(microsecond=0)
+    if start <= end:
+        return start <= current <= end
+    return current >= start or current <= end
+
+async def clock_base_profile(user_id: int, client):
+    row = await clock_record(user_id)
+    base = _clock_json(row["base_profile"], {}) if row else {}
+    if base.get("first_name") is not None:
+        return base
+    me = await client.get_me()
+    base = {
+        "first_name": str(me.first_name or ""),
+        "last_name": str(me.last_name or ""),
+        "about": str(getattr(me, "about", "") or ""),
+    }
+    if db_pool is not None:
+        await db_pool.execute(
+            """
+            insert into salf1_clock_settings (customer_id, base_profile)
+            values ($1, $2::jsonb)
+            on conflict (customer_id) do update set
+                base_profile = excluded.base_profile,
+                updated_at = now()
+            """,
+            int(user_id),
+            json.dumps(base, ensure_ascii=False),
+        )
+    return base
+
+async def clock_stats_update(user_id: int, key: str, amount: int = 1):
+    if db_pool is None:
+        return
+    row = await clock_record(user_id)
+    stats = _clock_json(row["stats"], {}) if row else {}
+    stats[key] = int(stats.get(key, 0) or 0) + int(amount)
+    await db_pool.execute(
+        """
+        insert into salf1_clock_settings (customer_id, stats)
+        values ($1, $2::jsonb)
+        on conflict (customer_id) do update set
+            stats = excluded.stats,
+            updated_at = now()
+        """,
+        int(user_id),
+        json.dumps(stats, ensure_ascii=False),
+    )
+
+async def clock_apply_now(user_id: int, force: bool = False):
+    config = await clock_get_settings(user_id)
+    client = clients.get(str(user_id))
+    if client is None or not client.is_connected():
+        return {"ok": False, "reason": "client_offline"}
+    try:
+        if not await client.is_user_authorized():
+            return {"ok": False, "reason": "unauthorized"}
+
+        now_utc = datetime.now(timezone.utc)
+        local = now_utc.astimezone(_clock_safe_timezone(str(config.get("timezone") or "UTC")))
+        active = _clock_schedule_active(config, local)
+        base = await clock_base_profile(user_id, client)
+
+        if not bool(config.get("enabled")) or not active:
+            first_name = str(base.get("first_name") or "")[:64]
+            last_name = str(base.get("last_name") or "")[:64]
+            about = str(base.get("about") or "")[:70]
+        else:
+            base_first = str(base.get("first_name") or "")
+            first_name = base_first
+            last_name = str(base.get("last_name") or "")
+            about = str(base.get("about") or "")
+
+            if config.get("destination_name"):
+                first_name, _ = clock_render_value(
+                    config.get("name_template") or "{BASE_NAME} | {TIME}",
+                    now_utc,
+                    config,
+                    base_first,
+                )
+            if config.get("destination_last_name"):
+                last_name, _ = clock_render_value(
+                    config.get("last_name_template") or "{TIME}",
+                    now_utc,
+                    config,
+                    str(base.get("last_name") or ""),
+                )
+            if config.get("destination_bio"):
+                about, _ = clock_render_value(
+                    config.get("bio_template") or "{TIME}",
+                    now_utc,
+                    config,
+                    base_first,
+                )
+
+            first_name = first_name[:64]
+            last_name = last_name[:64]
+            about = about[:70]
+
+        output = {"first_name": first_name, "last_name": last_name, "about": about}
+        if not force and config.get("smart_update") and clock_last_outputs.get(str(user_id)) == output:
+            return {"ok": True, "changed": False, "local": local}
+
+        now_mono = time.monotonic()
+        if config.get("rate_limit_guard") and not force:
+            next_allowed = clock_next_allowed.get(str(user_id), 0.0)
+            if now_mono < next_allowed:
+                await clock_stats_update(user_id, "skipped")
+                return {"ok": True, "changed": False, "rate_limited": True, "local": local}
+
+        try:
+            await client(
+                functions.account.UpdateProfileRequest(
+                    first_name=first_name,
+                    last_name=last_name,
+                    about=about,
+                )
+            )
+        except FloodWaitError as exc:
+            backoff = max(1, int(exc.seconds))
+            clock_next_allowed[str(user_id)] = time.monotonic() + backoff
+            if config.get("retry"):
+                await clock_stats_update(user_id, "retry")
+            await clock_stats_update(user_id, "failed")
+            return {"ok": False, "reason": "flood_wait", "seconds": backoff}
+        except Exception as exc:
+            if config.get("retry"):
+                clock_next_allowed[str(user_id)] = time.monotonic() + 5
+                await clock_stats_update(user_id, "retry")
+            await clock_stats_update(user_id, "failed")
+            if config.get("logging"):
+                print(f"Clock update failed for {user_id}: {type(exc).__name__}: {exc}")
+            return {"ok": False, "reason": "update_failed"}
+
+        clock_last_outputs[str(user_id)] = output
+        clock_next_allowed[str(user_id)] = time.monotonic() + max(
+            1, int(config.get("update_interval_seconds") or 1)
+        )
+        await clock_stats_update(user_id, "success")
+        return {"ok": True, "changed": True, "local": local}
+    except Exception as exc:
+        if config.get("logging"):
+            print(f"Clock engine error for {user_id}: {type(exc).__name__}: {exc}")
+        await clock_stats_update(user_id, "failed")
+        return {"ok": False, "reason": "engine_error"}
+
+async def clock_loop():
+    while True:
+        try:
+            if db_pool is not None:
+                rows = await db_pool.fetch(
+                    """
+                    select c.customer_id
+                    from salf1_clock_settings c
+                    join salf1_bot_users u
+                      on u.telegram_user_id = c.customer_id
+                    where coalesce((c.config->>'enabled')::boolean, false) = true
+                      and u.account_connected = true
+                      and u.salf_enabled = true
+                    """
+                )
+                for row in rows:
+                    await clock_apply_now(int(row["customer_id"]))
+        except Exception as exc:
+            print(f"Clock loop error: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(1)
+
+async def salf_settings_text(user_id: int):
+    row = await db_user(str(user_id))
+    config = await clock_get_settings(user_id)
+    connected = bool(row["account_connected"]) if row else False
+    enabled = bool(row["salf_enabled"]) if row else False
+    return f"""<b>Sᴀʟғ1 · تنظیمات سلف</b>
+
+<b>وضعیت سرویس</b>
+
+اکانت : {"متصل" if connected else "متصل نیست"}
+سلف : {"فعال" if enabled else "خاموش"}
+
+<b>قابلیت‌های سلف</b>
+
+ساعت : {"فعال" if config.get("enabled") else "خاموش"}
+ماژول‌های فعال : {"۱" if config.get("enabled") else "۰"}
+
+راهنما
+
+این بخش مرکز مدیریت تنظیمات سلف است. هر قابلیت باید وضعیت، تنظیمات و موتور اجرای مستقل خودش را داشته باشد."""
+    
+def salf_settings_markup():
+    return {"inline_keyboard": [
+        [{"text":"› قابلیت‌های سلف","callback_data":"self_features"}],
+        [{"text":"› وضعیت و فعالیت","callback_data":"self_status_center"}],
+        [{"text":"› حساب و اتصال","callback_data":"panel_account"}],
+        [{"text":"‹ بازگشت","callback_data":"panel"}],
+    ]}
+
+async def self_features_text(user_id: int):
+    config = await clock_get_settings(user_id)
+    return f"""<b>Sᴀʟғ1 · قابلیت‌های سلف</b>
+
+<b>قابلیت‌های فعال</b>
+
+ساعت : {"فعال" if config.get("enabled") else "خاموش"}
+
+<b>ماژول‌های موجود</b>
+
+تاریخ و تقویم
+شمارنده
+وضعیت فعالیت
+متن و Bio خودکار
+
+راهنما
+
+ساعت اولین ماژول اجرایی این بخش است. معماری قابلیت‌ها مستقل است تا هر ماژول تنظیمات، زمان‌بندی و موتور اجرای خودش را داشته باشد."""
+
+def self_features_markup():
+    return {"inline_keyboard": [
+        [{"text":"› ساعت","callback_data":"clock"}],
+        [{"text":"› تاریخ و تقویم","callback_data":"feature_date"}],
+        [{"text":"› شمارنده","callback_data":"feature_counter"}],
+        [{"text":"› وضعیت فعالیت","callback_data":"feature_activity"}],
+        [{"text":"› متن و Bio خودکار","callback_data":"feature_auto_text"}],
+        [{"text":"‹ بازگشت","callback_data":"panel_self"}],
+    ]}
+
+async def clock_settings_text(user_id: int):
+    config = await clock_get_settings(user_id)
+    row = await clock_record(user_id)
+    stats = _clock_json(row["stats"], {}) if row else {}
+    time_text, _ = clock_format_time(datetime.now(timezone.utc), config)
+    destinations = sum(
+        1 for key in (
+            "destination_name",
+            "destination_bio",
+            "destination_last_name",
+            "destination_profile",
+        ) if config.get(key)
+    )
+    return f"""<b>Sᴀʟғ1 · مرکز ساعت</b>
+
+<b>وضعیت ساعت</b>
+
+سیستم ساعت : {"فعال" if config.get("enabled") else "خاموش"}
+منطقه زمانی : {html.escape(str(config.get("timezone") or "UTC"))}
+شهر : {html.escape(str(config.get("city") or "UTC"))}
+زمان محلی : {html.escape(time_text)}
+فرمت : {CLOCK_FORMAT_NAMES.get(str(config.get("format")), "24 ساعته + ثانیه")}
+فونت : {CLOCK_FONT_NAMES.get(str(config.get("font")), "ساده")}
+بروزرسانی داخلی : هر {int(config.get("update_interval_seconds") or 1)} ثانیه
+
+<b>مقصدهای فعال</b>
+
+تعداد مقصد : {destinations}
+کنار نام : {"فعال" if config.get("destination_name") else "خاموش"}
+Bio : {"فعال" if config.get("destination_bio") else "خاموش"}
+نام خانوادگی : {"فعال" if config.get("destination_last_name") else "خاموش"}
+تصویر پروفایل : {"غیرفعال" if not config.get("destination_profile") else "آماده توسعه"}
+
+<b>آمار</b>
+
+موفق : {int(stats.get("success", 0) or 0):,}
+ناموفق : {int(stats.get("failed", 0) or 0):,}
+تلاش مجدد : {int(stats.get("retry", 0) or 0):,}
+
+راهنما
+
+مرکز ساعت، مقصد، منطقه زمانی، قالب، فونت، ظاهر، متن هوشمند، زمان‌بندی، موتور بروزرسانی، پیش‌نمایش، گزارش، پروفایل و تنظیمات پیشرفته را یکجا مدیریت می‌کند. زمان هر ثانیه داخل Worker محاسبه می‌شود و بروزرسانی Telegram تحت کنترل تشخیص تغییر و Rate Limit انجام می‌شود."""
+
+async def clock_page_text(user_id: int, page: str):
+    config = await clock_get_settings(user_id)
+    row = await clock_record(user_id)
+    stats = _clock_json(row["stats"], {}) if row else {}
+    now = datetime.now(timezone.utc)
+    time_text, local = clock_format_time(now, config)
+    tz_name = str(config.get("timezone") or "UTC")
+    client = clients.get(str(user_id))
+    base = await clock_base_profile(user_id, client) if client and client.is_connected() else {}
+
+    if page == "destinations":
+        return f"""<b>Sᴀʟғ1 · مقصدهای ساعت</b>
+
+<b>وضعیت مقصدها</b>
+
+کنار نام : {"فعال" if config.get("destination_name") else "خاموش"}
+Bio : {"فعال" if config.get("destination_bio") else "خاموش"}
+نام خانوادگی : {"فعال" if config.get("destination_last_name") else "خاموش"}
+تصویر پروفایل : غیرفعال
+
+<b>قالب‌های فعلی</b>
+
+نام : <code>{html.escape(str(config.get("name_template") or ""))}</code>
+Bio : <code>{html.escape(str(config.get("bio_template") or ""))}</code>
+نام خانوادگی : <code>{html.escape(str(config.get("last_name_template") or ""))}</code>
+
+راهنما
+
+نام، نام خانوادگی و Bio به‌صورت مقصدهای متنی مستقل مدیریت می‌شوند. مقصد تصویر پروفایل در معماری نگهداری شده و اجرای زنده آن فعلاً فعال نیست."""
+    if page == "timezone":
+        return f"""<b>Sᴀʟғ1 · منطقه زمانی</b>
+
+<b>منطقه فعلی</b>
+
+IANA : {html.escape(tz_name)}
+شهر : {html.escape(str(config.get("city") or tz_name))}
+زمان محلی : {html.escape(time_text)}
+
+راهنما
+
+منطقه زمانی با استاندارد IANA ذخیره می‌شود. بعد از تغییر منطقه، تمام قالب‌های ساعت از زمان محلی منطقه جدید استفاده می‌کنند."""
+    if page == "format":
+        return f"""<b>Sᴀʟғ1 · قالب ساعت</b>
+
+فرمت فعلی : {CLOCK_FORMAT_NAMES.get(str(config.get("format")), "24 ساعته + ثانیه")}
+اعداد : {CLOCK_DIGIT_NAMES.get(str(config.get("digits")), "انگلیسی")}
+جداکننده : {html.escape(str(config.get("separator") or ":"))}
+
+راهنما
+
+فرمت تعداد رقم‌ها و جداکننده زمان را کنترل می‌کند. در فرمت ثانیه‌دار، مقدار ثانیه نیز وارد قالب نهایی می‌شود."""
+    if page == "font":
+        return f"""<b>Sᴀʟғ1 · فونت ساعت</b>
+
+فونت فعلی : {CLOCK_FONT_NAMES.get(str(config.get("font")), "ساده")}
+
+پیش‌نمایش
+
+{html.escape(time_text)}
+
+راهنما
+
+فونت‌های آماده با Styleهای متنی Unicode پیاده‌سازی می‌شوند. برای اعداد فارسی و عربی، سبک‌های Unicode کامل محدودتر از اعداد لاتین است."""
+    if page == "appearance":
+        return f"""<b>Sᴀʟғ1 · ظاهر و فرمت</b>
+
+نمایش شهر : {"فعال" if config.get("show_city") else "خاموش"}
+نمایش منطقه زمانی : {"فعال" if config.get("show_timezone") else "خاموش"}
+نمایش تاریخ : {"فعال" if config.get("show_date") else "خاموش"}
+نمایش روز هفته : {"فعال" if config.get("show_day") else "خاموش"}
+نمایش ثانیه : {"فعال" if config.get("show_seconds") else "خاموش"}
+
+راهنما
+
+این بخش اطلاعات همراه زمان را کنترل می‌کند و می‌تواند زمان را با شهر، منطقه زمانی، تاریخ یا روز هفته ترکیب کند."""
+    if page == "template":
+        return f"""<b>Sᴀʟғ1 · متن هوشمند</b>
+
+قالب نام : <code>{html.escape(str(config.get("name_template") or ""))}</code>
+قالب Bio : <code>{html.escape(str(config.get("bio_template") or ""))}</code>
+
+متغیرهای مجاز
+
+<code>{{BASE_NAME}}</code>
+<code>{{HH}}</code>
+<code>{{MM}}</code>
+<code>{{SS}}</code>
+<code>{{TIME}}</code>
+<code>{{DATE}}</code>
+<code>{{DAY}}</code>
+<code>{{CITY}}</code>
+<code>{{TZ}}</code>
+<code>{{UTC}}</code>
+
+راهنما
+
+در زمان اجرا متغیرها با مقدار واقعی جایگزین می‌شوند. قالب نام حداکثر ۶۴ کاراکتر و قالب Bio حداکثر ۷۰ کاراکتر خروجی می‌گیرد."""
+    if page == "schedule":
+        return f"""<b>Sᴀʟғ1 · زمان‌بندی ساعت</b>
+
+زمان‌بندی : {"فعال" if config.get("schedule_enabled") else "همیشه فعال"}
+شروع : {html.escape(str(config.get("schedule_start")))}
+پایان : {html.escape(str(config.get("schedule_end")))}
+روزهای فعال : {len(config.get("schedule_days") or [])} روز
+
+راهنما
+
+وقتی زمان‌بندی فعال باشد، موتور فقط در بازه و روزهای مشخص اجرا می‌شود. خارج از بازه، مقصدهای متنی به مقادیر پایه اکانت برمی‌گردند."""
+    if page == "engine":
+        return f"""<b>Sᴀʟғ1 · موتور بروزرسانی</b>
+
+چرخه داخلی : ۱ ثانیه
+فاصله ارسال : هر {int(config.get("update_interval_seconds") or 1)} ثانیه
+محاسبه منطقه زمانی : فعال
+تشخیص تغییر : {"فعال" if config.get("smart_update") else "خاموش"}
+تلاش مجدد : {"فعال" if config.get("retry") else "خاموش"}
+صف بروزرسانی : {"فعال" if config.get("queue") else "خاموش"}
+محافظ Rate Limit : {"فعال" if config.get("rate_limit_guard") else "خاموش"}
+
+راهنما
+
+Worker هر ثانیه زمان را محاسبه می‌کند. قبل از ارسال، تغییر واقعی و محافظ Rate Limit بررسی می‌شود تا درخواست‌های غیرضروری و خطاهای Flood کنترل شوند."""
+    if page == "preview":
+        preview_name, _ = clock_render_value(
+            config.get("name_template") or "{BASE_NAME} | {TIME}",
+            now,
+            config,
+            str(base.get("first_name") or "Javad"),
+        )
+        preview_bio, _ = clock_render_value(
+            config.get("bio_template") or "{TIME}",
+            now,
+            config,
+            str(base.get("first_name") or "Javad"),
+        )
+        return f"""<b>Sᴀʟғ1 · پیش‌نمایش ساعت</b>
+
+<b>زمان فعلی</b>
+
+{html.escape(time_text)}
+
+<b>قالب نام</b>
+
+{html.escape(preview_name)}
+
+<b>قالب Bio</b>
+
+{html.escape(preview_bio)}
+
+<b>منطقه</b>
+
+{html.escape(tz_name)}
+
+راهنما
+
+پیش‌نمایش فقط نتیجه تنظیمات فعلی را نشان می‌دهد و تغییر جدیدی روی اکانت اعمال نمی‌کند."""
+    if page == "stats":
+        return f"""<b>Sᴀʟғ1 · گزارش ساعت</b>
+
+بروزرسانی موفق : {int(stats.get("success", 0) or 0):,}
+بروزرسانی ناموفق : {int(stats.get("failed", 0) or 0):,}
+تلاش مجدد : {int(stats.get("retry", 0) or 0):,}
+صرف‌نظر به‌علت محافظ : {int(stats.get("skipped", 0) or 0):,}
+
+آخرین زمان محلی : {html.escape(time_text)}
+منطقه زمانی : {html.escape(tz_name)}
+
+راهنما
+
+آمار اجرای موتور ساعت برای همین حساب ذخیره می‌شود و برای بررسی عملکرد و خطاهای اجرایی قابل استفاده است."""
+    if page == "advanced":
+        return f"""<b>Sᴀʟғ1 · تنظیمات پیشرفته</b>
+
+ثبت گزارش : {"فعال" if config.get("logging") else "خاموش"}
+Debug : {"فعال" if config.get("debug") else "خاموش"}
+Cache : {"فعال" if config.get("cache") else "خاموش"}
+محافظ Rate Limit : {"فعال" if config.get("rate_limit_guard") else "خاموش"}
+
+راهنما
+
+این گزینه‌ها رفتار داخلی موتور را کنترل می‌کنند. Debug برای بررسی خطاهاست و بهتر است در استفاده عادی خاموش باشد."""
+    if page == "profiles":
+        profiles = config.get("profiles") or []
+        profile_text = "هنوز پروفایلی ذخیره نشده است." if not profiles else "\n".join(
+            f"{idx + 1}. {html.escape(str(item.get('name') or f'پروفایل {idx + 1:02d}'))}"
+            for idx, item in enumerate(profiles[:10])
+        )
+        return f"""<b>Sᴀʟғ1 · پروفایل‌های ساعت</b>
+
+{profile_text}
+
+راهنما
+
+پروفایل یک snapshot از تنظیمات کامل ساعت است. از دکمه ذخیره، تنظیم فعلی را نگه دارید تا بعداً همان مجموعه تنظیمات را دوباره فعال کنید."""
+    return "<b>Sᴀʟғ1 · ساعت</b>"
+
+def clock_main_markup_async_placeholder():
+    return None
+
+def clock_page_markup(page: str, config: dict):
+    rows = []
+    if page == "destinations":
+        rows = [
+            [{"text":"نام : فعال" if config.get("destination_name") else "نام : خاموش","callback_data":"clock_dest_name"}],
+            [{"text":"Bio : فعال" if config.get("destination_bio") else "Bio : خاموش","callback_data":"clock_dest_bio"}],
+            [{"text":"نام خانوادگی : فعال" if config.get("destination_last_name") else "نام خانوادگی : خاموش","callback_data":"clock_dest_last"}],
+            [{"text":"تصویر پروفایل : فعلاً غیرفعال","callback_data":"clock_profile_info"}],
+        ]
+    elif page == "timezone":
+        rows = [[{"text":city,"callback_data":f"clock_tz_{tz}"}] for tz, city in CLOCK_TIMEZONE_PRESETS]
+        rows.append([{"text":"› ورود منطقه IANA","callback_data":"clock_tz_custom"}])
+    elif page == "format":
+        rows = [
+            [{"text":"24 ساعته","callback_data":"clock_fmt_24"},{"text":"12 ساعته","callback_data":"clock_fmt_12"}],
+            [{"text":"24 ساعته + ثانیه","callback_data":"clock_fmt_24_seconds"},{"text":"12 ساعته + ثانیه","callback_data":"clock_fmt_12_seconds"}],
+            [{"text":"اعداد انگلیسی","callback_data":"clock_digits_latin"},{"text":"اعداد فارسی","callback_data":"clock_digits_persian"}],
+            [{"text":"اعداد عربی","callback_data":"clock_digits_arabic"}],
+            [{"text":"جداکننده :","callback_data":"clock_sep_colon"},{"text":"جداکننده ·","callback_data":"clock_sep_dot"}],
+            [{"text":"جداکننده -","callback_data":"clock_sep_dash"},{"text":"جداکننده |","callback_data":"clock_sep_pipe"}],
+        ]
+    elif page == "font":
+        rows = [
+            [{"text":"ساده","callback_data":"clock_font_simple"},{"text":"Bold","callback_data":"clock_font_bold"}],
+            [{"text":"Light","callback_data":"clock_font_light"},{"text":"Monospace","callback_data":"clock_font_monospace"}],
+            [{"text":"Digital","callback_data":"clock_font_digital"},{"text":"Elegant","callback_data":"clock_font_elegant"}],
+            [{"text":"Compact","callback_data":"clock_font_compact"},{"text":"Minimal","callback_data":"clock_font_minimal"}],
+            [{"text":"Custom","callback_data":"clock_font_custom"}],
+        ]
+    elif page == "appearance":
+        rows = [
+            [{"text":"شهر : فعال" if config.get("show_city") else "شهر : خاموش","callback_data":"clock_show_city"}],
+            [{"text":"منطقه زمانی : فعال" if config.get("show_timezone") else "منطقه زمانی : خاموش","callback_data":"clock_show_tz"}],
+            [{"text":"تاریخ : فعال" if config.get("show_date") else "تاریخ : خاموش","callback_data":"clock_show_date"}],
+            [{"text":"روز هفته : فعال" if config.get("show_day") else "روز هفته : خاموش","callback_data":"clock_show_day"}],
+            [{"text":"ثانیه : فعال" if config.get("show_seconds") else "ثانیه : خاموش","callback_data":"clock_show_seconds"}],
+        ]
+    elif page == "template":
+        rows = [
+            [{"text":"› ویرایش قالب نام","callback_data":"clock_template_name"}],
+            [{"text":"› ویرایش قالب Bio","callback_data":"clock_template_bio"}],
+            [{"text":"بازنشانی قالب‌ها","callback_data":"clock_template_reset"}],
+        ]
+    elif page == "schedule":
+        rows = [
+            [{"text":"زمان‌بندی : فعال" if config.get("schedule_enabled") else "زمان‌بندی : خاموش","callback_data":"clock_schedule_toggle"}],
+            [{"text":"› ویرایش زمان شروع","callback_data":"clock_schedule_start"},{"text":"› ویرایش زمان پایان","callback_data":"clock_schedule_end"}],
+            [{"text":"روز","callback_data":"clock_schedule_weekdays"},{"text":"همه روزها","callback_data":"clock_schedule_all_days"}],
+            [{"text":"فعالیت شبانه","callback_data":"clock_schedule_night"}],
+            [{"text":"فعالیت کامل","callback_data":"clock_schedule_all"}],
+        ]
+    elif page == "engine":
+        rows = [
+            [{"text":"فاصله 1 ثانیه","callback_data":"clock_interval_1"},{"text":"فاصله 5 ثانیه","callback_data":"clock_interval_5"}],
+            [{"text":"فاصله 10 ثانیه","callback_data":"clock_interval_10"},{"text":"فاصله 30 ثانیه","callback_data":"clock_interval_30"}],
+            [{"text":"تشخیص تغییر","callback_data":"clock_engine_smart"}],
+            [{"text":"تلاش مجدد","callback_data":"clock_engine_retry"}],
+            [{"text":"صف بروزرسانی","callback_data":"clock_engine_queue"}],
+            [{"text":"محافظ Rate Limit","callback_data":"clock_engine_rate"}],
+            [{"text":"› بروزرسانی فوری","callback_data":"clock_force_sync"}],
+        ]
+    elif page == "stats":
+        rows = [[{"text":"پاک‌کردن آمار","callback_data":"clock_stats_reset"}]]
+    elif page == "advanced":
+        rows = [
+            [{"text":"ثبت گزارش","callback_data":"clock_adv_logging"}],
+            [{"text":"Debug","callback_data":"clock_adv_debug"}],
+            [{"text":"Cache","callback_data":"clock_adv_cache"}],
+            [{"text":"بازنشانی تنظیمات ساعت","callback_data":"clock_reset"}],
+        ]
+    elif page == "profiles":
+        rows = [[{"text":"› ذخیره تنظیم فعلی","callback_data":"clock_profile_save"}]]
+        for idx, item in enumerate((config.get("profiles") or [])[:10]):
+            name = str(item.get("name") or f"پروفایل {idx + 1:02d}")
+            rows.append([{"text":f"› فعال‌سازی {name}","callback_data":f"clock_profile_apply_{idx}"}])
+            rows.append([{"text":f"حذف {name}","callback_data":f"clock_profile_delete_{idx}"}])
+    elif page == "preview":
+        rows = [[{"text":"› اعمال آزمایشی","callback_data":"clock_force_sync"}]]
+    rows.append([{"text":"‹ بازگشت","callback_data":"clock"}])
+    return {"inline_keyboard": rows}
+
+async def clock_main_markup_async(user_id: int):
+    config = await clock_get_settings(user_id)
+    return {"inline_keyboard": [
+        [{"text":"› وضعیت ساعت","callback_data":"clock_status"},{"text":"› مقصدها","callback_data":"clock_destinations"}],
+        [{"text":"› منطقه زمانی","callback_data":"clock_timezone"},{"text":"› قالب ساعت","callback_data":"clock_format"}],
+        [{"text":"› فونت ساعت","callback_data":"clock_font"},{"text":"› ظاهر و فرمت","callback_data":"clock_appearance"}],
+        [{"text":"› متن هوشمند","callback_data":"clock_template"},{"text":"› زمان‌بندی","callback_data":"clock_schedule"}],
+        [{"text":"› موتور بروزرسانی","callback_data":"clock_engine"},{"text":"› پیش‌نمایش","callback_data":"clock_preview"}],
+        [{"text":"› آمار و گزارش","callback_data":"clock_stats"},{"text":"› پروفایل‌های ساعت","callback_data":"clock_profiles"}],
+        [{"text":"› تنظیمات پیشرفته","callback_data":"clock_advanced"}],
+        [{"text":"› خاموش‌کردن ساعت" if config.get("enabled") else "› فعال‌سازی ساعت","callback_data":"clock_toggle"}],
+        [{"text":"‹ بازگشت","callback_data":"self_features"}],
+    ]}
+
+async def clock_save_profile(user_id: int):
+    config = await clock_get_settings(user_id)
+    profiles = list(config.get("profiles") or [])
+    snapshot = dict(config)
+    snapshot.pop("profiles", None)
+    profiles.append({"name": f"پروفایل {len(profiles) + 1:02d}", "config": snapshot})
+    config["profiles"] = profiles[-10:]
+    await clock_save_settings(user_id, config)
+
 async def salf_panel_text(user_id: int):
     row = await db_user(str(user_id))
     connected = bool(row["account_connected"]) if row else False
@@ -2444,12 +3319,466 @@ async def process_callback(callback_query: dict):
         await bot_edit(chat_id, message_id, await salf_panel_text(user_id), salf_panel_markup())
         return
 
+    if data == "panel_self":
+        await bot_edit(chat_id, message_id, await salf_settings_text(user_id), salf_settings_markup())
+        return
+
+    if data == "self_features":
+        await bot_edit(chat_id, message_id, await self_features_text(user_id), self_features_markup())
+        return
+
+    if data == "self_status_center":
+        result = await account_status(str(user_id))
+        row = await db_user(str(user_id))
+        status_salf = "فعال" if (bool(row["salf_enabled"]) if row else False) else "خاموش"
+        await bot_edit(
+            chat_id,
+            message_id,
+            f"""<b>Sᴀʟғ1 · وضعیت و فعالیت</b>
+
+اکانت : {"متصل" if result.get("authorized") else "متصل نیست"}
+سلف : {status_salf}
+
+راهنما
+
+این صفحه وضعیت اتصال اکانت و سرویس SALF1 را نشان می‌دهد.""",
+            {"inline_keyboard":[[{"text":"‹ بازگشت","callback_data":"panel_self"}]]},
+        )
+        return
+
+    if data == "clock":
+        await bot_edit(chat_id, message_id, await clock_settings_text(user_id), await clock_main_markup_async(user_id))
+        return
+
+    if data == "clock_status":
+        await bot_edit(
+            chat_id,
+            message_id,
+            await clock_settings_text(user_id),
+            {"inline_keyboard":[[{"text":"› بروزرسانی فوری","callback_data":"clock_force_sync"}],[{"text":"‹ بازگشت","callback_data":"clock"}]]},
+        )
+        return
+
+    clock_pages = {
+        "clock_destinations":"destinations",
+        "clock_timezone":"timezone",
+        "clock_format":"format",
+        "clock_font":"font",
+        "clock_appearance":"appearance",
+        "clock_template":"template",
+        "clock_schedule":"schedule",
+        "clock_engine":"engine",
+        "clock_preview":"preview",
+        "clock_stats":"stats",
+        "clock_advanced":"advanced",
+        "clock_profiles":"profiles",
+    }
+    if data in clock_pages:
+        page = clock_pages[data]
+        await bot_edit(chat_id, message_id, await clock_page_text(user_id, page), clock_page_markup(page, await clock_get_settings(user_id)))
+        return
+
+    if data == "clock_toggle":
+        config = await clock_get_settings(user_id)
+        config["enabled"] = not bool(config.get("enabled"))
+        await clock_save_settings(user_id, config)
+        clock_last_outputs.pop(str(user_id), None)
+        await clock_apply_now(user_id, force=True)
+        await bot_edit(chat_id, message_id, await clock_settings_text(user_id), await clock_main_markup_async(user_id))
+        return
+
+    if data in {"clock_dest_name","clock_dest_bio","clock_dest_last"}:
+        config = await clock_get_settings(user_id)
+        key = {
+            "clock_dest_name":"destination_name",
+            "clock_dest_bio":"destination_bio",
+            "clock_dest_last":"destination_last_name",
+        }[data]
+        config[key] = not bool(config.get(key))
+        await clock_save_settings(user_id, config)
+        clock_last_outputs.pop(str(user_id), None)
+        if config.get("enabled"):
+            await clock_apply_now(user_id, force=True)
+        await bot_edit(chat_id, message_id, await clock_page_text(user_id, "destinations"), clock_page_markup("destinations", config))
+        return
+
+    if data == "clock_profile_info":
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>Sᴀʟғ1 · تصویر پروفایل</b>
+
+مقصد تصویر پروفایل در معماری ساعت وجود دارد، اما اجرای زنده آن هنوز به موتور رسانه متصل نشده است.
+
+راهنما
+
+این مقصد بعداً می‌تواند با موتور تصویر و زمان‌بندی رسانه یکپارچه شود.""",
+            {"inline_keyboard":[[{"text":"‹ بازگشت","callback_data":"clock_destinations"}]]},
+        )
+        return
+
+    if data == "clock_tz_custom":
+        bot_states[user_id] = {"state":"clock_timezone_custom"}
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>Sᴀʟғ1 · منطقه زمانی سفارشی</b>
+
+منطقه زمانی IANA را در پیام بعدی ارسال کنید.
+
+نمونه
+
+<code>Asia/Baku</code>
+<code>Europe/Berlin</code>
+<code>America/New_York</code>
+
+راهنما
+
+فقط نام معتبر IANA پذیرفته می‌شود.""",
+            {"inline_keyboard":[[{"text":"‹ لغو","callback_data":"clock_timezone_cancel"}]]},
+        )
+        return
+
+    if data in {"clock_timezone_cancel","clock_template_cancel","clock_schedule_cancel"}:
+        bot_states.pop(user_id, None)
+        page = "timezone" if data == "clock_timezone_cancel" else ("template" if data == "clock_template_cancel" else "schedule")
+        config = await clock_get_settings(user_id)
+        await bot_edit(chat_id, message_id, await clock_page_text(user_id, page), clock_page_markup(page, config))
+        return
+
+    if data.startswith("clock_tz_"):
+        tz_name = data.removeprefix("clock_tz_")
+        valid = {item[0]: item[1] for item in CLOCK_TIMEZONE_PRESETS}
+        if tz_name in valid:
+            config = await clock_get_settings(user_id)
+            config["timezone"] = tz_name
+            config["city"] = valid[tz_name]
+            await clock_save_settings(user_id, config)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_edit(chat_id, message_id, await clock_page_text(user_id, "timezone"), clock_page_markup("timezone", config))
+        return
+
+    if data.startswith("clock_fmt_"):
+        key = data.removeprefix("clock_fmt_")
+        if key in CLOCK_FORMAT_NAMES:
+            config = await clock_get_settings(user_id)
+            config["format"] = key
+            config["show_seconds"] = key.endswith("seconds")
+            await clock_save_settings(user_id, config)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_edit(chat_id, message_id, await clock_page_text(user_id, "format"), clock_page_markup("format", config))
+        return
+
+    if data.startswith("clock_digits_"):
+        key = data.removeprefix("clock_digits_")
+        if key in CLOCK_DIGIT_NAMES:
+            config = await clock_get_settings(user_id)
+            config["digits"] = key
+            await clock_save_settings(user_id, config)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_edit(chat_id, message_id, await clock_page_text(user_id, "format"), clock_page_markup("format", config))
+        return
+
+    if data.startswith("clock_sep_"):
+        key = data.removeprefix("clock_sep_")
+        separators = {"colon":":","dot":"·","dash":"-","pipe":"|"}
+        if key in separators:
+            config = await clock_get_settings(user_id)
+            config["separator"] = separators[key]
+            await clock_save_settings(user_id, config)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_edit(chat_id, message_id, await clock_page_text(user_id, "format"), clock_page_markup("format", config))
+        return
+
+    if data.startswith("clock_font_"):
+        key = data.removeprefix("clock_font_")
+        if key == "custom":
+            await bot_edit(chat_id,message_id,
+                """<b>Sᴀʟғ1 · فونت سفارشی</b>
+
+فونت سفارشی در نسخه فعلی با presetهای Unicode محدود است.
+
+راهنما
+
+Telegram نام و Bio را با فونت فایل‌محور نمایش نمی‌دهد. برای همین سیستم فونت SALF1 بر پایه Styleهای Unicode طراحی شده است.""",
+                {"inline_keyboard":[[{"text":"‹ بازگشت","callback_data":"clock_font"}]]})
+            return
+        if key in CLOCK_FONT_NAMES:
+            config = await clock_get_settings(user_id)
+            config["font"] = key
+            await clock_save_settings(user_id, config)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_edit(chat_id, message_id, await clock_page_text(user_id, "font"), clock_page_markup("font", config))
+        return
+
+    toggle_fields = {
+        "clock_show_city":"show_city",
+        "clock_show_tz":"show_timezone",
+        "clock_show_date":"show_date",
+        "clock_show_day":"show_day",
+        "clock_show_seconds":"show_seconds",
+        "clock_engine_smart":"smart_update",
+        "clock_engine_retry":"retry",
+        "clock_engine_queue":"queue",
+        "clock_engine_rate":"rate_limit_guard",
+        "clock_adv_logging":"logging",
+        "clock_adv_debug":"debug",
+        "clock_adv_cache":"cache",
+    }
+    if data in toggle_fields:
+        key = toggle_fields[data]
+        config = await clock_get_settings(user_id)
+        config[key] = not bool(config.get(key))
+        await clock_save_settings(user_id, config)
+        clock_last_outputs.pop(str(user_id), None)
+        if config.get("enabled"):
+            await clock_apply_now(user_id, force=True)
+        page = "appearance" if data.startswith("clock_show_") else ("engine" if data.startswith("clock_engine_") else "advanced")
+        await bot_edit(chat_id, message_id, await clock_page_text(user_id, page), clock_page_markup(page, config))
+        return
+
+    if data.startswith("clock_interval_"):
+        value = int(data.removeprefix("clock_interval_"))
+        if value in {1,5,10,30}:
+            config = await clock_get_settings(user_id)
+            config["update_interval_seconds"] = value
+            await clock_save_settings(user_id, config)
+            await bot_edit(chat_id,message_id,await clock_page_text(user_id,"engine"),clock_page_markup("engine",config))
+        return
+
+    if data == "clock_force_sync":
+        result = await clock_apply_now(user_id, force=True)
+        config = await clock_get_settings(user_id)
+        notice = "اعمال آزمایشی انجام شد." if result.get("ok") else "اعمال فوری انجام نشد؛ وضعیت اتصال اکانت را بررسی کنید."
+        await bot_edit(chat_id, message_id, await clock_page_text(user_id, "preview"), clock_page_markup("preview", config))
+        await bot_send(chat_id, notice)
+        return
+
+    if data == "clock_schedule_toggle":
+        config = await clock_get_settings(user_id)
+        config["schedule_enabled"] = not bool(config.get("schedule_enabled"))
+        await clock_save_settings(user_id, config)
+        clock_last_outputs.pop(str(user_id), None)
+        if config.get("enabled"):
+            await clock_apply_now(user_id, force=True)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"schedule"),clock_page_markup("schedule",config))
+        return
+
+    if data == "clock_schedule_start":
+        bot_states[user_id] = {"state":"clock_schedule_start"}
+        await bot_edit(chat_id,message_id,
+            """<b>Sᴀʟғ1 · زمان شروع</b>
+
+زمان شروع را با فرمت <code>HH:MM</code> در پیام بعدی ارسال کنید.
+
+راهنما
+
+مثال: <code>08:00</code>""",
+            {"inline_keyboard":[[{"text":"‹ لغو","callback_data":"clock_schedule_cancel"}]]})
+        return
+
+    if data == "clock_schedule_end":
+        bot_states[user_id] = {"state":"clock_schedule_end"}
+        await bot_edit(chat_id,message_id,
+            """<b>Sᴀʟғ1 · زمان پایان</b>
+
+زمان پایان را با فرمت <code>HH:MM</code> در پیام بعدی ارسال کنید.
+
+راهنما
+
+مثال: <code>18:00</code>""",
+            {"inline_keyboard":[[{"text":"‹ لغو","callback_data":"clock_schedule_cancel"}]]})
+        return
+
+    if data == "clock_schedule_day":
+        config = await clock_get_settings(user_id)
+        config["schedule_enabled"] = True
+        config["schedule_start"] = "08:00"
+        config["schedule_end"] = "18:00"
+        await clock_save_settings(user_id,config)
+        clock_last_outputs.pop(str(user_id),None)
+        if config.get("enabled"):
+            await clock_apply_now(user_id,force=True)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"schedule"),clock_page_markup("schedule",config))
+        return
+
+    if data == "clock_schedule_night":
+        config = await clock_get_settings(user_id)
+        config["schedule_enabled"] = True
+        config["schedule_start"] = "18:00"
+        config["schedule_end"] = "00:00"
+        await clock_save_settings(user_id,config)
+        clock_last_outputs.pop(str(user_id),None)
+        if config.get("enabled"):
+            await clock_apply_now(user_id,force=True)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"schedule"),clock_page_markup("schedule",config))
+        return
+
+    if data == "clock_schedule_all":
+        config = await clock_get_settings(user_id)
+        config["schedule_enabled"] = False
+        config["schedule_start"] = "00:00"
+        config["schedule_end"] = "23:59"
+        config["schedule_days"] = [0,1,2,3,4,5,6]
+        await clock_save_settings(user_id,config)
+        clock_last_outputs.pop(str(user_id),None)
+        if config.get("enabled"):
+            await clock_apply_now(user_id,force=True)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"schedule"),clock_page_markup("schedule",config))
+        return
+
+    if data == "clock_schedule_weekdays":
+        config = await clock_get_settings(user_id)
+        config["schedule_enabled"] = True
+        config["schedule_days"] = [0,1,2,3,4]
+        await clock_save_settings(user_id,config)
+        if config.get("enabled"):
+            await clock_apply_now(user_id,force=True)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"schedule"),clock_page_markup("schedule",config))
+        return
+
+    if data == "clock_schedule_all_days":
+        config = await clock_get_settings(user_id)
+        config["schedule_enabled"] = True
+        config["schedule_days"] = [0,1,2,3,4,5,6]
+        await clock_save_settings(user_id,config)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"schedule"),clock_page_markup("schedule",config))
+        return
+
+    if data == "clock_template_name":
+        bot_states[user_id] = {"state":"clock_template_name"}
+        await bot_edit(chat_id,message_id,
+            """<b>Sᴀʟғ1 · قالب نام</b>
+
+قالب جدید را در پیام بعدی ارسال کنید.
+
+نمونه
+
+<code>{BASE_NAME} | {TIME}</code>
+
+راهنما
+
+می‌توانید از متغیرهای صفحه متن هوشمند استفاده کنید.""",
+            {"inline_keyboard":[[{"text":"‹ لغو","callback_data":"clock_template_cancel"}]]})
+        return
+
+    if data == "clock_template_bio":
+        bot_states[user_id] = {"state":"clock_template_bio"}
+        await bot_edit(chat_id,message_id,
+            """<b>Sᴀʟғ1 · قالب Bio</b>
+
+قالب جدید را در پیام بعدی ارسال کنید.
+
+نمونه
+
+<code>{CITY} · {TIME}</code>
+
+راهنما
+
+خروجی Bio حداکثر ۷۰ کاراکتر می‌شود.""",
+            {"inline_keyboard":[[{"text":"‹ لغو","callback_data":"clock_template_cancel"}]]})
+        return
+
+    if data == "clock_template_reset":
+        config = await clock_get_settings(user_id)
+        config["name_template"] = "{BASE_NAME} | {TIME}"
+        config["bio_template"] = "{TIME}"
+        config["last_name_template"] = "{TIME}"
+        await clock_save_settings(user_id,config)
+        clock_last_outputs.pop(str(user_id),None)
+        if config.get("enabled"):
+            await clock_apply_now(user_id,force=True)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"template"),clock_page_markup("template",config))
+        return
+
+    if data == "clock_stats_reset":
+        if db_pool is not None:
+            await db_pool.execute(
+                "update salf1_clock_settings set stats='{}'::jsonb, updated_at=now() where customer_id=$1",
+                user_id,
+            )
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"stats"),clock_page_markup("stats",await clock_get_settings(user_id)))
+        return
+
+    if data == "clock_profile_save":
+        await clock_save_profile(user_id)
+        config = await clock_get_settings(user_id)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"profiles"),clock_page_markup("profiles",config))
+        return
+
+    if data.startswith("clock_profile_apply_"):
+        idx = int(data.removeprefix("clock_profile_apply_"))
+        config = await clock_get_settings(user_id)
+        profiles = config.get("profiles") or []
+        if 0 <= idx < len(profiles):
+            snapshot = profiles[idx].get("config") or {}
+            keep_profiles = profiles
+            config = clock_default_config()
+            config.update(snapshot)
+            config["profiles"] = keep_profiles
+            await clock_save_settings(user_id, config)
+            clock_last_outputs.pop(str(user_id),None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id,force=True)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"profiles"),clock_page_markup("profiles",await clock_get_settings(user_id)))
+        return
+
+    if data.startswith("clock_profile_delete_"):
+        idx = int(data.removeprefix("clock_profile_delete_"))
+        config = await clock_get_settings(user_id)
+        profiles = list(config.get("profiles") or [])
+        if 0 <= idx < len(profiles):
+            profiles.pop(idx)
+            config["profiles"] = profiles
+            await clock_save_settings(user_id,config)
+        await bot_edit(chat_id,message_id,await clock_page_text(user_id,"profiles"),clock_page_markup("profiles",config))
+        return
+
+    if data == "clock_reset":
+        config = clock_default_config()
+        await clock_save_settings(user_id, config)
+        clock_last_outputs.pop(str(user_id),None)
+        await clock_apply_now(user_id,force=True)
+        await bot_edit(chat_id,message_id,await clock_settings_text(user_id),await clock_main_markup_async(user_id))
+        return
+
+    if data in {"clock_font","clock_timezone","clock_destinations","clock_format","clock_appearance","clock_template","clock_schedule","clock_engine","clock_preview","clock_stats","clock_advanced","clock_profiles"}:
+        config = await clock_get_settings(user_id)
+        page = clock_pages.get(data)
+        if page:
+            await bot_edit(chat_id,message_id,await clock_page_text(user_id,page),clock_page_markup(page,config))
+        return
+
+    if data in {"feature_date","feature_counter","feature_activity","feature_auto_text"}:
+        await bot_edit(
+            chat_id, message_id,
+            """<b>Sᴀʟғ1 · قابلیت سلف</b>
+
+این ماژول در ساختار قابلیت‌های سلف ثبت شده است.
+
+راهنما
+
+ساعت اولین ماژول اجرایی است و ماژول‌های بعدی روی همین معماری مستقل اضافه می‌شوند.""",
+            {"inline_keyboard":[[{"text":"‹ بازگشت به قابلیت‌ها","callback_data":"self_features"}]]},
+        )
+        return
+
     if data.startswith("panel_"):
         section = data.removeprefix("panel_")
-        titles = {"account":"حساب کاربری","self":"تنظیمات سلف","automation":"اتوماسیون","protection":"محافظت","tools":"ابزارها","system":"سیستم"}
+        titles = {"account":"حساب کاربری","automation":"اتوماسیون","protection":"محافظت","tools":"ابزارها","system":"سیستم"}
         title = titles.get(section)
         if title:
-            await bot_edit(chat_id, message_id, f"<b>◈ Sᴀʟғ1 · {html.escape(title)}</b>\\n\\n⛂ - این بخش آماده مدیریت اختصاصی است.\\n⛂ - قابلیت‌های این بخش در ادامه فعال می‌شوند.", {"inline_keyboard":[[{"text":"‹ بازگشت به Panel","callback_data":"panel"}]]})
+            await bot_edit(chat_id, message_id, f"<b>◈ Sᴀʟғ1 · {html.escape(title)}</b>\n\n⛂ - این بخش آماده مدیریت اختصاصی است.\n⛂ - قابلیت‌های این بخش در ادامه فعال می‌شوند.", {"inline_keyboard":[[{"text":"‹ بازگشت به Panel","callback_data":"panel"}]]})
         return
 
     if data == "home":
@@ -2876,6 +4205,7 @@ async def main():
             )
             print("Salf1 worker database connected.")
             await init_web_login_tokens_table()
+            await init_clock_settings_table()
             await ensure_admin_ledger_table()
             print("Salf1 web login token store ready.")
         except Exception as exc:
@@ -2910,6 +4240,7 @@ async def main():
         tasks = []
         if ROLE in {"bot", "all"}:
             tasks.append(asyncio.create_task(mini_bot_loop()))
+            tasks.append(asyncio.create_task(clock_loop()))
         if ROLE in {"billing", "all"}:
             tasks.append(asyncio.create_task(billing_loop()))
         await asyncio.Event().wait()
