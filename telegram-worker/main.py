@@ -242,15 +242,10 @@ async def validate_telegram_api_configuration(phone: str = ""):
     try:
         await test_client.connect()
 
-        if phone:
-            try:
-                await test_client(functions.auth.CheckPhoneRequest(phone_number=phone))
-            except PhoneNumberInvalidError:
-                # Telegram accepted the API credentials far enough to process
-                # the auth request; the phone itself is what is invalid.
-                pass
-        else:
-            await test_client(functions.help.GetConfigRequest())
+        # Telethon 1.45.0 does not expose auth.CheckPhoneRequest.
+        # help.getConfig is the safe credential preflight; the actual
+        # SendCodeRequest below performs the definitive auth API check.
+        await test_client(functions.help.GetConfigRequest())
 
     except ApiIdInvalidError as exc:
         raise RuntimeError(
