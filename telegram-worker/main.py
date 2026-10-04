@@ -875,6 +875,13 @@ async def start_customer_login(customer_id: str, phone: str, force_resend: bool 
             )
         )
 
+        safe_phone = phone[-4:] if len(phone) >= 4 else phone
+        print(
+            f"Telegram login code requested for customer {customer_id}: "
+            f"phone=***{safe_phone}, delivery={delivery}, type={sent_type}, "
+            f"timeout={getattr(sent, 'timeout', 0) or 0}"
+        )
+
         timeout = int(getattr(sent, "timeout", 0) or 0)
         pending_phones[customer_id] = phone
         pending_code_hashes[customer_id] = str(sent.phone_code_hash)
@@ -1240,12 +1247,23 @@ async def start_login(request):
     status = result.get("status")
     if status == "phone_invalid":
         return web.json_response(
-            {"ok": False, **result, "code": "PHONE_INVALID"},
+            {
+                "ok": False,
+                **result,
+                "code": "PHONE_INVALID",
+                "error": "شماره تلفن معتبر نیست. شماره را با فرمت بین‌المللی وارد کنید.",
+            },
             status=400,
         )
     if status == "flood_wait":
+        seconds = int(result.get("seconds") or 0)
         return web.json_response(
-            {"ok": False, **result, "code": "RATE_LIMITED"},
+            {
+                "ok": False,
+                **result,
+                "code": "RATE_LIMITED",
+                "error": f"محدودیت موقت Telegram فعال شده است. {seconds} ثانیه بعد دوباره تلاش کنید.",
+            },
             status=429,
         )
 
@@ -4825,7 +4843,7 @@ const verifyBtn=document.getElementById('verifyBtn');
 const passwordBtn=document.getElementById('passwordBtn');
 
 function msg(t,c=''){notice.textContent=t;notice.className='notice '+c}
-function showPhone(){phoneStep.classList.remove('hidden');codeStep.classList.add('hidden');passStep.classList.add('hidden');msg('شماره را وارد کنید تا یک کد جدید ارسال شود.')}
+function showPhone(){phoneStep.classList.remove('hidden');codeStep.classList.add('hidden');passStep.classList.add('hidden');msg('شماره را وارد کنید تا Telegram برای شما کد ورود ارسال کند.')}
 async function api(path,body){
   if(!token) throw new Error('لینک ورود نامعتبر یا ناقص است. از داخل بات یک پنل ورود جدید باز کنید.');
   const sep=path.includes('?')?'&':'?';
@@ -4841,15 +4859,24 @@ async function api(path,body){
   if(!r.ok) throw new Error(d.error||'خطای ارتباط با سرور');
   return d;
 }
-async function startLogin(){
+async function startLogin(resend=false){
   const phone=document.getElementById('phone').value.trim();
   if(!phone) return msg('شماره تلفن را وارد کنید.','err');
   setBusy(startBtn,true);
   try{
-    msg('در حال ارسال کد…');
-    const d=await api('/api/web-login/start',{phone});
-    phoneStep.classList.add('hidden');codeStep.classList.remove('hidden');passStep.classList.add('hidden');
-    msg('کد جدید ارسال شد. فقط همان آخرین کد را وارد کنید.','ok');
+    msg(resend ? 'در حال درخواست کد جدید…' : 'در حال ارسال کد…');
+    const d=await api('/api/web-login/start',{phone,resend});
+    phoneStep.classList.add('hidden');
+    codeStep.classList.remove('hidden');
+    passStep.classList.add('hidden');
+
+    const delivery=d.delivery_message || (
+      d.delivery==='SMS'
+        ? 'کد به پیامک شماره شما ارسال شده است.'
+        : 'کد توسط Telegram ارسال شده است؛ برنامه Telegram را بررسی کنید.'
+    );
+    const wait=d.resend_after ? ('\n\nدریافت کد جدید پس از '+d.resend_after+' ثانیه امکان‌پذیر است.') : '';
+    msg(delivery+wait+'\n\nفقط آخرین کد Telegram را وارد کنید.','ok');
   }catch(e){msg(e.message,'err')}
   finally{setBusy(startBtn,false)}
 }
@@ -4899,7 +4926,22 @@ function done(d){
 phoneForm.addEventListener('submit',e=>{e.preventDefault();startLogin()});
 codeForm.addEventListener('submit',e=>{e.preventDefault();verifyCode()});
 passwordForm.addEventListener('submit',e=>{e.preventDefault();verifyPassword()});
-newCodeBtn.addEventListener('click',showPhone);
+newCodeBtn.addEventListener('click',async()=>{
+  const phone=document.getElementById('phone').value.trim();
+  if(!phone) return showPhone();
+  setBusy(newCodeBtn,true);
+  try{
+    msg('در حال درخواست کد جدید…');
+    const d=await api('/api/web-login/start',{phone,resend:true});
+    phoneStep.classList.add('hidden');
+    codeStep.classList.remove('hidden');
+    passStep.classList.add('hidden');
+    document.getElementById('code').value='';
+    const delivery=d.delivery_message || 'کد جدید توسط Telegram درخواست شد؛ Telegram و پیامک را بررسی کنید.';
+    msg(delivery+'\n\nفقط آخرین کد را وارد کنید.','ok');
+  }catch(e){msg(e.message,'err')}
+  finally{setBusy(newCodeBtn,false)}
+});
 if(!token) msg('لینک ورود نامعتبر یا ناقص است. از داخل بات یک پنل ورود جدید باز کنید.','err');
 </script>
 </body>
