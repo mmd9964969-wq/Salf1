@@ -1228,7 +1228,7 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
     trial_left = trial_remaining_text(row)
     name = html.escape(str(row["first_name"] if row else "کاربر"))
 
-    text = f"""◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ
+    text = f"""Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ
 
 نام : {name}
 شناسه : {customer_id}
@@ -1943,23 +1943,23 @@ async def salf_panel_text(user_id: int):
     connected = bool(row["account_connected"]) if row else False
     enabled = bool(row["salf_enabled"]) if row else False
     balance = int(row["tron_balance"]) if row else 0
-    return f"""<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
+    return f"""<b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-[[account]] - نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
-[[account]] - شناسه : <code>{user_id}</code>
-[[account]] - اکانت : {"● متصل" if connected else "○ متصل نیست"}
-[[self]] - سلف : {"● فعال" if enabled else "○ خاموش"}
-[[system]] - پلن : رایگان
-⛂ - زمان باقی‌مانده : {trial_remaining_text(row)}
-[[balance]] - موجودی : {balance:,} جم
+نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
+شناسه : <code>{user_id}</code>
+اکانت : {"متصل" if connected else "متصل نیست"}
+سلف : {"فعال" if enabled else "خاموش"}
+پلن : رایگان
+زمان باقی‌مانده : {trial_remaining_text(row)}
+موجودی : {balance:,} جم
 
-[[system]] - وضعیت سیستم : ● پایدار
-[[system]] - وضعیت Worker : ● آنلاین
-⛂ - مصرف فعال : 1 جم / دقیقه
+وضعیت سیستم : پایدار
+وضعیت Worker : آنلاین
+مصرف فعال : 1 جم / دقیقه
 
 ─────━━───── ◈ ─────━━─────
 
-[[account]] - دسترسی اختصاصی برای این حساب"""
+دسترسی اختصاصی برای این حساب"""
 
 
 def _strip_invalid_button_emojis(reply_markup: dict) -> dict:
