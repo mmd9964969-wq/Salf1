@@ -576,6 +576,40 @@ async def set_salf_enabled(customer_id: str, enabled: bool):
     enabled_cache[customer_id] = enabled
 
 
+async def repair_salf_activation_states():
+    """
+    Repair legacy accounts left disabled by the old login/trial ordering bug.
+    Only connected accounts with an active trial or positive balance are
+    activated. Explicitly disconnected/expired accounts remain unchanged.
+    """
+    if db_pool is None:
+        return
+
+    rows = await db_pool.fetch(
+        """
+        update salf1_bot_users
+        set salf_enabled = true,
+            updated_at = now()
+        where account_connected = true
+          and salf_enabled = false
+          and (
+              (trial_expires_at is not null and trial_expires_at > now())
+              or tron_balance > 0
+          )
+        returning telegram_user_id
+        """
+    )
+
+    for row in rows:
+        customer_id = str(int(row["telegram_user_id"]))
+        enabled_cache[customer_id] = True
+
+    if rows:
+        print(
+            f"Repaired SALF activation for {len(rows)} connected account(s)."
+        )
+
+
 async def referral_summary(telegram_user_id: int):
     if db_pool is None:
         return {"count": 0, "balance": 0}
@@ -4569,6 +4603,7 @@ async def main():
 
     http_session = ClientSession()
     try:
+        await repair_salf_activation_states()
         await init_loaded_sessions()
         runner = web.AppRunner(build_app())
         await runner.setup()
