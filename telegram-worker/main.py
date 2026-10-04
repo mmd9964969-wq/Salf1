@@ -187,6 +187,9 @@ clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
 pending_codes: dict[str, str] = {}
 pending_code_hashes: dict[str, str] = {}
+pending_code_sent_at: dict[str, float] = {}
+pending_code_timeout: dict[str, int] = {}
+pending_code_delivery: dict[str, str] = {}
 pending_2fa: set[str] = set()
 login_locks: dict[str, asyncio.Lock] = {}
 enabled_cache: dict[str, bool] = {}
@@ -309,6 +312,9 @@ async def reset_customer_session(customer_id: str):
     pending_phones.pop(customer_id, None)
     pending_codes.pop(customer_id, None)
     pending_code_hashes.pop(customer_id, None)
+    pending_code_sent_at.pop(customer_id, None)
+    pending_code_timeout.pop(customer_id, None)
+    pending_code_delivery.pop(customer_id, None)
     pending_2fa.discard(customer_id)
     login_locks.pop(customer_id, None)
     me_cache.pop(customer_id, None)
@@ -766,26 +772,48 @@ async def account_status(customer_id: str):
     }
 
 
-async def start_customer_login(customer_id: str, phone: str):
-    # Validate the API configuration before touching the user's phone/login
-    # flow. This makes API credential problems explicit instead of surfacing
-    # as a raw SendCodeRequest error.
-    await validate_telegram_api_configuration(phone)
+async def start_customer_login(customer_id: str, phone: str, force_resend: bool = False):
+    # Validate API credentials before touching the user's login flow.
+    await validate_telegram_api_configuration()
 
     lock = login_locks.setdefault(customer_id, asyncio.Lock())
     async with lock:
         current_phone = pending_phones.get(customer_id)
         current_hash = pending_code_hashes.get(customer_id)
+        sent_at = pending_code_sent_at.get(customer_id, 0.0)
+        timeout = pending_code_timeout.get(customer_id, 0)
+        elapsed = time.time() - sent_at if sent_at else None
+        active_window = max(int(timeout or 0), 60)
 
-        # Reuse the active request instead of generating another code.
-        if current_phone == phone and current_hash:
-            return {"status": "code_already_sent"}
+        # Do not create duplicate Telegram code requests while an existing
+        # request is still usable. The user can explicitly resend after the
+        # cooldown from the web UI.
+        if (
+            not force_resend
+            and current_phone == phone
+            and current_hash
+            and elapsed is not None
+            and elapsed < active_window
+        ):
+            remaining = max(1, active_window - int(elapsed))
+            return {
+                "status": "code_already_sent",
+                "timeout": int(timeout or 0),
+                "resend_after": remaining,
+                "delivery": pending_code_delivery.get(customer_id, "Telegram"),
+                "delivery_message": pending_code_delivery.get(
+                    customer_id,
+                    "کد قبلاً برای اکانت تلگرام ارسال شده است."
+                ),
+            }
 
-        # A stale/expired attempt must not block a new request.
         if current_phone or current_hash:
             pending_phones.pop(customer_id, None)
             pending_codes.pop(customer_id, None)
             pending_code_hashes.pop(customer_id, None)
+            pending_code_sent_at.pop(customer_id, None)
+            pending_code_timeout.pop(customer_id, None)
+            pending_code_delivery.pop(customer_id, None)
             pending_2fa.discard(customer_id)
 
         client = client_for(customer_id)
@@ -816,11 +844,53 @@ async def start_customer_login(customer_id: str, phone: str):
         except FloodWaitError as exc:
             return {"status": "flood_wait", "seconds": int(exc.seconds)}
 
+        sent_type = type(getattr(sent, "type", None)).__name__
+        delivery_map = {
+            "SentCodeTypeApp": (
+                "Telegram App",
+                "کد به پیام تلگرامی اکانت شما ارسال شده است؛ چت Telegram را بررسی کنید."
+            ),
+            "SentCodeTypeSms": (
+                "SMS",
+                "کد به پیامک شماره شما ارسال شده است."
+            ),
+            "SentCodeTypeCall": (
+                "تماس",
+                "کد از طریق تماس تلفنی ارائه می‌شود."
+            ),
+            "SentCodeTypeFlashCall": (
+                "تماس",
+                "کد از طریق تماس خودکار تلگرام ارائه می‌شود."
+            ),
+            "SentCodeTypeMissedCall": (
+                "تماس",
+                "کد از طریق تماس از دست‌رفته ارائه می‌شود."
+            ),
+        }
+        delivery, delivery_message = delivery_map.get(
+            sent_type,
+            (
+                "Telegram",
+                "کد توسط Telegram ارسال شده است؛ Telegram و پیامک شماره را بررسی کنید."
+            )
+        )
+
+        timeout = int(getattr(sent, "timeout", 0) or 0)
         pending_phones[customer_id] = phone
         pending_code_hashes[customer_id] = str(sent.phone_code_hash)
+        pending_code_sent_at[customer_id] = time.time()
+        pending_code_timeout[customer_id] = timeout
+        pending_code_delivery[customer_id] = delivery
         pending_codes.pop(customer_id, None)
         pending_2fa.discard(customer_id)
-        return {"status": "code_sent", "timeout": int(getattr(sent, "timeout", 0) or 0)}
+
+        return {
+            "status": "code_sent",
+            "timeout": timeout,
+            "resend_after": max(timeout, 60),
+            "delivery": delivery,
+            "delivery_message": delivery_message,
+        }
 
 
 async def verify_customer_login(customer_id: str, code: str, password: str = ""):
@@ -866,6 +936,9 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
             pending_phones.pop(customer_id, None)
             pending_codes.pop(customer_id, None)
             pending_code_hashes.pop(customer_id, None)
+            pending_code_sent_at.pop(customer_id, None)
+            pending_code_timeout.pop(customer_id, None)
+            pending_code_delivery.pop(customer_id, None)
             pending_2fa.discard(customer_id)
 
             return {"status": "code_expired"}
@@ -921,10 +994,16 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     pending_phones.pop(previous_customer_id, None)
     pending_codes.pop(previous_customer_id, None)
     pending_code_hashes.pop(previous_customer_id, None)
+    pending_code_sent_at.pop(previous_customer_id, None)
+    pending_code_timeout.pop(previous_customer_id, None)
+    pending_code_delivery.pop(previous_customer_id, None)
     pending_2fa.discard(previous_customer_id)
     login_locks.pop(previous_customer_id, None)
     pending_codes.pop(customer_id, None)
     pending_code_hashes.pop(customer_id, None)
+    pending_code_sent_at.pop(customer_id, None)
+    pending_code_timeout.pop(customer_id, None)
+    pending_code_delivery.pop(customer_id, None)
     pending_2fa.discard(customer_id)
     login_locks.pop(customer_id, None)
     me_cache[customer_id] = int(me.id)
@@ -1120,15 +1199,63 @@ async def start_login(request):
 
     data = await request.json()
     phone = str(data.get("phone", "")).strip()
+    force_resend = bool(data.get("resend"))
     if not phone:
-        return web.json_response({"ok": False, "error": "phone is required"}, status=400)
+        return web.json_response(
+            {"ok": False, "code": "PHONE_REQUIRED", "error": "phone is required"},
+            status=400,
+        )
 
     try:
-        await start_customer_login(customer_id, phone)
+        result = await start_customer_login(
+            customer_id,
+            phone,
+            force_resend=force_resend,
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        api_error = (
+            "API تلگرام نامعتبر" in message
+            or "TELEGRAM_API_ID" in message
+            or "TELEGRAM_API_HASH" in message
+        )
+        return web.json_response(
+            {
+                "ok": False,
+                "code": "API_CONFIG_INVALID" if api_error else "LOGIN_START_FAILED",
+                "error": message,
+            },
+            status=400,
+        )
     except Exception as exc:
-        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        return web.json_response(
+            {
+                "ok": False,
+                "code": "LOGIN_START_FAILED",
+                "error": str(exc),
+            },
+            status=400,
+        )
 
-    return web.json_response({"ok": True, "status": "code_sent"})
+    status = result.get("status")
+    if status == "phone_invalid":
+        return web.json_response(
+            {"ok": False, **result, "code": "PHONE_INVALID"},
+            status=400,
+        )
+    if status == "flood_wait":
+        return web.json_response(
+            {"ok": False, **result, "code": "RATE_LIMITED"},
+            status=429,
+        )
+
+    return web.json_response(
+        {
+            "ok": True,
+            "step": "code" if status in {"code_sent", "code_already_sent"} else None,
+            **result,
+        }
+    )
 
 
 async def verify_login(request):
