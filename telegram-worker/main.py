@@ -1713,7 +1713,7 @@ async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
     # fallback so the panel itself never breaks.
     if "[[" in str(text):
         fallback = dict(payload)
-        fallback["text"] = strip_custom_emoji(text)
+        fallback["text"] = strip_custom_emoji(rich_message_html(text))
         if reply_markup:
             fallback["reply_markup"] = _strip_invalid_button_emojis(reply_markup)
         return await bot_api("sendMessage", fallback)
@@ -1745,7 +1745,7 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
-        "text": render_custom_emoji(text),
+        "text": render_custom_emoji(rich_message_html(text)),
         "parse_mode": "HTML",
         **({"reply_markup": reply_markup} if reply_markup else {}),
     }
@@ -1754,7 +1754,7 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
         return result
     if "[[" in str(text):
         fallback = dict(payload)
-        fallback["text"] = strip_custom_emoji(text)
+        fallback["text"] = strip_custom_emoji(rich_message_html(text))
         if reply_markup:
             fallback["reply_markup"] = _strip_invalid_button_emojis(reply_markup)
         return await bot_api("editMessageText", fallback)
