@@ -1310,7 +1310,7 @@ def rich_message_html(text: str) -> str:
             for label, value in data_rows
         )
         parts.append(
-            "<table is-bordered=\"true\" is-compact=\"true\">"
+            "<table bordered compact>"
             + "".join(rows)
             + "</table>"
         )
