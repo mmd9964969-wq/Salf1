@@ -896,7 +896,22 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     me_cache[customer_id] = int(me.id)
     await ensure_bot_user(int(me.id), me.username, me.first_name)
     await update_account_state(str(me.id), True)
-    await set_salf_enabled(str(me.id), False)
+
+    # A successful account login activates SALF1 when the account has
+    # an active trial or available balance. Disconnecting still turns it off.
+    # This keeps the panel state consistent with a successfully connected
+    # and usable self account.
+    login_row = await db_user(str(me.id))
+    login_trial_active = bool(
+        login_row
+        and login_row["trial_expires_at"] is not None
+        and login_row["trial_expires_at"] > datetime.now(login_row["trial_expires_at"].tzinfo)
+    )
+    login_balance = int(login_row["tron_balance"]) if login_row else 0
+    await set_salf_enabled(
+        str(me.id),
+        bool(login_trial_active or login_balance > 0),
+    )
 
     # Start the one-time 24-hour trial only after the account login succeeds.
     if db_pool is not None:
