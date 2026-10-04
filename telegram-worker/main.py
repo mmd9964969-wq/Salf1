@@ -113,13 +113,30 @@ async def render_telethon_custom_emoji(client: TelegramClient, text: str):
                 )
             )
             for doc in documents:
+                # Keep the Telegram document even when its MTProto metadata
+                # does not expose an alt string. The configured ALT is still
+                # the exact visible character that the custom-emoji entity
+                # must wrap.
                 alt = ""
                 for attr in getattr(doc, "attributes", []) or []:
                     if hasattr(attr, "alt") and getattr(attr, "alt", None):
                         alt = str(attr.alt)
                         break
-                if alt:
-                    document_by_key[str(getattr(doc, "id", ""))] = (int(doc.id), alt)
+
+                document_id = str(getattr(doc, "id", ""))
+                if document_id:
+                    configured_alt = next(
+                        (
+                            configured
+                            for key, (raw_id, configured) in CUSTOM_EMOJI.items()
+                            if _emoji_id(raw_id) == document_id
+                        ),
+                        "",
+                    )
+                    document_by_key[document_id] = (
+                        int(doc.id),
+                        alt or configured_alt,
+                    )
         except Exception as exc:
             print(f"Custom Emoji MTProto lookup failed: {type(exc).__name__}: {exc}")
 
