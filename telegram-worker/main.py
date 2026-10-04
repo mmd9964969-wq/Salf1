@@ -19,6 +19,7 @@ from telethon import TelegramClient, events, functions
 from telethon.sessions import MemorySession
 from telethon.tl.types import MessageEntityCustomEmoji
 from telethon.errors import (
+    ApiIdInvalidError,
     PasswordHashInvalidError,
     SessionPasswordNeededError,
     PhoneCodeInvalidError,
@@ -203,14 +204,14 @@ def configured():
     return API_ID_RAW.isdigit() and bool(API_HASH)
 
 
-async def validate_telegram_api_configuration():
+async def validate_telegram_api_configuration(phone: str = ""):
     """
-    Validate TELEGRAM_API_ID + TELEGRAM_API_HASH against Telegram before
-    starting any customer phone-login flow.
-
-    This uses a temporary in-memory session and a harmless help.getConfig
-    request, so it never creates or modifies the customer's persistent
+    Validate Telegram API credentials before starting a persistent customer
     login session.
+
+    A temporary in-memory session is used. When a phone is supplied, the
+    unauthenticated auth.CheckPhoneRequest path is exercised because it is
+    closer to the real SendCodeRequest flow than help.getConfig.
     """
     api_id = API_ID_RAW.strip()
     api_hash = API_HASH.strip()
@@ -240,21 +241,35 @@ async def validate_telegram_api_configuration():
 
     try:
         await test_client.connect()
-        await test_client(functions.help.GetConfigRequest())
+
+        if phone:
+            try:
+                await test_client(functions.auth.CheckPhoneRequest(phone_number=phone))
+            except PhoneNumberInvalidError:
+                # Telegram accepted the API credentials far enough to process
+                # the auth request; the phone itself is what is invalid.
+                pass
+        else:
+            await test_client(functions.help.GetConfigRequest())
+
+    except ApiIdInvalidError as exc:
+        raise RuntimeError(
+            "API تلگرام نامعتبر است: ترکیب TELEGRAM_API_ID و "
+            "TELEGRAM_API_HASH توسط Telegram رد شد. هر دو مقدار باید "
+            "متعلق به یک Application در my.telegram.org باشند."
+        ) from exc
     except Exception as exc:
         error_name = type(exc).__name__
         error_text = str(exc).strip()
 
         if (
-            error_name == "ApiIdInvalidError"
-            or "API_ID_INVALID" in error_text.upper()
+            "API_ID_INVALID" in error_text.upper()
             or "api_id/api_hash combination is invalid" in error_text.lower()
         ):
             raise RuntimeError(
                 "API تلگرام نامعتبر است: ترکیب TELEGRAM_API_ID و "
-                "TELEGRAM_API_HASH توسط Telegram رد شد. هر دو مقدار را "
-                "از یک Application در my.telegram.org بردارید و در Railway "
-                "بررسی کنید."
+                "TELEGRAM_API_HASH توسط Telegram رد شد. هر دو مقدار باید "
+                "متعلق به یک Application در my.telegram.org باشند."
             ) from exc
 
         raise RuntimeError(
@@ -269,7 +284,6 @@ async def validate_telegram_api_configuration():
             pass
 
     return True
-
 
 def bot_configured():
     return bool(BOT_TOKEN and db_pool is not None)
@@ -727,7 +741,7 @@ async def start_customer_login(customer_id: str, phone: str):
     # Validate the API configuration before touching the user's phone/login
     # flow. This makes API credential problems explicit instead of surfacing
     # as a raw SendCodeRequest error.
-    await validate_telegram_api_configuration()
+    await validate_telegram_api_configuration(phone)
 
     lock = login_locks.setdefault(customer_id, asyncio.Lock())
     async with lock:
@@ -760,7 +774,19 @@ async def start_customer_login(customer_id: str, phone: str):
                 "last_name": me.last_name,
             }}
 
-        sent = await client.send_code_request(phone)
+        try:
+            sent = await client.send_code_request(phone)
+        except ApiIdInvalidError as exc:
+            raise RuntimeError(
+                "API تلگرام نامعتبر است: ترکیب TELEGRAM_API_ID و "
+                "TELEGRAM_API_HASH توسط Telegram رد شد. هر دو مقدار باید "
+                "متعلق به یک Application در my.telegram.org باشند."
+            ) from exc
+        except PhoneNumberInvalidError:
+            return {"status": "phone_invalid"}
+        except FloodWaitError as exc:
+            return {"status": "flood_wait", "seconds": int(exc.seconds)}
+
         pending_phones[customer_id] = phone
         pending_code_hashes[customer_id] = str(sent.phone_code_hash)
         pending_codes.pop(customer_id, None)
@@ -4753,6 +4779,19 @@ async def web_login_start_form(request: web.Request):
         result = await start_customer_login(str(ctx["customer_id"]), phone)
     except Exception as exc:
         return web.Response(text=str(exc), content_type="text/plain", status=400)
+    if result.get("status") == "phone_invalid":
+        return web.Response(
+            text="شماره تلفن معتبر نیست. شماره را با فرمت بین‌المللی وارد کنید.",
+            content_type="text/plain",
+            status=400,
+        )
+    if result.get("status") == "flood_wait":
+        seconds = int(result.get("seconds") or 0)
+        return web.Response(
+            text=f"محدودیت موقت Telegram فعال شده است. {seconds} ثانیه صبر کنید و دوباره تلاش کنید.",
+            content_type="text/plain",
+            status=429,
+        )
     if result.get("status") not in {"code_sent", "code_already_sent"}:
         return web.Response(text="ارسال کد انجام نشد.", content_type="text/plain", status=400)
     await web_login_set_stage(token, "code")
