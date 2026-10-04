@@ -897,26 +897,13 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     await ensure_bot_user(int(me.id), me.username, me.first_name)
     await update_account_state(str(me.id), True)
 
-    # A successful account login activates SALF1 when the account has
-    # an active trial or available balance. Disconnecting still turns it off.
-    # This keeps the panel state consistent with a successfully connected
-    # and usable self account.
-    login_row = await db_user(str(me.id))
-    login_trial_active = bool(
-        login_row
-        and login_row["trial_expires_at"] is not None
-        and login_row["trial_expires_at"] > datetime.now(login_row["trial_expires_at"].tzinfo)
-    )
-    login_balance = int(login_row["tron_balance"]) if login_row else 0
-    await set_salf_enabled(
-        str(me.id),
-        bool(login_trial_active or login_balance > 0),
-    )
-
-    # Start the one-time 24-hour trial only after the account login succeeds.
+    # Start the one-time 24-hour trial immediately after a successful
+    # account login. The SALF enabled state must be calculated AFTER this
+    # write, otherwise a new account with zero balance is incorrectly shown
+    # as disabled even though its trial has just started.
     if db_pool is not None:
         try:
-            user_id = int(customer_id)
+            user_id = int(me.id)
             async with db_pool.acquire() as conn:
                 await conn.execute(
                     """
@@ -933,6 +920,21 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
                 )
         except (ValueError, asyncpg.PostgresError) as exc:
             print(f"Trial start error: {exc}")
+
+    # A successful account login activates SALF1 when the account has an
+    # active trial or available balance. This state is persisted and mirrored
+    # into the in-memory cache used by the self worker.
+    login_row = await db_user(str(me.id))
+    login_trial_active = bool(
+        login_row
+        and login_row["trial_expires_at"] is not None
+        and login_row["trial_expires_at"] > datetime.now(login_row["trial_expires_at"].tzinfo)
+    )
+    login_balance = int(login_row["tron_balance"]) if login_row else 0
+    await set_salf_enabled(
+        str(me.id),
+        bool(login_trial_active or login_balance > 0),
+    )
 
     try:
         await reward_referral(int(customer_id))
@@ -2577,13 +2579,13 @@ async def clock_apply_now(user_id: int, force: bool = False):
 
         now_mono = time.monotonic()
 
-        # Telegram profile changes are server-side API calls and can trigger
-        # FLOOD_WAIT when repeated too frequently. Keep a hard safety floor
-        # while still allowing the configured interval to be increased.
+        # The display clock can run at second-level granularity. The actual
+        # Telegram profile request follows the configured interval and, when
+        # Telegram returns FLOOD_WAIT, the returned server-side cooldown is
+        # respected before the next attempt.
         requested_interval = max(
-            1, int(config.get("update_interval_seconds") or 60)
+            1, int(config.get("update_interval_seconds") or 1)
         )
-        safe_interval = max(60, requested_interval)
 
         if not force:
             next_allowed = clock_next_allowed.get(str(user_id), 0.0)
@@ -2622,13 +2624,10 @@ async def clock_apply_now(user_id: int, force: bool = False):
 
         clock_last_outputs[str(user_id)] = output
 
-        # Align regular updates to the next minute so an enabled clock keeps
-        # advancing predictably without hammering account.updateProfile.
-        delay_to_next_minute = max(1, 60 - int(local.second))
-        clock_next_allowed[str(user_id)] = time.monotonic() + max(
-            60 if requested_interval <= 60 else requested_interval,
-            delay_to_next_minute,
-        )
+        # Keep the requested cadence. With a 1-second interval, the seconds
+        # field advances continuously; larger intervals intentionally update
+        # less often.
+        clock_next_allowed[str(user_id)] = time.monotonic() + requested_interval
         await clock_stats_update(user_id, "success")
         return {"ok": True, "changed": True, "local": local}
     except Exception as exc:
@@ -2741,7 +2740,7 @@ async def clock_settings_text(user_id: int):
             "destination_profile",
         ) if config.get(key)
     )
-    effective_interval = max(60, int(config.get("update_interval_seconds") or 60))
+    effective_interval = max(1, int(config.get("update_interval_seconds") or 1))
     return f"""<b>Sᴀʟғ1 · مرکز ساعت</b>
 
 <b>وضعیت ساعت</b>
@@ -2882,20 +2881,20 @@ IANA : {html.escape(tz_name)}
 
 زمان شروع و پایان را مشخص کنید و روزهای فعال را انتخاب کنید. بیرون از این بازه، ساعت روی مقصدهای انتخاب‌شده اجرا نمی‌شود."""
     if page == "engine":
-        effective_interval = max(60, int(config.get("update_interval_seconds") or 60))
+        effective_interval = max(1, int(config.get("update_interval_seconds") or 1))
         return f"""<b>Sᴀʟғ1 · موتور بروزرسانی</b>
 
 چرخه داخلی : ۱ ثانیه
 محاسبه منطقه زمانی : فعال
-فاصله امن تغییر پروفایل : حداقل {effective_interval} ثانیه
+فاصله تغییر پروفایل : هر {effective_interval} ثانیه
 تشخیص تغییر : {"فعال" if config.get("smart_update") else "خاموش"}
 تلاش مجدد : {"فعال" if config.get("retry") else "خاموش"}
 صف بروزرسانی : {"فعال" if config.get("queue") else "خاموش"}
-محافظ Rate Limit : اجباری
+محافظ Rate Limit : {"فعال" if config.get("rate_limit_guard") else "خاموش"}
 
 راهنما
 
-چرخه داخلی هر ثانیه زمان را محاسبه می‌کند؛ تغییرات پروفایل برای جلوگیری از محدودیت Telegram با فاصله امن اعمال می‌شوند. نمایش ثانیه در قالب فعال است، اما خود پروفایل نمی‌تواند هر ثانیه با یک درخواست جداگانه بروزرسانی شود."""
+برای نمایش ثانیه، فاصله ۱ ثانیه را انتخاب کنید. اگر Telegram محدودیت موقت اعمال کند، موتور مدت محدودیت اعلام‌شده را رعایت کرده و سپس ادامه می‌دهد."""
     if page == "preview":
         preview_name, _ = clock_render_value(
             config.get("name_template") or "{BASE_NAME} | {TIME}",
@@ -3023,12 +3022,13 @@ def clock_page_markup(page: str, config: dict):
         ]
     elif page == "engine":
         rows = [
-            [{"text":"فاصله ۱ دقیقه","callback_data":"clock_interval_60"},{"text":"فاصله ۲ دقیقه","callback_data":"clock_interval_120"}],
-            [{"text":"فاصله ۵ دقیقه","callback_data":"clock_interval_300"}],
+            [{"text":"فاصله ۱ ثانیه","callback_data":"clock_interval_1"},{"text":"فاصله ۵ ثانیه","callback_data":"clock_interval_5"}],
+            [{"text":"فاصله ۱۰ ثانیه","callback_data":"clock_interval_10"},{"text":"فاصله ۳۰ ثانیه","callback_data":"clock_interval_30"}],
+            [{"text":"فاصله ۶۰ ثانیه","callback_data":"clock_interval_60"}],
             [{"text":"تشخیص تغییر","callback_data":"clock_engine_smart"}],
             [{"text":"تلاش مجدد","callback_data":"clock_engine_retry"}],
             [{"text":"صف بروزرسانی","callback_data":"clock_engine_queue"}],
-            [{"text":"محافظ Rate Limit : اجباری","callback_data":"clock_engine_rate"}],
+            [{"text":"محافظ Rate Limit","callback_data":"clock_engine_rate"}],
             [{"text":"› بروزرسانی فوری","callback_data":"clock_force_sync"}],
         ]
     elif page == "stats":
@@ -3884,11 +3884,12 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
 
     if data.startswith("clock_interval_"):
         value = int(data.removeprefix("clock_interval_"))
-        if value in {60,120,300}:
+        if value in {1, 5, 10, 30, 60}:
             config = await clock_get_settings(user_id)
             config["update_interval_seconds"] = value
             await clock_save_settings(user_id, config)
             clock_last_outputs.pop(str(user_id), None)
+            clock_next_allowed.pop(str(user_id), None)
             if config.get("enabled"):
                 await clock_apply_now(user_id, force=True)
             await bot_edit(chat_id,message_id,await clock_page_text(user_id,"engine"),clock_page_markup("engine",config))
