@@ -1480,6 +1480,107 @@ async def handle_self_command(event, customer_id: str, text: str):
             await bot_send(chat["id"], await clock_page_text(user_id, "schedule"), clock_page_markup("schedule", config))
             return
 
+    current_state = bot_states.get(user_id)
+    if isinstance(current_state, dict):
+        state = str(current_state.get("state") or "")
+
+        if normalize_text(text) in {"لغو", "cancel", "انصراف"}:
+            bot_states.pop(user_id, None)
+            config = await clock_get_settings(user_id)
+            await bot_send(
+                chat["id"],
+                await clock_settings_text(user_id),
+                await clock_main_markup_async(user_id),
+            )
+            return
+
+        if state == "clock_timezone_custom":
+            try:
+                ZoneInfo(text)
+            except Exception:
+                await bot_send(
+                    chat["id"],
+                    """<b>Sᴀʟғ1 · منطقه زمانی</b>
+
+منطقه IANA معتبر نیست.
+
+نمونه
+<code>Asia/Baku</code>
+<code>Europe/Berlin</code>
+<code>America/New_York</code>""",
+                )
+                return
+
+            config = await clock_get_settings(user_id)
+            config["timezone"] = text
+            config["city"] = text.split("/")[-1].replace("_", " ")
+            await clock_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_send(
+                chat["id"],
+                await clock_page_text(user_id, "timezone"),
+                clock_page_markup("timezone", config),
+            )
+            return
+
+        if state in {"clock_template_name", "clock_template_bio"}:
+            cleaned = text.replace("\n", " ").strip()
+            if not cleaned:
+                return
+            if len(cleaned) > 70:
+                await bot_send(
+                    chat["id"],
+                    "<b>Sᴀʟғ1 · قالب ساعت</b>\n\nقالب بیش از ۷۰ کاراکتر است.",
+                )
+                return
+
+            config = await clock_get_settings(user_id)
+            if state == "clock_template_name":
+                config["name_template"] = cleaned[:64]
+            else:
+                config["bio_template"] = cleaned[:70]
+            await clock_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_send(
+                chat["id"],
+                await clock_page_text(user_id, "template"),
+                clock_page_markup("template", config),
+            )
+            return
+
+        if state in {"clock_schedule_start", "clock_schedule_end"}:
+            import re
+            if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", text):
+                await bot_send(
+                    chat["id"],
+                    "<b>Sᴀʟғ1 · زمان‌بندی</b>\n\nزمان را با فرمت <code>HH:MM</code> ارسال کنید.",
+                )
+                return
+
+            config = await clock_get_settings(user_id)
+            if state == "clock_schedule_start":
+                config["schedule_start"] = text
+            else:
+                config["schedule_end"] = text
+            config["schedule_enabled"] = True
+            await clock_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            clock_last_outputs.pop(str(user_id), None)
+            if config.get("enabled"):
+                await clock_apply_now(user_id, force=True)
+            await bot_send(
+                chat["id"],
+                await clock_page_text(user_id, "schedule"),
+                clock_page_markup("schedule", config),
+            )
+            return
+
     normalized = normalize_text(text)
     if normalized not in {
         "پنل",
