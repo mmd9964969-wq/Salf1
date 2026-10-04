@@ -3008,12 +3008,12 @@ def clock_page_markup(page: str, config: dict):
         ]
     elif page == "engine":
         rows = [
-            [{"text":"فاصله 1 ثانیه","callback_data":"clock_interval_1"},{"text":"فاصله 5 ثانیه","callback_data":"clock_interval_5"}],
-            [{"text":"فاصله 10 ثانیه","callback_data":"clock_interval_10"},{"text":"فاصله 30 ثانیه","callback_data":"clock_interval_30"}],
+            [{"text":"فاصله ۱ دقیقه","callback_data":"clock_interval_60"},{"text":"فاصله ۲ دقیقه","callback_data":"clock_interval_120"}],
+            [{"text":"فاصله ۵ دقیقه","callback_data":"clock_interval_300"}],
             [{"text":"تشخیص تغییر","callback_data":"clock_engine_smart"}],
             [{"text":"تلاش مجدد","callback_data":"clock_engine_retry"}],
             [{"text":"صف بروزرسانی","callback_data":"clock_engine_queue"}],
-            [{"text":"محافظ Rate Limit","callback_data":"clock_engine_rate"}],
+            [{"text":"محافظ Rate Limit : اجباری","callback_data":"clock_engine_rate"}],
             [{"text":"› بروزرسانی فوری","callback_data":"clock_force_sync"}],
         ]
     elif page == "stats":
