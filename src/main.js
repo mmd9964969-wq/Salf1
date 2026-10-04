@@ -19,6 +19,8 @@ const state = {
   selectedGem: null,
   receipt: null,
   paymentStatus: "",
+  deliveryMessage: "",
+  resendAfter: 60,
   gemPackages: [
     {code:"trial-24h",name:"تست ۲۴ ساعته",gems:1440,price:"—",duration:"تا 24 ساعت فعالیت مداوم"},
     {code:"starter",name:"بسته آغازین",gems:5000,price:"—",duration:"تا 83 ساعت و 20 دقیقه فعالیت"},
@@ -230,7 +232,7 @@ function pageHtml() {
         '<button class="stage-back" id="backButton" type="button">← ' + t("back") + '</button>' +
         '<div class="stage-mark">02</div>' +
         '<h1>' + t("codeTitle") + '</h1>' +
-        '<p class="stage-subtitle">' + t("codeText") + '</p>' +
+        '<p class="stage-subtitle">' + (state.deliveryMessage || t("codeText")) + '</p>' +
         '<form id="codeForm" class="auth-form">' +
           '<div class="otp-label">' + t("code") + '</div>' +
           '<div class="otp-row" dir="ltr">' + [0,1,2,3,4,5].map(i => '<input class="otp-cell" maxlength="1" inputmode="numeric" aria-label="OTP ' + (i + 1) + '">').join("") + '</div>' +
@@ -425,7 +427,7 @@ function render() {
 
   if(state.stage==="code") {
     setupOtp();
-    startTimer();
+    startTimer(state.resendAfter || 60);
     document.querySelector(".otp-cell")?.focus();
   }
 }
@@ -443,7 +445,7 @@ function bindCommon() {
 
   document.querySelector("#entryLogin")?.addEventListener("click",()=>{ state.entryOpen=true; render(); });
   document.querySelector("#existingLogin")?.addEventListener("click",()=>{ state.recovery=false; state.entryOpen=false; state.stage="master_login"; render(); });
-  document.querySelector("#newConnection")?.addEventListener("click",()=>{ state.recovery=false; state.entryOpen=false; state.siteUsername=""; state.stage="identifier"; render(); });
+  document.querySelector("#newConnection")?.addEventListener("click",()=>{ state.recovery=false; state.entryOpen=false; state.siteUsername=""; state.deliveryMessage=""; state.resendAfter=60; state.stage="identifier"; render(); });
   document.querySelector("#forgotPassword")?.addEventListener("click",()=>{ state.recovery=true; state.siteUsername=state.siteUsername||""; state.stage="identifier"; render(); });
 
   document.querySelector("#identifierForm")?.addEventListener("submit",async e=>{
@@ -457,9 +459,17 @@ function bindCommon() {
     try{
       const data=await postJson("/api/auth/start",{identifier:state.identifier,recovery:state.recovery});
       state.flowId=data.flow_id||"";
-      state.stage="code";
+      state.deliveryMessage=data.delivery_message||"";
+      state.resendAfter=Number(data.resend_after||60);
+      if(data.status==="already_connected"){
+        state.stage="success";
+        state.account=data.user||null;
+      }else{
+        state.stage="code";
+      }
       stagePulse();
       render();
+      if(data.delivery_message) setLive(data.delivery_message);
     }catch(error){
       setLive(translateStageError(error.message));
       document.querySelector(".auth-stage")?.classList.add("error-shake");
@@ -591,15 +601,21 @@ function bindCommon() {
 
   document.querySelector("#resendButton")?.addEventListener("click",()=>{
     setLive(t("verifying"));
-    document.querySelector("#resendButton").disabled=true;
-    postJson("/api/auth/start",{identifier:state.identifier})
+    const resendButton=document.querySelector("#resendButton");
+    if(resendButton) resendButton.disabled=true;
+    postJson("/api/auth/start",{identifier:state.identifier,resend:true})
       .then(data=>{
         state.flowId=data.flow_id||state.flowId;
-        setLive(t("security"));
-        startTimer();
+        state.deliveryMessage=data.delivery_message||state.deliveryMessage;
+        state.resendAfter=Number(data.resend_after||60);
+        setLive(data.delivery_message||t("security"));
+        render();
       })
-      .catch(error=>setLive(error.message))
-      .finally(()=>{setTimeout(()=>{const b=document.querySelector("#resendButton");if(b)b.disabled=false;},900);});
+      .catch(error=>{
+        setLive(error.message);
+        const button=document.querySelector("#resendButton");
+        if(button) button.disabled=false;
+      });
   });
 
   const togglePassword=(inputId,key)=>{
@@ -746,9 +762,9 @@ function setupOtp() {
   });
 }
 
-function startTimer() {
+function startTimer(seconds=60) {
   clearInterval(window.__salfTimer);
-  let remaining=59;
+  let remaining=Math.max(1,Number(seconds)||60);
   const timer=document.querySelector("#timer");
   const button=document.querySelector("#resendButton");
   if(timer)timer.textContent=String(remaining).padStart(2,"0");
