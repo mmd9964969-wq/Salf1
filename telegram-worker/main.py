@@ -2294,6 +2294,16 @@ def _clock_safe_timezone(value: str):
 def clock_format_time(now_utc: datetime, config: dict):
     local = now_utc.astimezone(_clock_safe_timezone(str(config.get("timezone") or "UTC")))
     fmt_key = str(config.get("format") or "24_seconds")
+    if config.get("show_seconds") is False:
+        if fmt_key == "24_seconds":
+            fmt_key = "24"
+        elif fmt_key == "12_seconds":
+            fmt_key = "12"
+    elif config.get("show_seconds") is True:
+        if fmt_key == "24":
+            fmt_key = "24_seconds"
+        elif fmt_key == "12":
+            fmt_key = "12_seconds"
     separator = str(config.get("separator") or ":")
     if fmt_key.startswith("12"):
         base = local.strftime("%I").lstrip("0") or "0"
@@ -2329,6 +2339,15 @@ def clock_render_value(template: str, now_utc: datetime, config: dict, base_name
     rendered = str(template or "{TIME}")
     for token, value in values.items():
         rendered = rendered.replace(token, value)
+
+    if config.get("show_city") and "{CITY}" not in str(template):
+        rendered += f" · {values['{CITY}']}"
+    if config.get("show_timezone") and "{TZ}" not in str(template):
+        rendered += f" · {values['{TZ}']}"
+    if config.get("show_date") and "{DATE}" not in str(template):
+        rendered += f" · {values['{DATE}']}"
+    if config.get("show_day") and "{DAY}" not in str(template):
+        rendered += f" · {values['{DAY}']}"
     return rendered[:70], local
 
 def _clock_schedule_active(config: dict, local: datetime) -> bool:
@@ -2806,9 +2825,6 @@ Cache : {"فعال" if config.get("cache") else "خاموش"}
 
 پروفایل یک snapshot از تنظیمات کامل ساعت است. از دکمه ذخیره، تنظیم فعلی را نگه دارید تا بعداً همان مجموعه تنظیمات را دوباره فعال کنید."""
     return "<b>Sᴀʟғ1 · ساعت</b>"
-
-def clock_main_markup_async_placeholder():
-    return None
 
 def clock_page_markup(page: str, config: dict):
     rows = []
