@@ -1245,6 +1245,36 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
     )
 
 
+RICH_DIVIDER = "─────━━───── ◈ ─────━━─────"
+
+
+def rich_message_html(text: str) -> str:
+    """
+    Normalize every bot-facing system message into one Telegram Rich Message
+    structure without adding explanatory filler.
+    """
+    source = str(text or "").strip()
+    if not source:
+        source = "<b>◈ Sᴀʟғ1</b>"
+
+    first_line = next((line.strip() for line in source.splitlines() if line.strip()), "")
+    if not (
+        first_line.startswith("<b>")
+        or first_line.startswith("◈")
+        or first_line.startswith("[[")
+    ):
+        source = "<b>◈ Sᴀʟғ1</b>\n\n" + source
+
+    if RICH_DIVIDER not in source:
+        source = source.rstrip() + "\n\n" + RICH_DIVIDER
+
+    return source
+
+
+async def self_respond(event, text: str, **kwargs):
+    return await event.respond(rich_message_html(text), **kwargs)
+
+
 async def handle_self_command(event, customer_id: str, text: str):
     # Self-account commands are intentionally slashless.
     if text.lstrip().startswith("/"):
@@ -1295,7 +1325,7 @@ async def handle_self_command(event, customer_id: str, text: str):
         return True
 
     if not is_owner:
-        await event.respond(
+        await self_respond(event, 
             "⛂ این دستور فقط توسط مالک اکانت قابل اجراست.",
             parse_mode="html",
         )
@@ -1307,7 +1337,7 @@ async def handle_self_command(event, customer_id: str, text: str):
         trial = row["trial_expires_at"] if row else None
         enabled = bool(row["salf_enabled"]) if row else False
         trial_text = "فعال" if trial and trial > datetime.now(trial.tzinfo) else "پایان‌یافته"
-        await event.respond(
+        await self_respond(event, 
             f"""<b>◈ موجودی SALF1</b>
 
 ⛂ موجودی : <b>{balance:,} جم ترون</b>
@@ -1323,7 +1353,7 @@ async def handle_self_command(event, customer_id: str, text: str):
         row = await db_user(customer_id)
         connected = bool(row["account_connected"]) if row else False
         enabled = bool(row["salf_enabled"]) if row else False
-        await event.respond(
+        await self_respond(event, 
             f"""<b>◈ وضعیت SALF1</b>
 
 ⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
@@ -1337,7 +1367,7 @@ async def handle_self_command(event, customer_id: str, text: str):
     if normalized in {"سلف روشن", "self on", "روشن کردن سلف"}:
         row = await db_user(customer_id)
         if not row or not bool(row["account_connected"]):
-            await event.respond(
+            await self_respond(event, 
                 "⛂ ابتدا اکانت را از مینی‌بات SALF1 وارد کنید.",
                 parse_mode="html",
             )
@@ -1345,20 +1375,20 @@ async def handle_self_command(event, customer_id: str, text: str):
         trial_active = bool(row and row["trial_expires_at"] is not None and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo))
         balance = int(row["tron_balance"])
         if not trial_active and balance <= 0:
-            await event.respond(
+            await self_respond(event, 
                 "⛂ اعتبار کافی نیست. ابتدا ترون دریافت کنید.",
                 parse_mode="html",
             )
             return True
         await set_salf_enabled(customer_id, True)
-        await event.respond(
+        await self_respond(event, 
             "● SALF1 روشن شد.\n⛂ اجرای قابلیت‌های متصل از این لحظه فعال است.",
             parse_mode="html",
         )
         return True
 
     await set_salf_enabled(customer_id, False)
-    await event.respond(
+    await self_respond(event, 
         "○ SALF1 خاموش شد.\n⛂ اجرای قابلیت‌های خودکار متوقف شد.",
         parse_mode="html",
     )
@@ -1670,7 +1700,7 @@ async def bot_api(method: str, payload: dict | None = None, timeout: int = 35):
 async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
     payload = {
         "chat_id": chat_id,
-        "text": render_custom_emoji(text),
+        "text": render_custom_emoji(rich_message_html(text)),
         "parse_mode": "HTML",
         **({"reply_markup": reply_markup} if reply_markup else {}),
     }
