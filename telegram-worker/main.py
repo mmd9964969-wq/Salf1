@@ -36,6 +36,8 @@ WORKER_API_TOKEN = os.getenv("WORKER_API_TOKEN", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 BOT_TOKEN = os.getenv("SALF1_BOT_TOKEN", "").strip()
 CREATOR_USERNAME = os.getenv("SALF1_CREATOR_USERNAME", "Jowati").strip().lstrip("@")
+OWNER_USER_IDS = {value.strip() for value in os.getenv("SALF1_OWNER_USER_IDS", "").split(",") if value.strip().isdigit()}
+UNLIMITED_TRON_DISPLAY = "∞"
 ADMIN_USER_IDS = {value.strip() for value in os.getenv("SALF1_ADMIN_IDS", "").split(",") if value.strip().isdigit()}
 CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "Pers3anSelf").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
@@ -475,21 +477,240 @@ async def update_account_state(customer_id: str, connected: bool):
         await conn.execute(
             """
             update salf1_bot_users
-            set account_connected=$2, updated_at=now()
+            set account_connected=$2,
+                updated_at=now()
             where telegram_user_id=$1
             """,
-            user_id, connected,
+            user_id,
+            connected,
         )
 
 
+def _owner_id_set() -> set[int]:
+    result = set()
+    for value in OWNER_USER_IDS:
+        try:
+            result.add(int(value))
+        except Exception:
+            pass
+    for value in ADMIN_USER_IDS:
+        # Backward-compatible owner bootstrap: existing administrator IDs can
+        # be used for owner identity until SALF1_OWNER_USER_IDS is configured.
+        try:
+            if str(value) == str(ADMIN_USER_IDS and value):
+                pass
+        except Exception:
+            pass
+    return result
+
+
+async def is_owner_account(customer_id: str, username: str | None = None) -> bool:
+    try:
+        user_id = int(customer_id)
+    except (TypeError, ValueError):
+        return False
+
+    if user_id in _owner_id_set():
+        return True
+
+    candidate = (username or "").lstrip("@").strip().casefold()
+    if not candidate and db_pool is not None:
+        row = await db_user(customer_id)
+        candidate = str(row["username"] or "").lstrip("@").strip().casefold() if row else ""
+
+    return bool(
+        CREATOR_USERNAME
+        and candidate
+        and candidate == CREATOR_USERNAME.casefold()
+    )
+
+
+def owner_unlimited(customer_id: str, username: str | None = None) -> bool:
+    try:
+        user_id = int(customer_id)
+    except (TypeError, ValueError):
+        user_id = 0
+    if user_id in _owner_id_set():
+        return True
+    candidate = (username or "").lstrip("@").strip().casefold()
+    return bool(CREATOR_USERNAME and candidate == CREATOR_USERNAME.casefold())
+
+
+async def set_account_health_columns():
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        alter table salf1_bot_users
+          add column if not exists bot_presence_state text not null default 'unknown',
+          add column if not exists bot_presence_checked_at timestamptz,
+          add column if not exists bot_presence_error text
+        """
+    )
+
+
+async def save_bot_presence(
+    customer_id: str,
+    state: str,
+    *,
+    checked_at=None,
+    error: str = "",
+    bot_id: int | None = None,
+):
+    snapshot = {
+        "state": state,
+        "checked_at": checked_at or datetime.now(timezone.utc),
+        "error": error,
+        "bot_id": bot_id,
+    }
+    bot_presence_cache[customer_id] = snapshot
+
+    if db_pool is None:
+        return
+
+    await db_pool.execute(
+        """
+        update salf1_bot_users
+        set bot_presence_state=$2,
+            bot_presence_checked_at=$3,
+            bot_presence_error=$4,
+            updated_at=now()
+        where telegram_user_id=$1
+        """,
+        int(customer_id),
+        state,
+        snapshot["checked_at"],
+        error or None,
+    )
+
+
+async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
+    cached = bot_presence_cache.get(customer_id)
+    now = datetime.now(timezone.utc)
+
+    if not force and cached:
+        checked_at = cached.get("checked_at")
+        if checked_at:
+            age = (now - checked_at).total_seconds()
+            if age < 45:
+                return dict(cached)
+
+    lock = bot_presence_check_locks.setdefault(customer_id, asyncio.Lock())
+    async with lock:
+        cached = bot_presence_cache.get(customer_id)
+        if not force and cached:
+            checked_at = cached.get("checked_at")
+            if checked_at and (now - checked_at).total_seconds() < 45:
+                return dict(cached)
+
+        client = await restore_client(customer_id)
+        try:
+            if not client.is_connected():
+                await client.connect()
+
+            if not await client.is_user_authorized():
+                await save_bot_presence(
+                    customer_id,
+                    "absent",
+                    error="telegram_session_unauthorized",
+                )
+                await update_account_state(customer_id, False)
+                return dict(bot_presence_cache[customer_id])
+
+            me = await client.get_me()
+            me_cache[customer_id] = int(me.id)
+            await update_account_state(customer_id, True)
+
+            # The canonical Bot API identity is the same @Pers3anSelfBot used
+            # by the panel runtime. Resolve it through the authorized user
+            # session and verify that Telegram identifies it as a bot.
+            target_username = bot_username or "Pers3anSelfBot"
+            entity = await client.get_entity("@" + target_username.lstrip("@"))
+
+            entity_id = int(getattr(entity, "id", 0) or 0)
+            is_bot = bool(getattr(entity, "bot", False))
+            if not entity_id or not is_bot:
+                await save_bot_presence(
+                    customer_id,
+                    "absent",
+                    error="target_is_not_a_bot",
+                    bot_id=entity_id or None,
+                )
+                return dict(bot_presence_cache[customer_id])
+
+            # Reading the bot dialog is the important second probe. Username
+            # resolution alone is not sufficient to conclude the bot is
+            # actually present/usable in this Telegram account.
+            await client.get_messages(entity, limit=1)
+
+            await save_bot_presence(
+                customer_id,
+                "present",
+                bot_id=entity_id,
+            )
+            return dict(bot_presence_cache[customer_id])
+
+        except Exception as exc:
+            if definitive_session_failure(exc):
+                await invalidate_customer_session(customer_id, exc)
+                await save_bot_presence(
+                    customer_id,
+                    "absent",
+                    error=f"session_failure:{type(exc).__name__}",
+                )
+            else:
+                await save_bot_presence(
+                    customer_id,
+                    "unknown",
+                    error=f"{type(exc).__name__}: {str(exc)[:240]}",
+                )
+            return dict(bot_presence_cache[customer_id])
+
+
+async def bot_presence_text(customer_id: str) -> str:
+    state = (await check_bot_presence(customer_id)).get("state", "unknown")
+    if state == "present":
+        return "● حاضر"
+    if state == "absent":
+        return "○ حاضر نیست"
+    return "■ در حال بررسی"
+
+
+async def bot_presence_loop():
+    while True:
+        try:
+            if bot_username and db_pool is not None:
+                rows = await db_pool.fetch(
+                    """
+                    select telegram_user_id
+                    from salf1_telegram_sessions
+                    """
+                )
+                for row in rows:
+                    await check_bot_presence(str(int(row["telegram_user_id"])))
+        except Exception as exc:
+            print(f"Bot presence monitor error: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(45)
+
+
 async def set_salf_enabled(customer_id: str, enabled: bool):
+    # Owner has an unlimited plan: billing can never switch it off.
+    if owner_unlimited(customer_id):
+        enabled = True
+
     if db_pool is not None:
         try:
             user_id = int(customer_id)
             async with db_pool.acquire() as conn:
                 await conn.execute(
-                    "update salf1_bot_users set salf_enabled=$2, updated_at=now() where telegram_user_id=$1",
-                    user_id, enabled,
+                    """
+                    update salf1_bot_users
+                    set salf_enabled = $2,
+                        updated_at = now()
+                    where telegram_user_id = $1
+                    """,
+                    user_id,
+                    enabled,
                 )
         except (ValueError, asyncpg.PostgresError) as exc:
             print(f"State update error: {type(exc).__name__}")
@@ -783,12 +1004,35 @@ async def set_salf_enabled(customer_id: str, enabled: bool):
 
 async def repair_salf_activation_states():
     """
-    Repair legacy accounts left disabled by the old login/trial ordering bug.
-    Only connected accounts with an active trial or positive balance are
-    activated. Explicitly disconnected/expired accounts remain unchanged.
+    Repair SALF activation independently from Telegram account connectivity.
+    Owners are unlimited and always enabled. Non-owners are enabled only when
+    their trial or positive balance permits service execution.
     """
     if db_pool is None:
         return
+
+    await db_pool.execute(
+        """
+        update salf1_bot_users
+        set salf_enabled = true,
+            updated_at = now()
+        where telegram_user_id = any($1::bigint[])
+          and account_connected = true
+        """,
+        list(_owner_id_set()),
+    )
+
+    if CREATOR_USERNAME:
+        await db_pool.execute(
+            """
+            update salf1_bot_users
+            set salf_enabled = true,
+                updated_at = now()
+            where account_connected = true
+              and lower(coalesce(username,'')) = lower($1)
+            """,
+            CREATOR_USERNAME,
+        )
 
     rows = await db_pool.fetch(
         """
@@ -797,21 +1041,39 @@ async def repair_salf_activation_states():
             updated_at = now()
         where account_connected = true
           and salf_enabled = false
+          and lower(coalesce(username,'')) <> lower($1)
           and (
               (trial_expires_at is not null and trial_expires_at > now())
               or tron_balance > 0
           )
         returning telegram_user_id
-        """
+        """,
+        CREATOR_USERNAME,
     )
 
     for row in rows:
-        customer_id = str(int(row["telegram_user_id"]))
-        enabled_cache[customer_id] = True
+        enabled_cache[str(int(row["telegram_user_id"]))] = True
 
-    if rows:
+    owner_rows = await db_pool.fetch(
+        """
+        select telegram_user_id
+        from salf1_bot_users
+        where account_connected = true
+          and (
+            lower(coalesce(username,'')) = lower($1)
+            or telegram_user_id = any($2::bigint[])
+          )
+        """,
+        CREATOR_USERNAME,
+        list(_owner_id_set()),
+    )
+    for row in owner_rows:
+        enabled_cache[str(int(row["telegram_user_id"]))] = True
+
+    if rows or owner_rows:
         print(
-            f"Repaired SALF activation for {len(rows)} connected account(s)."
+            f"SALF activation repair: regular={len(rows)}, "
+            f"unlimited_owner={len(owner_rows)}"
         )
 
 
@@ -942,28 +1204,84 @@ async def reward_referral(telegram_user_id: int) -> bool:
 
 async def account_status(customer_id: str):
     if not configured():
-        return {"connected": False, "authorized": False, "error": "telegram api not configured"}
+        return {
+            "connected": False,
+            "authorized": False,
+            "bot_present": False,
+            "state": "telegram_api_not_configured",
+        }
+
     try:
-        client=await restore_client(customer_id)
-        await client.connect()
-        authorized_user=await client.is_user_authorized()
+        client = await restore_client(customer_id)
+        if not client.is_connected():
+            await client.connect()
+
+        authorized_user = await client.is_user_authorized()
+        if not authorized_user:
+            await invalidate_customer_session(customer_id)
+            return {
+                "connected": False,
+                "authorized": False,
+                "bot_present": False,
+                "state": "reauth_required",
+            }
+
+        me = await client.get_me()
+        me_cache[customer_id] = int(me.id)
+        await update_account_state(customer_id, True)
+
+        presence = await check_bot_presence(customer_id, force=True)
+        row = await db_user(customer_id)
+        if row:
+            enabled_cache[customer_id] = bool(row["salf_enabled"])
+
+        unlimited = await is_owner_account(
+            customer_id,
+            getattr(me, "username", None),
+        )
+
+        return {
+            "connected": True,
+            "authorized": True,
+            "state": "connected",
+            "bot_present": presence.get("state") == "present",
+            "bot_presence_state": presence.get("state", "unknown"),
+            "bot_presence_error": presence.get("error", ""),
+            "bot_presence_checked_at": (
+                presence.get("checked_at").isoformat()
+                if presence.get("checked_at") else None
+            ),
+            "salf_enabled": (
+                True if unlimited else bool(row["salf_enabled"]) if row else False
+            ),
+            "unlimited": unlimited,
+            "user": {
+                "id": me.id,
+                "username": me.username,
+                "first_name": me.first_name,
+                "last_name": me.last_name,
+            },
+        }
+
     except Exception as exc:
         if definitive_session_failure(exc):
-            await invalidate_customer_session(customer_id,exc)
-            return {"connected":False,"authorized":False,"state":"reauth_required"}
-        row=await db_user(customer_id)
-        return {"connected":bool(row and row["account_connected"]),"authorized":None,"state":"degraded"}
-    if not authorized_user:
-        await invalidate_customer_session(customer_id)
-        return {"connected":False,"authorized":False,"state":"reauth_required"}
-    me=await client.get_me()
-    me_cache[customer_id]=int(me.id)
-    await update_account_state(customer_id,True)
-    row=await db_user(customer_id)
-    if row: enabled_cache[customer_id]=bool(row["salf_enabled"])
-    return {"connected":True,"authorized":True,"state":"connected","user":{
-        "id":me.id,"username":me.username,"first_name":me.first_name,"last_name":me.last_name
-    }}
+            await invalidate_customer_session(customer_id, exc)
+            return {
+                "connected": False,
+                "authorized": False,
+                "bot_present": False,
+                "state": "reauth_required",
+            }
+
+        row = await db_user(customer_id)
+        presence = bot_presence_cache.get(customer_id) or {}
+        return {
+            "connected": bool(row and row["account_connected"]),
+            "authorized": None,
+            "bot_present": presence.get("state") == "present",
+            "bot_presence_state": presence.get("state", "unknown"),
+            "state": "degraded",
+        }
 
 
 async def start_customer_login(customer_id: str, phone: str, force_resend: bool = False):
@@ -1228,8 +1546,9 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     login_balance = int(login_row["tron_balance"]) if login_row else 0
     await set_salf_enabled(
         str(me.id),
-        bool(login_trial_active or login_balance > 0),
+        bool(login_trial_active or login_balance > 0 or owner_unlimited(str(me.id), me.username)),
     )
+    await check_bot_presence(str(me.id), force=True)
 
     try:
         await reward_referral(int(customer_id))
@@ -1253,6 +1572,12 @@ async def charge_customer_minute(customer_id: str):
     try:
         user_id = int(customer_id)
     except ValueError:
+        return
+
+    if await is_owner_account(customer_id):
+        # Owner account is unlimited. Keep SALF enabled and do not mutate the
+        # balance ledger on the minute tick.
+        await set_salf_enabled(customer_id, True)
         return
 
     async with db_pool.acquire() as conn:
@@ -1306,16 +1631,17 @@ async def charge_customer_minute(customer_id: str):
     enabled_cache[customer_id] = False
     await bot_send(
         user_id,
-        "◈ سالف متوقف شد\\n\\nاعتبار مصرفی شما به پایان رسید.\\n\\n⛂ مصرف فعال : 1 جم ترون / دقیقه\\n⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
+        "◈ سالف متوقف شد\n\nاعتبار مصرفی شما به پایان رسید.\n\n⛂ مصرف فعال : 1 جم ترون / دقیقه\n⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
     )
 
 
 async def billing_loop():
-    """Charge active customers in batches instead of one DB transaction per user."""
+    """Charge regular customers; the owner account is permanently unlimited."""
     while True:
         try:
             if db_pool is not None:
                 async with db_pool.acquire() as conn:
+                    owner_ids = list(_owner_id_set())
                     stopped = await conn.fetch(
                         """
                         with charged as (
@@ -1324,6 +1650,8 @@ async def billing_loop():
                               updated_at = now()
                           where salf_enabled = true
                             and account_connected = true
+                            and lower(coalesce(username,'')) <> lower($2)
+                            and telegram_user_id <> all($1::bigint[])
                             and (trial_expires_at is null or trial_expires_at <= now())
                             and tron_balance > 0
                           returning telegram_user_id
@@ -1333,10 +1661,32 @@ async def billing_loop():
                             updated_at = now()
                         where salf_enabled = true
                           and account_connected = true
+                          and lower(coalesce(username,'')) <> lower($2)
+                          and telegram_user_id <> all($1::bigint[])
                           and (trial_expires_at is null or trial_expires_at <= now())
                           and tron_balance <= 0
                         returning telegram_user_id
+                        """,
+                        owner_ids,
+                        CREATOR_USERNAME,
+                    )
+
+                    # Re-assert the unlimited owner state on every billing
+                    # cycle. This also repairs legacy rows without requiring
+                    # a manual restart.
+                    await conn.execute(
                         """
+                        update salf1_bot_users
+                        set salf_enabled = true,
+                            updated_at = now()
+                        where account_connected = true
+                          and (
+                            lower(coalesce(username,'')) = lower($2)
+                            or telegram_user_id = any($1::bigint[])
+                          )
+                        """,
+                        owner_ids,
+                        CREATOR_USERNAME,
                     )
 
                 for row in stopped:
@@ -1344,12 +1694,12 @@ async def billing_loop():
                     enabled_cache[str(user_id)] = False
                     await bot_send(
                         user_id,
-                        "◈ سالف متوقف شد\\n\\nاعتبار مصرفی شما به پایان رسید.\\n\\n"
-                        "⛂ مصرف فعال : 1 جم ترون / دقیقه\\n"
+                        "◈ سالف متوقف شد\n\nاعتبار مصرفی شما به پایان رسید.\n\n"
+                        "⛂ مصرف فعال : 1 جم ترون / دقیقه\n"
                         "⛂ برای ادامه، ترون اضافه کنید یا از رفرال‌ها جم بگیرید."
                     )
         except Exception as exc:
-            print(f"Billing loop error: {exc}")
+            print(f"Billing loop error: {type(exc).__name__}: {exc}")
         await asyncio.sleep(60)
 
 
@@ -1361,6 +1711,8 @@ async def health(request):
         "telegram_configured": configured(),
         "mini_bot_configured": bot_configured(),
         "customers_loaded": len(clients),
+        "panel_runtime": "contextual",
+        "bot_presence_monitor": bool(bot_username),
         "event_bridge_configured": bool(EVENT_BRIDGE_URL),
         "keyword_ack_configured": bool(KEYWORD_ACK_URL),
     })
@@ -1729,6 +2081,8 @@ command_seen: dict[str, float] = {}
 command_locks: dict[str, asyncio.Lock] = {}
 panel_sessions: dict[str, dict] = {}
 bot_user_id = 0
+bot_presence_cache: dict[str, dict] = {}
+bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 
 
 def command_registry_entry(name: str) -> dict:
@@ -2733,7 +3087,7 @@ async def handle_self_command(event, customer_id: str, text: str):
             owner_id = None
 
     sender_id = getattr(event, "sender_id", None)
-    is_owner = bool(event.out or (owner_id and sender_id == owner_id))
+    is_owner = bool(owner_id and sender_id == owner_id)
 
     if normalized in {"پنل", "panel"}:
         # Owner-only, but available from every Telegram location handled by
@@ -4833,27 +5187,34 @@ async def clock_save_profile(user_id: int):
 
 async def salf_panel_text(user_id: int):
     row = await db_user(str(user_id))
-    connected = bool(row["account_connected"]) if row else False
-    enabled = bool(row["salf_enabled"]) if row else False
+    result = await account_status(str(user_id)) if row and row["account_connected"] else {}
+    connected = bool(result.get("authorized")) if result else bool(row["account_connected"]) if row else False
+    bot_present = bool(result.get("bot_present")) if result else False
+    unlimited = bool(result.get("unlimited")) if result else await is_owner_account(str(user_id))
+    enabled = True if unlimited else bool(row["salf_enabled"]) if row else False
     balance = int(row["tron_balance"]) if row else 0
+
+    balance_text = UNLIMITED_TRON_DISPLAY if unlimited else f"{balance:,} جم"
     return f"""<b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
 نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
 شناسه : {user_id}
-اکانت : {"متصل" if connected else "متصل نیست"}
-سلف : {"فعال" if enabled else "خاموش"}
-پلن : رایگان
-زمان باقی‌مانده : {trial_remaining_text(row)}
-موجودی : {balance:,} جم
+اکانت : {"● متصل" if connected else "○ متصل نیست"}
+بات در اکانت : {"● حاضر" if bot_present else "○ حاضر نیست"}
+سلف : {"● فعال" if enabled else "○ خاموش"}
+پلن : {"∞ مالک" if unlimited else "رایگان"}
+زمان باقی‌مانده : {"∞" if unlimited else trial_remaining_text(row)}
+موجودی : {balance_text}
 وضعیت سیستم : پایدار
 وضعیت Worker : آنلاین
-مصرف فعال : 1 جم / دقیقه
+مصرف فعال : {"∞ / دقیقه" if unlimited else "1 جم / دقیقه"}
 
 [[RICH_DIVIDER]]
 
-◈ دسترسی سرویس
+◈ مرکز مدیریت
 
-این پنل مرکز مدیریت و وضعیت SALF1 برای همین حساب است.
+اتصال اکانت، حضور بات و وضعیت مصرف سلف به‌صورت مستقل پایش می‌شوند.
+پنل مستقل از موجودی ترون است و با اتمام اعتبار، اتصال اکانت قطع نمی‌شود.
 """
 
 
@@ -6327,7 +6688,6 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
     if data == "account_status":
         result = await account_status(str(user_id))
         row = await db_user(str(user_id))
-        connected = bool(row["account_connected"]) if row else False
         if result.get("authorized") and result.get("user"):
             account = result["user"]
             account_name = html.escape(
@@ -6339,19 +6699,26 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
             )
             username = account.get("username")
             username_text = f"@{html.escape(username)}" if username else "بدون نام کاربری"
+            bot_state = result.get("bot_presence_state", "unknown")
+            bot_text = "● حاضر" if bot_state == "present" else "○ حاضر نیست" if bot_state == "absent" else "■ در حال بررسی"
+            unlimited = bool(result.get("unlimited"))
             account_text = f"""
 <b>◈ وضـعیـت اکـانـت</b>
 
-⛂ - وضعیت اکانت : ● فعال
+⛂ - وضعیت اکانت : ● متصل
 ⛂ - نام : {account_name}
 ⛂ - نام کاربری : {username_text}
 ⛂ - شناسه : <code>{int(account["id"])}</code>
+⛂ - حضور بات : {bot_text}
+⛂ - وضعیت سلف : {"● فعال" if (True if unlimited else bool(row["salf_enabled"]) if row else False) else "○ خاموش"}
+⛂ - اعتبار : {"∞" if unlimited else f"{int(row['tron_balance']) if row else 0:,} جم"}
 """
         else:
             account_text = """
 <b>◈ وضـعیـت اکـانـت</b>
 
 ⛂ - وضعیت اکانت : ○ متصل نیست
+⛂ - حضور بات : ○ قابل بررسی نیست
 
 ★ - برای استفاده از سلف ابتدا اکانت تلگرام خود را متصل کنید.
 """
@@ -6369,18 +6736,24 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         balance = int(row["tron_balance"]) if row else 0
         trial_active = bool(
             row
-            and row["trial_expires_at"] is not None and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
+            and row["trial_expires_at"] is not None
+            and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
         )
-        enabled = bool(row["salf_enabled"]) if row else False
+        unlimited = bool(result.get("unlimited"))
+        enabled = True if unlimited else bool(row["salf_enabled"]) if row else False
+        bot_state = result.get("bot_presence_state", "unknown")
+        bot_text = "● حاضر" if bot_state == "present" else "○ حاضر نیست" if bot_state == "absent" else "■ در حال بررسی"
         await bot_edit(
             chat_id,
             message_id,
             f"""<b>◈ وضعیت SALF1</b>
 
 ⛂ اکانت : {"● متصل" if result.get("authorized") else "○ متصل نیست"}
+⛂ حضور بات : {bot_text}
 ⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست 24 ساعته : {"● فعال" if trial_active else "○ پایان‌یافته"}
-⛂ موجودی : <b>{balance:,} جم ترون</b>
+⛂ تست 24 ساعته : {"∞" if unlimited else ("● فعال" if trial_active else "○ پایان‌یافته")}
+⛂ موجودی : <b>{"∞" if unlimited else f"{balance:,}"}{" جم ترون" if not unlimited else ""}</b>
+⛂ پلن : {"∞ مالک" if unlimited else "رایگان"}
 """,
             await user_manage_markup(user_id),
         )
@@ -6398,6 +6771,14 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
             return
 
         if data == "disable":
+            if result.get("unlimited"):
+                await bot_edit(
+                    chat_id,
+                    message_id,
+                    "∞ <b>حساب مالک نامحدود است.</b>\\n\\nسلف مالک قابل توقف با کنترل اعتبار نیست.",
+                    await user_manage_markup(user_id),
+                )
+                return
             await set_salf_enabled(str(user_id), False)
             await bot_edit(
                 chat_id,
@@ -6417,7 +6798,8 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
             and row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
         )
         balance = int(row["tron_balance"])
-        if not trial_active and balance <= 0:
+        unlimited = bool(result.get("unlimited"))
+        if not unlimited and not trial_active and balance <= 0:
             await bot_edit(
                 chat_id,
                 message_id,
@@ -6735,6 +7117,7 @@ async def main():
             await init_web_login_tokens_table()
             await init_session_vault_table()
             await init_command_runtime_tables()
+            await set_account_health_columns()
             await init_clock_settings_table()
             await init_presence_settings_table()
             await ensure_admin_ledger_table()
@@ -6775,6 +7158,7 @@ async def main():
             tasks.append(asyncio.create_task(clock_loop()))
             tasks.append(asyncio.create_task(presence_loop()))
             tasks.append(asyncio.create_task(session_supervisor_loop()))
+            tasks.append(asyncio.create_task(bot_presence_loop()))
         if ROLE in {"billing", "all"}:
             tasks.append(asyncio.create_task(billing_loop()))
         await asyncio.Event().wait()
