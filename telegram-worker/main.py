@@ -207,6 +207,9 @@ presence_last_online_state: dict[str, bool] = {}
 presence_typing_until: dict[str, float] = {}
 presence_next_burst: dict[str, float] = {}
 presence_runtime_stats: dict[str, dict] = {}
+bot_presence_cache: dict[str, dict] = {}
+bot_presence_check_locks: dict[str, asyncio.Lock] = {}
+account_health_cache: dict[str, dict] = {}
 
 
 def configured():
@@ -544,9 +547,42 @@ async def set_account_health_columns():
         alter table salf1_bot_users
           add column if not exists bot_presence_state text not null default 'unknown',
           add column if not exists bot_presence_checked_at timestamptz,
-          add column if not exists bot_presence_error text
+          add column if not exists bot_presence_error text,
+          add column if not exists unlimited boolean not null default false
         """
     )
+
+async def grant_owner_unlimited():
+    if db_pool is None:
+        return
+
+    owner_ids = sorted(_owner_id_set())
+    creator_username = CREATOR_USERNAME.casefold()
+    max_tron = 9223372036854775807
+
+    try:
+        updated = await db_pool.fetch(
+            """
+            update salf1_bot_users
+            set unlimited = true,
+                tron_balance = $3,
+                updated_at = now()
+            where (
+                ($1::bigint[] <> '{}'::bigint[] and telegram_user_id = any($1::bigint[]))
+                or ($2 <> '' and lower(coalesce(username, '')) = $2)
+            )
+            returning telegram_user_id
+            """,
+            owner_ids,
+            creator_username,
+            max_tron,
+        )
+        if updated:
+            for row in updated:
+                print(f"Owner unlimited plan verified: {customer_key(str(int(row['telegram_user_id'])))}")
+    except Exception as exc:
+        print(f"Owner unlimited provisioning failed: {type(exc).__name__}: {exc}")
+
 
 
 async def save_bot_presence(
@@ -585,6 +621,7 @@ async def save_bot_presence(
 
 
 async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
+    # Presence is deliberately independent from SALF billing and salf_enabled.
     cached = bot_presence_cache.get(customer_id)
     now = datetime.now(timezone.utc)
 
@@ -694,10 +731,6 @@ async def bot_presence_loop():
 
 
 async def set_salf_enabled(customer_id: str, enabled: bool):
-    # Owner has an unlimited plan: billing can never switch it off.
-    if owner_unlimited(customer_id):
-        enabled = True
-
     if db_pool is not None:
         try:
             user_id = int(customer_id)
@@ -713,7 +746,7 @@ async def set_salf_enabled(customer_id: str, enabled: bool):
                     enabled,
                 )
         except (ValueError, asyncpg.PostgresError) as exc:
-            print(f"State update error: {type(exc).__name__}")
+            print(f"State update error: {type(exc).__name__}: {exc}")
             return
     enabled_cache[customer_id] = enabled
 
@@ -1202,86 +1235,148 @@ async def reward_referral(telegram_user_id: int) -> bool:
     return True
 
 
+async def account_health_snapshot(customer_id: str, force: bool = False) -> dict:
+    row = await db_user(customer_id)
+    session_connected = bool(row and row["account_connected"])
+
+    client = clients.get(customer_id)
+    authorized = None
+    username = None
+    session_id = None
+
+    if client is None:
+        try:
+            client = await restore_client(customer_id)
+        except Exception as exc:
+            return {
+                "account_connected": session_connected,
+                "authorized": False,
+                "bot_presence": "unknown",
+                "state": "session_unavailable",
+                "error": type(exc).__name__,
+            }
+
+    try:
+        if not client.is_connected():
+            await client.connect()
+
+        authorized = await client.is_user_authorized()
+        if not authorized:
+            await update_account_state(customer_id, False)
+            presence = {"state": "absent", "error": "telegram_session_unauthorized"}
+            await save_bot_presence(customer_id, "absent", error=presence["error"])
+            return {
+                "account_connected": False,
+                "authorized": False,
+                "bot_presence": "absent",
+                "state": "reauth_required",
+                "error": presence["error"],
+            }
+
+        me = await client.get_me()
+        me_cache[customer_id] = int(me.id)
+        username = getattr(me, "username", None)
+        session_id = int(me.id)
+        await update_account_state(customer_id, True)
+
+        presence = await check_bot_presence(customer_id, force=force)
+        health = {
+            "account_connected": True,
+            "authorized": True,
+            "bot_presence": presence.get("state", "unknown"),
+            "bot_presence_error": presence.get("error", ""),
+            "bot_presence_checked_at": (
+                presence.get("checked_at").isoformat()
+                if presence.get("checked_at") else None
+            ),
+            "state": "healthy" if presence.get("state") == "present" else "degraded",
+            "session_id": session_id,
+            "username": username,
+        }
+        account_health_cache[customer_id] = health
+        return health
+
+    except Exception as exc:
+        if definitive_session_failure(exc):
+            await invalidate_customer_session(customer_id, exc)
+            health = {
+                "account_connected": False,
+                "authorized": False,
+                "bot_presence": "absent",
+                "state": "reauth_required",
+                "error": type(exc).__name__,
+            }
+        else:
+            presence = bot_presence_cache.get(customer_id) or {}
+            health = {
+                "account_connected": session_connected,
+                "authorized": authorized,
+                "bot_presence": presence.get("state", "unknown"),
+                "bot_presence_error": presence.get("error", ""),
+                "state": "degraded",
+                "error": type(exc).__name__,
+            }
+        account_health_cache[customer_id] = health
+        return health
+
+
 async def account_status(customer_id: str):
     if not configured():
         return {
             "connected": False,
             "authorized": False,
             "bot_present": False,
+            "bot_presence_state": "unknown",
             "state": "telegram_api_not_configured",
         }
 
-    try:
-        client = await restore_client(customer_id)
-        if not client.is_connected():
-            await client.connect()
+    health = await account_health_snapshot(customer_id, force=True)
+    row = await db_user(customer_id)
 
-        authorized_user = await client.is_user_authorized()
-        if not authorized_user:
-            await invalidate_customer_session(customer_id)
-            return {
-                "connected": False,
-                "authorized": False,
-                "bot_present": False,
-                "state": "reauth_required",
+    unlimited = await is_owner_account(
+        customer_id,
+        health.get("username") if isinstance(health, dict) else None,
+    )
+    if unlimited and db_pool is not None:
+        # Keep the owner balance at the maximum BIGINT while the UI exposes it
+        # as infinity. Billing independently excludes unlimited accounts.
+        try:
+            await db_pool.execute(
+                """
+                update salf1_bot_users
+                set unlimited = true,
+                    tron_balance = 9223372036854775807,
+                    updated_at = now()
+                where telegram_user_id = $1
+                """,
+                int(customer_id),
+            )
+            row = await db_user(customer_id)
+        except Exception as exc:
+            print(f"Owner balance normalization failed for {customer_key(customer_id)}: {type(exc).__name__}")
+
+    return {
+        "connected": bool(health.get("account_connected")),
+        "authorized": health.get("authorized"),
+        "state": health.get("state", "unknown"),
+        "bot_present": health.get("bot_presence") == "present",
+        "bot_presence_state": health.get("bot_presence", "unknown"),
+        "bot_presence_error": health.get("bot_presence_error", ""),
+        "bot_presence_checked_at": health.get("bot_presence_checked_at"),
+        "salf_enabled": (
+            bool(row["salf_enabled"]) if row else False
+        ),
+        "unlimited": unlimited,
+        "user": (
+            {
+                "id": health.get("session_id") or int(customer_id),
+                "username": health.get("username"),
+                "first_name": (row["first_name"] if row else None),
+                "last_name": None,
             }
-
-        me = await client.get_me()
-        me_cache[customer_id] = int(me.id)
-        await update_account_state(customer_id, True)
-
-        presence = await check_bot_presence(customer_id, force=True)
-        row = await db_user(customer_id)
-        if row:
-            enabled_cache[customer_id] = bool(row["salf_enabled"])
-
-        unlimited = await is_owner_account(
-            customer_id,
-            getattr(me, "username", None),
-        )
-
-        return {
-            "connected": True,
-            "authorized": True,
-            "state": "connected",
-            "bot_present": presence.get("state") == "present",
-            "bot_presence_state": presence.get("state", "unknown"),
-            "bot_presence_error": presence.get("error", ""),
-            "bot_presence_checked_at": (
-                presence.get("checked_at").isoformat()
-                if presence.get("checked_at") else None
-            ),
-            "salf_enabled": (
-                True if unlimited else bool(row["salf_enabled"]) if row else False
-            ),
-            "unlimited": unlimited,
-            "user": {
-                "id": me.id,
-                "username": me.username,
-                "first_name": me.first_name,
-                "last_name": me.last_name,
-            },
-        }
-
-    except Exception as exc:
-        if definitive_session_failure(exc):
-            await invalidate_customer_session(customer_id, exc)
-            return {
-                "connected": False,
-                "authorized": False,
-                "bot_present": False,
-                "state": "reauth_required",
-            }
-
-        row = await db_user(customer_id)
-        presence = bot_presence_cache.get(customer_id) or {}
-        return {
-            "connected": bool(row and row["account_connected"]),
-            "authorized": None,
-            "bot_present": presence.get("state") == "present",
-            "bot_presence_state": presence.get("state", "unknown"),
-            "state": "degraded",
-        }
+            if health.get("account_connected") else None
+        ),
+    }
 
 
 async def start_customer_login(customer_id: str, phone: str, force_resend: bool = False):
@@ -1580,6 +1675,13 @@ async def charge_customer_minute(customer_id: str):
         await set_salf_enabled(customer_id, True)
         return
 
+    owner_row = await db_pool.fetchrow(
+        "select coalesce(unlimited,false) as unlimited from salf1_bot_users where telegram_user_id=$1",
+        user_id,
+    )
+    if owner_row and bool(owner_row["unlimited"]):
+        return
+
     async with db_pool.acquire() as conn:
         trial_row = await conn.fetchrow(
             """
@@ -1650,6 +1752,7 @@ async def billing_loop():
                               updated_at = now()
                           where salf_enabled = true
                             and account_connected = true
+                            and coalesce(unlimited,false) = false
                             and lower(coalesce(username,'')) <> lower($2)
                             and telegram_user_id <> all($1::bigint[])
                             and (trial_expires_at is null or trial_expires_at <= now())
@@ -1661,6 +1764,7 @@ async def billing_loop():
                             updated_at = now()
                         where salf_enabled = true
                           and account_connected = true
+                          and coalesce(unlimited,false) = false
                           and lower(coalesce(username,'')) <> lower($2)
                           and telegram_user_id <> all($1::bigint[])
                           and (trial_expires_at is null or trial_expires_at <= now())
@@ -5187,34 +5291,41 @@ async def clock_save_profile(user_id: int):
 
 async def salf_panel_text(user_id: int):
     row = await db_user(str(user_id))
-    result = await account_status(str(user_id)) if row and row["account_connected"] else {}
-    connected = bool(result.get("authorized")) if result else bool(row["account_connected"]) if row else False
-    bot_present = bool(result.get("bot_present")) if result else False
-    unlimited = bool(result.get("unlimited")) if result else await is_owner_account(str(user_id))
-    enabled = True if unlimited else bool(row["salf_enabled"]) if row else False
+    health = await account_health_snapshot(str(user_id), force=False)
+
+    connected = bool(health.get("account_connected"))
+    enabled = bool(row["salf_enabled"]) if row else False
+    unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(
+        str(user_id),
+        health.get("username"),
+    )
     balance = int(row["tron_balance"]) if row else 0
 
     balance_text = UNLIMITED_TRON_DISPLAY if unlimited else f"{balance:,} جم"
+    bot_presence = {
+        "present": "● حاضر",
+        "absent": "○ حاضر نیست",
+    }.get(health.get("bot_presence"), "■ در حال بررسی")
+
     return f"""<b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
-نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
+نام : {html.escape(str(row["first_name"] if row else health.get("username") or "کاربر"))}
 شناسه : {user_id}
 اکانت : {"● متصل" if connected else "○ متصل نیست"}
-بات در اکانت : {"● حاضر" if bot_present else "○ حاضر نیست"}
+بات : {bot_presence}
 سلف : {"● فعال" if enabled else "○ خاموش"}
-پلن : {"∞ مالک" if unlimited else "رایگان"}
+پلن : {"نامحدود" if unlimited else "رایگان"}
 زمان باقی‌مانده : {"∞" if unlimited else trial_remaining_text(row)}
 موجودی : {balance_text}
-وضعیت سیستم : پایدار
+وضعیت سیستم : {"پایدار" if health.get("state") == "healthy" else "در حال بررسی"}
 وضعیت Worker : آنلاین
-مصرف فعال : {"∞ / دقیقه" if unlimited else "1 جم / دقیقه"}
+مصرف فعال : {"∞ / بدون کسر" if unlimited else "1 جم / دقیقه"}
 
 [[RICH_DIVIDER]]
 
-◈ مرکز مدیریت
+◈ دسترسی سرویس
 
-اتصال اکانت، حضور بات و وضعیت مصرف سلف به‌صورت مستقل پایش می‌شوند.
-پنل مستقل از موجودی ترون است و با اتمام اعتبار، اتصال اکانت قطع نمی‌شود.
+پنل مستقل از اعتبار سلف است؛ تمام تنظیمات حتی در حالت «سلف خاموش» از همین مرکز مدیریت می‌شوند.
 """
 
 
@@ -7118,6 +7229,8 @@ async def main():
             await init_session_vault_table()
             await init_command_runtime_tables()
             await set_account_health_columns()
+            await grant_owner_unlimited()
+            await set_account_health_columns()
             await init_clock_settings_table()
             await init_presence_settings_table()
             await ensure_admin_ledger_table()
@@ -7158,6 +7271,7 @@ async def main():
             tasks.append(asyncio.create_task(clock_loop()))
             tasks.append(asyncio.create_task(presence_loop()))
             tasks.append(asyncio.create_task(session_supervisor_loop()))
+            tasks.append(asyncio.create_task(bot_presence_loop()))
             tasks.append(asyncio.create_task(bot_presence_loop()))
         if ROLE in {"billing", "all"}:
             tasks.append(asyncio.create_task(billing_loop()))
