@@ -1683,78 +1683,98 @@ def normalize_text(value: str) -> str:
 
 
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
-    """Open the real SALF1 Command Center where the owner typed «پنل»."""
+    """Generate the real panel through @Pers3anSelfBot, then forward that
+    exact bot message to the place where the owner typed «پنل».
+
+    This intentionally avoids rendering a second copy through the user
+    session. Forwarding the bot's own message preserves its Rich Message
+    markup and callback buttons.
+    """
     if not is_owner:
         return False
 
-    chat_id = getattr(event, "chat_id", None)
-    if chat_id is None:
+    destination_id = getattr(event, "chat_id", None)
+    if destination_id is None:
         return False
 
+    if not BOT_TOKEN or http_session is None:
+        print("Panel forward unavailable: SALF1 Bot API is not configured.")
+        return False
+
+    owner_id = me_cache.get(customer_id)
+    if owner_id is None:
+        client = client_for(customer_id)
+        try:
+            me = await client.get_me()
+            owner_id = int(me.id)
+            me_cache[customer_id] = owner_id
+        except Exception as exc:
+            print(
+                f"Panel owner lookup failed for {customer_key(customer_id)}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return False
+
+    # First make the canonical panel message in the bot's private chat with
+    # the owner. The forwarded message then remains a message authored by the
+    # bot, with its original Rich Message buttons intact.
     panel_text = await salf_panel_text(int(customer_id))
     panel_markup = salf_panel_markup()
 
-    row = await db_user(customer_id)
-    connected = bool(row["account_connected"]) if row else False
+    bot_target = "@" + (bot_username or "Pers3anSelfBot").lstrip("@")
+    try:
+        result = await bot_send(
+            int(owner_id),
+            panel_text,
+            panel_markup,
+        )
+    except Exception as exc:
+        print(
+            f"Panel bot send failed for {customer_key(customer_id)}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return False
 
-    # In normal chats, prefer the Bot API Rich Message because it supports
-    # SALF1's native Rich buttons and callback navigation.
-    # Saved Messages/self-chat cannot be targeted by the bot, so fall back to
-    # the connected user session there.
-    is_saved_messages = bool(
-        event.is_private
-        and me_cache.get(customer_id)
-        and int(chat_id) == int(me_cache[customer_id])
-    )
+    if not isinstance(result, dict) or not result.get("ok"):
+        print(
+            f"Panel bot send rejected for {customer_key(customer_id)}: "
+            f"{result}"
+        )
+        return False
 
-    if not is_saved_messages and BOT_TOKEN and http_session is not None:
-        try:
-            result = await bot_send(
-                int(chat_id),
-                panel_text,
-                panel_markup,
-            )
-            if isinstance(result, dict) and result.get("ok"):
-                print({
-                    "type": "custom_emoji.panel_send",
-                    "customer_id": customer_id,
-                    "chat_id": int(chat_id),
-                    "transport": "bot_rich_message",
-                    "connected": connected,
-                })
-                return True
-        except Exception as exc:
-            print(
-                f"Rich panel delivery fallback for {customer_key(customer_id)}: "
-                f"{type(exc).__name__}: {exc}"
-            )
+    message = result.get("result") or {}
+    message_id = message.get("message_id")
+    if not message_id:
+        print(
+            f"Panel bot send returned no message_id for "
+            f"{customer_key(customer_id)}: {result}"
+        )
+        return False
 
-    # Saved Messages and any chat where the bot cannot post:
-    # send the real Command Center content through the connected account.
-    # User accounts cannot receive bot callback queries, so interactive
-    # callback buttons are intentionally not attached in this fallback.
     client = client_for(customer_id)
-    rendered_text, custom_entities = await render_telethon_custom_emoji(
-        client,
-        panel_text,
-    )
-    print({
-        "type": "custom_emoji.panel_send",
-        "customer_id": customer_id,
-        "chat_id": int(chat_id),
-        "transport": "user_session",
-        "entities": len(custom_entities),
-        "document_ids": [
-            int(getattr(entity, "document_id", 0))
-            for entity in custom_entities
-        ],
-    })
-    await event.respond(
-        rendered_text,
-        formatting_entities=custom_entities,
-        parse_mode=None,
-    )
-    return True
+    try:
+        # Forward the exact bot-authored message to the original command
+        # location: private chat, group, channel, or Saved Messages.
+        forwarded = await client.forward_messages(
+            int(destination_id),
+            int(message_id),
+            from_peer=bot_target,
+        )
+        print({
+            "type": "custom_emoji.panel_forward",
+            "customer_id": customer_id,
+            "destination_chat_id": int(destination_id),
+            "source_bot": bot_target,
+            "source_message_id": int(message_id),
+            "forwarded": bool(forwarded),
+        })
+        return True
+    except Exception as exc:
+        print(
+            f"Panel forward failed for {customer_key(customer_id)} "
+            f"destination={destination_id}: {type(exc).__name__}: {exc}"
+        )
+        return False
 
 
 # Internal marker only. It is converted to Telegram's native Rich Message
