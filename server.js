@@ -1273,7 +1273,7 @@ async function proxyWebLogin(req,res,url) {
   const target=base + url.pathname + url.search;
 
   const headers={};
-  for (const name of ["accept","accept-language","content-type","cookie","user-agent","x-login-token"]) {
+  for (const name of ["accept","accept-language","content-type","cookie","user-agent","x-login-token","x-telegram-bot-api-secret-token"]) {
     const value=req.headers[name];
     if (typeof value === "string" && value) headers[name]=value;
   }
