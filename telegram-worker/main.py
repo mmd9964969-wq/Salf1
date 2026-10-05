@@ -3737,9 +3737,11 @@ def trial_remaining_text(row) -> str:
 
 async def mini_main_text(user_id: int, user_first_name: str | None):
     row = await db_user(str(user_id))
+    health = await account_health_snapshot(str(user_id), force=False)
     name = html.escape(user_first_name or (str(row["first_name"]) if row else "کاربر"))
-    connected = bool(row["account_connected"]) if row else False
+    connected = bool(health.get("account_connected"))
     enabled = bool(row["salf_enabled"]) if row else False
+    unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(str(user_id), health.get("username"))
     balance = int(row["tron_balance"]) if row else 0
     return f"""
 <b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
@@ -3747,40 +3749,43 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
 خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
 اکانت : {"متصل" if connected else "متصل نیست"}
-سلف : {"روشن" if enabled else "خاموش"}
-تست رایگان : {trial_remaining_text(row)}
-موجودی : {balance:,} جم ترون
-مصرف فعال : 1 جم ترون در دقیقه
+بات : {"حاضر" if health.get("bot_presence") == "present" else "در حال بررسی" if health.get("bot_presence") == "unknown" else "حاضر نیست"}
+سلف : {"فعال" if enabled else "خاموش"}
+پلن : {"∞ نامحدود" if unlimited else "رایگان"}
+تست رایگان : {"∞" if unlimited else trial_remaining_text(row)}
+موجودی : {"∞" if unlimited else f"{balance:,} جم ترون"}
+مصرف فعال : {"∞ / بدون کسر" if unlimited else "1 جم ترون در دقیقه"}
 
 [[RICH_DIVIDER]]
 
 ◈ وضـعیـت سـرویـس
 
-برای شروع، اکانت خود را متصل کنید.
+پنل مستقل از اعتبار مصرفی سلف است و حتی در حالت «سلف خاموش» در دسترس می‌ماند.
 """
 
 
 async def mini_manage_text(user_id: int):
     row = await db_user(str(user_id))
-    connected = bool(row["account_connected"]) if row else False
+    health = await account_health_snapshot(str(user_id), force=False)
+    connected = bool(health.get("account_connected"))
     enabled = bool(row["salf_enabled"]) if row else False
+    unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(str(user_id), health.get("username"))
     balance = int(row["tron_balance"]) if row else 0
     return f"""
 <b>Sᴀʟғ1 · مـدیـریـت اکـانـت</b>
 
-خـوش اومـدی <b>[ {html.escape(str(row["first_name"] if row else "کاربر"))} ]</b> مـحتـرم.
-
 اکانت : {"متصل" if connected else "متصل نیست"}
-سلف : {"روشن" if enabled else "خاموش"}
-تست رایگان : {trial_remaining_text(row)}
-موجودی : {balance:,} جم ترون
-مصرف فعال : 1 جم ترون در دقیقه
+بات : {"حاضر" if health.get("bot_presence") == "present" else "در حال بررسی" if health.get("bot_presence") == "unknown" else "حاضر نیست"}
+سلف : {"فعال" if enabled else "خاموش"}
+پلن : {"∞ نامحدود" if unlimited else "رایگان"}
+موجودی : {"∞" if unlimited else f"{balance:,} جم ترون"}
+مصرف فعال : {"∞ / بدون کسر" if unlimited else "1 جم ترون در دقیقه"}
 
 [[RICH_DIVIDER]]
 
 ◈ وضـعیـت سـرویـس
 
-برای شروع، اکانت خود را متصل کنید.
+اتصال اکانت، حضور بات و اعتبار مصرفی سه وضعیت مستقل هستند.
 """
 
 
@@ -6878,6 +6883,20 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
     if data == "account_status":
         result = await account_status(str(user_id))
         row = await db_user(str(user_id))
+
+        account_state = "● متصل" if result.get("connected") else "○ متصل نیست"
+        session_state = "● معتبر" if result.get("authorized") else "○ نیازمند ورود"
+        bot_state = result.get("bot_presence_state", "unknown")
+        bot_text = (
+            "● حاضر"
+            if bot_state == "present"
+            else "○ حاضر نیست"
+            if bot_state == "absent"
+            else "■ در حال بررسی"
+        )
+        unlimited = bool(result.get("unlimited"))
+        salf_enabled = bool(result.get("salf_enabled"))
+
         if result.get("authorized") and result.get("user"):
             account = result["user"]
             account_name = html.escape(
@@ -6885,33 +6904,44 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
                     part for part in [account.get("first_name"), account.get("last_name")]
                     if part
                 )
-                or "بدون نام"
+                or str(row["first_name"] if row else "بدون نام")
             )
             username = account.get("username")
             username_text = f"@{html.escape(username)}" if username else "بدون نام کاربری"
-            bot_state = result.get("bot_presence_state", "unknown")
-            bot_text = "● حاضر" if bot_state == "present" else "○ حاضر نیست" if bot_state == "absent" else "■ در حال بررسی"
-            unlimited = bool(result.get("unlimited"))
-            account_text = f"""
-<b>◈ وضـعیـت اکـانـت</b>
+            balance_text = "∞" if unlimited else f"{int(row['tron_balance']) if row else 0:,} جم"
+            service_text = "● فعال" if salf_enabled else "○ خاموش"
+            reason_text = (
+                "مالک نامحدود"
+                if unlimited
+                else "اعتبار مصرفی تمام شده"
+                if not salf_enabled
+                else "فعال"
+            )
+            account_text = f"""<b>◈ وضعیت اکانت</b>
 
-⛂ - وضعیت اکانت : ● متصل
+⛂ - اتصال اکانت : {account_state}
+⛂ - وضعیت Session : {session_state}
+⛂ - حضور @Pers3anSelfBot : {bot_text}
+⛂ - وضعیت سلف : {service_text}
+⛂ - دلیل وضعیت سلف : {reason_text}
+⛂ - پلن : {"∞ نامحدود" if unlimited else "رایگان"}
+⛂ - موجودی : {balance_text}
+
 ⛂ - نام : {account_name}
 ⛂ - نام کاربری : {username_text}
 ⛂ - شناسه : <code>{int(account["id"])}</code>
-⛂ - حضور بات : {bot_text}
-⛂ - وضعیت سلف : {"● فعال" if (True if unlimited else bool(row["salf_enabled"]) if row else False) else "○ خاموش"}
-⛂ - اعتبار : {"∞" if unlimited else f"{int(row['tron_balance']) if row else 0:,} جم"}
-"""
+
+[[RICH_DIVIDER]]
+
+{"● اتصال اکانت و دسترسی بات تأیید شد." if result.get("connected") and result.get("bot_present") else "■ اکانت متصل است؛ حضور بات هنوز در حال بررسی است." if result.get("connected") else "○ اکانت نیازمند اتصال مجدد است."}"""
         else:
-            account_text = """
-<b>◈ وضـعیـت اکـانـت</b>
+            account_text = """<b>◈ وضعیت اکانت</b>
 
-⛂ - وضعیت اکانت : ○ متصل نیست
-⛂ - حضور بات : ○ قابل بررسی نیست
+⛂ - اتصال اکانت : ○ متصل نیست
+⛂ - حضور @Pers3anSelfBot : ○ قابل تأیید نیست
+⛂ - وضعیت سلف : ○ خاموش
 
-★ - برای استفاده از سلف ابتدا اکانت تلگرام خود را متصل کنید.
-"""
+★ - برای استفاده از SALF1 ابتدا اکانت تلگرام را متصل کنید."""
         await bot_edit(
             chat_id,
             message_id,
