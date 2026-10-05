@@ -2244,8 +2244,6 @@ command_seen: dict[str, float] = {}
 command_locks: dict[str, asyncio.Lock] = {}
 panel_sessions: dict[str, dict] = {}
 bot_user_id = 0
-bot_presence_cache: dict[str, dict] = {}
-bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 
 
 def command_registry_entry(name: str) -> dict:
@@ -3407,12 +3405,14 @@ def attach_events(client: TelegramClient, customer_id: str):
         except Exception as exc:
             if definitive_session_failure(exc):
                 await invalidate_customer_session(customer_id, exc)
+            import traceback
             print(
                 f"Telegram event handler error for {customer_key(customer_id)}: "
                 f"{type(exc).__name__}: {exc} "
                 f"chat_id={getattr(event, 'chat_id', None)} "
                 f"message_id={getattr(getattr(event, 'message', None), 'id', None)}"
             )
+            traceback.print_exc()
 
     client.add_event_handler(handler, events.NewMessage(incoming=True, outgoing=True))
 
