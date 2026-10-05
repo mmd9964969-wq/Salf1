@@ -1682,31 +1682,353 @@ def normalize_text(value: str) -> str:
     )
 
 
+
+# ---------------------------------------------------------------------------
+# Command Runtime / Context / Scope / Panel Session
+# ---------------------------------------------------------------------------
+# پنل has two legitimate entry paths:
+# 1) The connected self-account can issue it in ANY Telegram location. The
+#    panel must open at that exact destination.
+# 2) A user can issue it inside @Pers3anSelfBot. The bot opens the panel in
+#    that same bot chat.
+#
+# The bot must never reinterpret a self-account پنل as its own command when
+# the same update also arrives through the Bot API webhook. A shared
+# message-id dedup key makes the two workers idempotent.
+PANEL_COMMAND_ALIASES = {"پنل", "panel", "/panel"}
+PANEL_COMMAND_NAME = "panel"
+
+PANEL_POLICY = {
+    "name": PANEL_COMMAND_NAME,
+    "aliases": tuple(sorted(PANEL_COMMAND_ALIASES)),
+    "self_scope": "ANYWHERE",
+    "bot_scope": "BOT_PRIVATE_ONLY",
+    "permission": "ACCOUNT_OWNER_OR_SELF_AUTHOR",
+    "source": "USER",
+    "forward": "FALLBACK_ONLY",
+    "staging": "FALLBACK_ONLY",
+    "auto_delete": False,
+    "deduplicate": True,
+}
+
+PANEL_CALLBACKS = {
+    "panel",
+    "panel_account",
+    "panel_self",
+    "panel_automation",
+    "panel_protection",
+    "panel_tools",
+    "panel_system",
+    "self_features",
+    "self_status_center",
+    "presence",
+}
+PANEL_DEDUP_TTL_SECONDS = 120.0
+
+command_seen: dict[str, float] = {}
+command_locks: dict[str, asyncio.Lock] = {}
+panel_sessions: dict[str, dict] = {}
+bot_user_id = 0
+
+
+def command_registry_entry(name: str) -> dict:
+    return dict(PANEL_POLICY) if name == PANEL_COMMAND_NAME else {}
+
+
+def _panel_chat_type(event, owner_id: int) -> str:
+    chat_id = getattr(event, "chat_id", None)
+
+    # An outgoing private message to the connected account itself is Saved
+    # Messages ("me"), not a normal private conversation.
+    if getattr(event, "is_private", False):
+        if getattr(event, "out", False) and chat_id is not None and int(chat_id) == int(owner_id):
+            return "saved_messages"
+        if bot_user_id and chat_id is not None and int(chat_id) == int(bot_user_id):
+            return "bot_private"
+        return "private"
+
+    if getattr(event, "is_channel", False):
+        return "channel"
+
+    if getattr(event, "is_group", False):
+        return "group"
+
+    return "other"
+
+
+def _panel_key(customer_id: str | int, chat_id: int, message_id: int | None) -> str:
+    return f"{int(customer_id)}:{int(chat_id)}:{int(message_id or 0)}"
+
+
+def _cleanup_command_runtime_cache():
+    now = time.monotonic()
+    stale = [
+        key for key, seen_at in command_seen.items()
+        if now - seen_at > PANEL_DEDUP_TTL_SECONDS
+    ]
+    for key in stale:
+        command_seen.pop(key, None)
+
+
+def claim_command(command: str, customer_id: str, chat_id: int, message_id: int | None) -> bool:
+    if not message_id:
+        return True
+    _cleanup_command_runtime_cache()
+    key = f"{command}:{_panel_key(customer_id, chat_id, message_id)}"
+    if key in command_seen:
+        return False
+    command_seen[key] = time.monotonic()
+    return True
+
+
+def _panel_session_key(customer_id: str | int, chat_id: int) -> str:
+    return f"{int(customer_id)}:{int(chat_id)}"
+
+
+async def init_command_runtime_tables():
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        create table if not exists salf1_command_audit (
+            id bigserial primary key,
+            customer_id bigint not null,
+            command text not null,
+            status text not null,
+            reason text,
+            source text,
+            scope text,
+            chat_id bigint,
+            chat_type text,
+            message_id bigint,
+            delivery text,
+            created_at timestamptz not null default now()
+        )
+        """
+    )
+    await db_pool.execute(
+        """
+        create table if not exists salf1_panel_sessions (
+            customer_id bigint not null,
+            chat_id bigint not null,
+            message_id bigint,
+            source_message_id bigint,
+            section text not null default 'main',
+            navigation jsonb not null default '["main"]'::jsonb,
+            delivery text,
+            updated_at timestamptz not null default now(),
+            primary key (customer_id, chat_id)
+        )
+        """
+    )
+
+
+async def command_audit(
+    customer_id: str,
+    command: str,
+    status: str,
+    *,
+    reason: str = "",
+    source: str = "",
+    scope: str = "",
+    chat_id: int | None = None,
+    chat_type: str = "",
+    message_id: int | None = None,
+    delivery: str = "",
+):
+    payload = {
+        "type": "command.audit",
+        "customer_id": customer_key(customer_id),
+        "command": command,
+        "status": status,
+        "reason": reason,
+        "source": source,
+        "scope": scope,
+        "chat_id": chat_id,
+        "chat_type": chat_type,
+        "message_id": message_id,
+        "delivery": delivery,
+    }
+    print(payload)
+    if db_pool is None:
+        return
+    try:
+        await db_pool.execute(
+            """
+            insert into salf1_command_audit
+                (customer_id, command, status, reason, source, scope,
+                 chat_id, chat_type, message_id, delivery)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            """,
+            int(customer_id),
+            command,
+            status,
+            reason or None,
+            source or None,
+            scope or None,
+            int(chat_id) if chat_id is not None else None,
+            chat_type or None,
+            int(message_id) if message_id is not None else None,
+            delivery or None,
+        )
+    except Exception as exc:
+        print(
+            f"Command audit write failed for {customer_key(customer_id)}: "
+            f"{type(exc).__name__}"
+        )
+
+
+async def panel_session_upsert(
+    customer_id: str,
+    chat_id: int,
+    message_id: int | None,
+    *,
+    source_message_id: int | None = None,
+    section: str = "main",
+    delivery: str = "",
+):
+    key = _panel_session_key(customer_id, chat_id)
+    existing = panel_sessions.get(key) or {}
+    navigation = list(existing.get("navigation") or ["main"])
+
+    if section == "main":
+        navigation = ["main"]
+    elif not navigation or navigation[-1] != section:
+        navigation.append(section)
+
+    navigation = navigation[-20:]
+    panel_sessions[key] = {
+        "customer_id": int(customer_id),
+        "chat_id": int(chat_id),
+        "message_id": int(message_id) if message_id else None,
+        "source_message_id": int(source_message_id) if source_message_id else None,
+        "section": section,
+        "navigation": navigation,
+        "delivery": delivery,
+        "updated_at": time.time(),
+    }
+
+    if db_pool is None:
+        return
+
+    try:
+        await db_pool.execute(
+            """
+            insert into salf1_panel_sessions
+                (customer_id, chat_id, message_id, source_message_id,
+                 section, navigation, delivery, updated_at)
+            values ($1,$2,$3,$4,$5,$6::jsonb,$7,now())
+            on conflict (customer_id, chat_id) do update set
+                message_id = excluded.message_id,
+                source_message_id = excluded.source_message_id,
+                section = excluded.section,
+                navigation = excluded.navigation,
+                delivery = excluded.delivery,
+                updated_at = now()
+            """,
+            int(customer_id),
+            int(chat_id),
+            int(message_id) if message_id else None,
+            int(source_message_id) if source_message_id else None,
+            section,
+            json.dumps(navigation, ensure_ascii=False),
+            delivery or None,
+        )
+    except Exception as exc:
+        print(
+            f"Panel session write failed for {customer_key(customer_id)}: "
+            f"{type(exc).__name__}"
+        )
+
+
+async def panel_session_touch_callback(
+    customer_id: int,
+    chat_id: int,
+    message_id: int,
+    callback_data: str,
+):
+    if callback_data not in PANEL_CALLBACKS:
+        return
+
+    section = {
+        "panel": "main",
+        "panel_self": "self",
+        "self_features": "self_features",
+    }.get(callback_data, callback_data)
+
+    session = panel_sessions.get(_panel_session_key(customer_id, chat_id))
+    await panel_session_upsert(
+        str(customer_id),
+        chat_id,
+        message_id,
+        source_message_id=(session or {}).get("source_message_id"),
+        section=section,
+        delivery=(session or {}).get("delivery", ""),
+    )
+
+
+def _forwarded_message_id(forwarded) -> int | None:
+    for update in getattr(forwarded, "updates", None) or []:
+        message = getattr(update, "message", None)
+        if message is None:
+            message = getattr(update, "channel_post", None)
+        if message is None:
+            continue
+        message_id = getattr(message, "id", None)
+        if message_id:
+            return int(message_id)
+    return None
+
+
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
-    """Create the canonical panel with @Pers3anSelfBot and forward it to the
-    exact Telegram peer where the owner typed «پنل».
-
-    The user session is only the transport layer here: it never renders a
-    second panel locally. The Bot API creates the source message, then the
-    connected self account forwards that exact message to the original peer.
     """
+    Execute پنل in the exact Telegram location where the connected
+    self-account issued it.
 
+    Delivery order:
+      1) Bot API -> destination directly. This is the preferred path because
+         the bot owns the message and its callbacks remain editable.
+      2) If the bot cannot write to that location, Bot API creates the
+         canonical panel in the owner's bot PV and the self account forwards
+         it to the exact original destination.
+
+    The fallback source is intentionally retained. There is no automatic
+    deletion anymore.
+    """
     if not is_owner:
         return False
 
     destination_id = getattr(event, "chat_id", None)
+    message_id = getattr(getattr(event, "message", None), "id", None)
     if destination_id is None:
-        print(
-            f"Panel destination missing for {customer_key(customer_id)}"
+        await command_audit(
+            customer_id,
+            PANEL_COMMAND_NAME,
+            "ignored",
+            reason="destination_missing",
+            source="self",
+            scope="ANYWHERE",
         )
         return False
 
-    if not BOT_TOKEN or http_session is None:
-        print("Panel forward unavailable: SALF1 Bot API is not configured.")
-        return False
+    destination_id = int(destination_id)
+    message_id = int(message_id) if message_id else None
+
+    if not claim_command(PANEL_COMMAND_NAME, customer_id, destination_id, message_id):
+        await command_audit(
+            customer_id,
+            PANEL_COMMAND_NAME,
+            "duplicate",
+            reason="message_already_claimed",
+            source="self",
+            scope="ANYWHERE",
+            chat_id=destination_id,
+            chat_type="unknown",
+            message_id=message_id,
+        )
+        return True
 
     client = client_for(customer_id)
-
     owner_id = me_cache.get(customer_id)
     if owner_id is None:
         try:
@@ -1714,130 +2036,237 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             owner_id = int(me.id)
             me_cache[customer_id] = owner_id
         except Exception as exc:
-            print(
-                f"Panel owner lookup failed for {customer_key(customer_id)}: "
-                f"{type(exc).__name__}: {exc}"
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "error",
+                reason=f"owner_lookup:{type(exc).__name__}",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                message_id=message_id,
             )
             return False
 
-    panel_text = await salf_panel_text(int(customer_id))
-    panel_markup = salf_panel_markup()
-    bot_target = "@" + (bot_username or "Pers3anSelfBot").lstrip("@")
+    chat_type = _panel_chat_type(event, owner_id)
+    lock = command_locks.setdefault(
+        f"self:{customer_id}:{destination_id}",
+        asyncio.Lock(),
+    )
 
-    # 1) @Pers3anSelfBot creates the canonical Rich Message.
-    try:
-        result = await bot_send(
-            int(owner_id),
-            panel_text,
-            panel_markup,
-        )
-    except Exception as exc:
-        print(
-            f"Panel bot send failed for {customer_key(customer_id)}: "
-            f"{type(exc).__name__}: {exc}"
-        )
-        return False
+    async with lock:
+        panel_text = await salf_panel_text(owner_id)
+        panel_markup = salf_panel_markup()
 
-    if not isinstance(result, dict) or not result.get("ok"):
-        print(
-            f"Panel bot send rejected for {customer_key(customer_id)}: {result}"
-        )
-        return False
+        # Direct route. Saved Messages is deliberately excluded because a bot
+        # cannot post to the user's Saved Messages.
+        if chat_type != "saved_messages" and BOT_TOKEN and http_session is not None:
+            try:
+                direct_result = await bot_send(
+                    destination_id,
+                    panel_text,
+                    panel_markup,
+                )
+                if isinstance(direct_result, dict) and direct_result.get("ok"):
+                    sent = direct_result.get("result") or {}
+                    direct_message_id = sent.get("message_id")
+                    await panel_session_upsert(
+                        customer_id,
+                        destination_id,
+                        int(direct_message_id) if direct_message_id else None,
+                        section="main",
+                        delivery="bot_api_direct",
+                    )
+                    await command_audit(
+                        customer_id,
+                        PANEL_COMMAND_NAME,
+                        "executed",
+                        source="self",
+                        scope="ANYWHERE",
+                        chat_id=destination_id,
+                        chat_type=chat_type,
+                        message_id=message_id,
+                        delivery="bot_api_direct",
+                    )
+                    return True
 
-    message = result.get("result") or {}
-    message_id = message.get("message_id")
-    if not message_id:
-        print(
-            f"Panel bot send returned no message_id for "
-            f"{customer_key(customer_id)}: {result}"
-        )
-        return False
+                print(
+                    f"Panel direct Bot API delivery rejected for "
+                    f"{customer_key(customer_id)} destination={destination_id}: "
+                    f"{direct_result}"
+                )
+            except Exception as exc:
+                print(
+                    f"Panel direct Bot API delivery failed for "
+                    f"{customer_key(customer_id)} destination={destination_id}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
 
-    # 2) Resolve both Telegram peers through the connected self account.
-    # Do not rely on a bare numeric peer or a username string during the
-    # forward: channels, megagroups, Saved Messages and private peers can
-    # require different InputPeer constructors.
-    try:
-        bot_input = await client.get_input_entity(bot_target)
-        destination_input = await client.get_input_entity(int(destination_id))
-    except Exception as exc:
-        print(
-            f"Panel peer resolution failed for {customer_key(customer_id)} "
-            f"destination={destination_id} source={bot_target}: "
-            f"{type(exc).__name__}: {exc}"
-        )
-        return False
-
-    # 3) Forward the exact bot-authored message to the original location.
-    # Use the raw MTProto request so the source peer and destination peer are
-    # explicit. This works for private chats, groups, channels and Saved
-    # Messages wherever the connected account has permission to post.
-    try:
-        forwarded = await client(
-            functions.messages.ForwardMessagesRequest(
-                from_peer=bot_input,
-                id=[int(message_id)],
-                random_id=[secrets.randbits(63)],
-                to_peer=destination_input,
-                drop_author=False,
-                with_my_score=False,
-                silent=False,
-                background=False,
-                top_msg_id=None,
-                schedule_date=None,
+        if not BOT_TOKEN or http_session is None:
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "error",
+                reason="bot_api_unavailable",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                chat_type=chat_type,
+                message_id=message_id,
             )
-        )
+            return False
 
-        forwarded_ok = bool(getattr(forwarded, "updates", None))
-        if not forwarded_ok:
-            raise RuntimeError("Telegram returned no forwarded update")
+        # Fallback source in the owner's bot PV. Never delete it automatically.
+        try:
+            source_result = await bot_send(
+                owner_id,
+                panel_text,
+                panel_markup,
+            )
+        except Exception as exc:
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "error",
+                reason=f"staging_send:{type(exc).__name__}",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                chat_type=chat_type,
+                message_id=message_id,
+                delivery="staging_failed",
+            )
+            return False
+
+        if not isinstance(source_result, dict) or not source_result.get("ok"):
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "error",
+                reason="staging_rejected",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                chat_type=chat_type,
+                message_id=message_id,
+                delivery="staging_failed",
+            )
+            return False
+
+        source_message = source_result.get("result") or {}
+        source_message_id = source_message.get("message_id")
+        if not source_message_id:
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "error",
+                reason="staging_missing_message_id",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                chat_type=chat_type,
+                message_id=message_id,
+                delivery="staging_retained",
+            )
+            return False
+
+        bot_target = "@" + (bot_username or "Pers3anSelfBot").lstrip("@")
 
         try:
-            await bot_api(
-                "deleteMessage",
-                {"chat_id": int(owner_id), "message_id": int(message_id)},
-                timeout=15,
+            bot_input = await client.get_input_entity(bot_target)
+            if chat_type == "saved_messages":
+                destination_input = await client.get_input_entity("me")
+            else:
+                destination_input = getattr(event, "input_chat", None)
+                if destination_input is None:
+                    destination_input = await client.get_input_entity(destination_id)
+        except Exception as exc:
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "error",
+                reason=f"peer_resolution:{type(exc).__name__}",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                chat_type=chat_type,
+                message_id=message_id,
+                delivery="staging_retained",
             )
-        except Exception as cleanup_exc:
-            print(
-                f"Panel source cleanup failed for {customer_key(customer_id)}: "
-                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
-            )
+            return False
 
-        print({
-            "type": "custom_emoji.panel_forward",
-            "customer_id": customer_id,
-            "destination_chat_id": int(destination_id),
-            "source_bot": bot_target,
-            "source_message_id": int(message_id),
-            "forwarded": True,
-            "source_deleted": True,
-        })
-        return True
-
-    except Exception as exc:
-        print(
-            f"Panel MTProto forward failed for {customer_key(customer_id)} "
-            f"destination={destination_id} source={bot_target} "
-            f"source_message_id={message_id}: "
-            f"{type(exc).__name__}: {exc}"
-        )
-
-        # The panel was only a temporary staging message. Remove it so a
-        # failed forward never makes the bot chat look like the destination.
         try:
-            await bot_api(
-                "deleteMessage",
-                {"chat_id": int(owner_id), "message_id": int(message_id)},
-                timeout=15,
+            forwarded = await client(
+                functions.messages.ForwardMessagesRequest(
+                    from_peer=bot_input,
+                    id=[int(source_message_id)],
+                    random_id=[secrets.randbits(63)],
+                    to_peer=destination_input,
+                    drop_author=False,
+                    with_my_score=False,
+                    silent=False,
+                    background=False,
+                    top_msg_id=None,
+                    schedule_date=None,
+                )
             )
-        except Exception as cleanup_exc:
+
+            if not getattr(forwarded, "updates", None):
+                raise RuntimeError("Telegram returned no forwarded update")
+
+            forwarded_message_id = _forwarded_message_id(forwarded)
+            await panel_session_upsert(
+                customer_id,
+                destination_id,
+                forwarded_message_id,
+                source_message_id=int(source_message_id),
+                section="main",
+                delivery="mtproto_forward",
+            )
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "executed",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                chat_type=chat_type,
+                message_id=message_id,
+                delivery="mtproto_forward",
+            )
+            print({
+                "type": "panel.delivered",
+                "customer_id": customer_id,
+                "destination_chat_id": destination_id,
+                "destination_type": chat_type,
+                "source_bot": bot_target,
+                "source_message_id": int(source_message_id),
+                "forwarded_message_id": forwarded_message_id,
+                "source_deleted": False,
+            })
+            return True
+
+        except Exception as exc:
+            await command_audit(
+                customer_id,
+                PANEL_COMMAND_NAME,
+                "error",
+                reason=f"forward:{type(exc).__name__}",
+                source="self",
+                scope="ANYWHERE",
+                chat_id=destination_id,
+                chat_type=chat_type,
+                message_id=message_id,
+                delivery="staging_retained",
+            )
             print(
-                f"Panel failed-source cleanup failed for "
-                f"{customer_key(customer_id)}: "
-                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+                f"Panel MTProto forward failed for {customer_key(customer_id)} "
+                f"destination={destination_id} source={bot_target} "
+                f"source_message_id={source_message_id}: "
+                f"{type(exc).__name__}: {exc}"
             )
-        return False
+            # No deletion on failure.
+            return False
 
 
 # Internal marker only. It is converted to Telegram's native Rich Message
@@ -2275,7 +2704,6 @@ async def handle_self_command(event, customer_id: str, text: str):
             )
             return
 
-    normalized = normalize_text(text)
     if normalized not in {
         "پنل",
         "panel",
@@ -4680,6 +5108,117 @@ async def process_bot_message(message: dict):
 
     await ensure_bot_user(user_id, username, first_name)
 
+    # Dual-entry panel architecture:
+    # - connected self account: ANYWHERE
+    # - Bot API: only this bot's own private chat
+    # A live self worker has priority so a self-authored پنل is not executed
+    # twice by the webhook. The shared message claim also closes the race.
+    normalized = normalize_text(text)
+    if normalized in PANEL_COMMAND_ALIASES:
+        message_id = int(message.get("message_id") or 0) or None
+        self_client = clients.get(str(user_id))
+
+        if self_client is not None and self_client.is_connected():
+            await command_audit(
+                str(user_id),
+                PANEL_COMMAND_NAME,
+                "ignored",
+                reason="self_worker_route",
+                source="bot",
+                scope="BOT_PRIVATE_ONLY",
+                chat_id=int(chat["id"]),
+                chat_type=str(chat.get("type") or ""),
+                message_id=message_id,
+            )
+            return
+
+        chat_type = str(chat.get("type") or "").lower()
+        if chat_type != "private":
+            await command_audit(
+                str(user_id),
+                PANEL_COMMAND_NAME,
+                "ignored",
+                reason="scope_denied",
+                source="bot",
+                scope="BOT_PRIVATE_ONLY",
+                chat_id=int(chat["id"]),
+                chat_type=chat_type,
+                message_id=message_id,
+            )
+            return
+
+        if not claim_command(PANEL_COMMAND_NAME, str(user_id), int(chat["id"]), message_id):
+            await command_audit(
+                str(user_id),
+                PANEL_COMMAND_NAME,
+                "duplicate",
+                reason="message_already_claimed",
+                source="bot",
+                scope="BOT_PRIVATE_ONLY",
+                chat_id=int(chat["id"]),
+                chat_type=chat_type,
+                message_id=message_id,
+            )
+            return
+
+        panel_text = await salf_panel_text(user_id)
+        panel_markup = salf_panel_markup()
+        lock = command_locks.setdefault(
+            f"bot:{user_id}:{int(chat['id'])}",
+            asyncio.Lock(),
+        )
+
+        async with lock:
+            try:
+                result = await bot_send(int(chat["id"]), panel_text, panel_markup)
+                if isinstance(result, dict) and result.get("ok"):
+                    sent = result.get("result") or {}
+                    sent_message_id = int(sent.get("message_id") or 0) or None
+                    await panel_session_upsert(
+                        str(user_id),
+                        int(chat["id"]),
+                        sent_message_id,
+                        section="main",
+                        delivery="bot_api_direct",
+                    )
+                    await command_audit(
+                        str(user_id),
+                        PANEL_COMMAND_NAME,
+                        "executed",
+                        source="bot",
+                        scope="BOT_PRIVATE_ONLY",
+                        chat_id=int(chat["id"]),
+                        chat_type=chat_type,
+                        message_id=message_id,
+                        delivery="bot_api_direct",
+                    )
+                    return
+
+                await command_audit(
+                    str(user_id),
+                    PANEL_COMMAND_NAME,
+                    "error",
+                    reason="bot_send_rejected",
+                    source="bot",
+                    scope="BOT_PRIVATE_ONLY",
+                    chat_id=int(chat["id"]),
+                    chat_type=chat_type,
+                    message_id=message_id,
+                )
+            except Exception as exc:
+                await command_audit(
+                    str(user_id),
+                    PANEL_COMMAND_NAME,
+                    "error",
+                    reason=f"bot_send:{type(exc).__name__}",
+                    source="bot",
+                    scope="BOT_PRIVATE_ONLY",
+                    chat_id=int(chat["id"]),
+                    chat_type=chat_type,
+                    message_id=message_id,
+                )
+            return
+
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
@@ -4906,7 +5445,7 @@ async def process_callback(callback_query: dict):
     chat_id = int(chat["id"])
     message_id = int(message.get("message_id", 0))
     await bot_answer_callback(callback_id)
-
+    await panel_session_touch_callback(user_id, chat_id, message_id, data)
 
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
         if not await is_admin_user(user_id, from_user.get("username")):
@@ -6097,7 +6636,7 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
 
 
 async def mini_bot_loop():
-    global bot_username
+    global bot_username, bot_user_id
     if not bot_configured():
         print("Mini bot is disabled: SALF1_BOT_TOKEN and DATABASE_URL are required.")
         return
@@ -6116,6 +6655,7 @@ async def mini_bot_loop():
         return
 
     bot_username = str(identity["result"].get("username") or "").strip()
+    bot_user_id = int(identity["result"].get("id") or 0)
     await validate_custom_emoji_config()
     webhook_url = f"{LOGIN_BASE_URL}/bot/webhook"
     webhook_result = await bot_api(
@@ -6191,6 +6731,7 @@ async def main():
             print("Salf1 worker database connected.")
             await init_web_login_tokens_table()
             await init_session_vault_table()
+            await init_command_runtime_tables()
             await init_clock_settings_table()
             await init_presence_settings_table()
             await ensure_admin_ledger_table()
