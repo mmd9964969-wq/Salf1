@@ -1267,6 +1267,63 @@ function sameOriginDirect(req) {
   return !expected || origin===expected;
 }
 
+
+async function proxyWebLogin(req,res,url) {
+  const base=workerUrl();
+  const target=base + url.pathname + url.search;
+
+  const headers={};
+  for (const name of ["accept","accept-language","content-type","cookie","user-agent","x-login-token"]) {
+    const value=req.headers[name];
+    if (typeof value === "string" && value) headers[name]=value;
+  }
+
+  let body;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const chunks=[]; let size=0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > 65536) throw new Error("BODY_TOO_LARGE");
+      chunks.push(chunk);
+    }
+    body=Buffer.concat(chunks);
+  }
+
+  const upstream=await fetch(target,{
+    method:req.method,
+    headers,
+    body,
+    redirect:"manual",
+    signal:AbortSignal.timeout(15000)
+  });
+
+  const responseHeaders={
+    "X-Content-Type-Options":"nosniff",
+    "X-Frame-Options":"DENY",
+    "Referrer-Policy":"no-referrer",
+    "Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=()",
+    "Cross-Origin-Opener-Policy":"same-origin-allow-popups",
+    "Cross-Origin-Resource-Policy":"same-origin",
+    "Content-Security-Policy":"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';",
+    "Cache-Control":upstream.headers.get("cache-control") || "no-store"
+  };
+
+  const contentType=upstream.headers.get("content-type");
+  if (contentType) responseHeaders["Content-Type"]=contentType;
+
+  const location=upstream.headers.get("location");
+  if (location) responseHeaders["Location"]=location;
+
+  const setCookies=typeof upstream.headers.getSetCookie === "function"
+    ? upstream.headers.getSetCookie()
+    : [];
+  if (setCookies.length) responseHeaders["Set-Cookie"]=setCookies;
+
+  const data=Buffer.from(await upstream.arrayBuffer());
+  res.writeHead(upstream.status,responseHeaders);
+  res.end(data);
+}
+
 const safePath = (urlPath) => {
   const raw = decodeURIComponent((urlPath || "/").split("?")[0] || "/");
   const normalized = path.normalize(raw).replace(/^\/+/, "");
@@ -1276,6 +1333,18 @@ const safePath = (urlPath) => {
 const server = createServer(async (req,res) => {
   try {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
+
+    if (
+      (url.pathname === "/login" && req.method === "GET") ||
+      (url.pathname === "/login/start" && req.method === "POST") ||
+      (url.pathname === "/login/verify" && req.method === "POST") ||
+      (url.pathname === "/api/web-login/status" && req.method === "GET") ||
+      (url.pathname === "/api/web-login/start" && req.method === "POST") ||
+      (url.pathname === "/api/web-login/verify" && req.method === "POST")
+    ) {
+      await proxyWebLogin(req,res,url);
+      return;
+    }
 
     if (url.pathname === "/api/passkey/registration-options" && req.method === "GET") {
       await passkeyRegistrationOptions(req,res);
