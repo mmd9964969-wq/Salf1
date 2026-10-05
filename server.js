@@ -1335,6 +1335,7 @@ const server = createServer(async (req,res) => {
     const url = new URL(req.url || "/", `http://localhost:${port}`);
 
     if (
+      (url.pathname === "/bot/webhook" && req.method === "POST") ||
       (url.pathname === "/login" && req.method === "GET") ||
       (url.pathname === "/login/start" && req.method === "POST") ||
       (url.pathname === "/login/verify" && req.method === "POST") ||
