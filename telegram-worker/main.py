@@ -1539,7 +1539,7 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 وضعیت Worker : آنلاین
 مصرف فعال : 1 جم / دقیقه
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 دسترسی اختصاصی برای این حساب"""
 
@@ -2288,7 +2288,7 @@ async def balance_text(user_id: int):
 موجودی حساب شما به پایان رسیده است.
 برای ادامه فعالیت حساب خود را شارژ کنید.
 
-─────━━───── ◈ ─────━━─────""", balance_markup()
+[[RICH_DIVIDER]]""", balance_markup()
 
     warning = balance <= 144
     body = """موجودی جم شما رو به اتمام است.
@@ -2303,7 +2303,7 @@ async def balance_text(user_id: int):
 ⛂ - مصرف فعال : 1 جم / دقیقه
 ⛂ - زمان قابل استفاده : {days} روز و {hours} ساعت
 
-─────━━───── ◈ ─────━━─────""", balance_markup()
+[[RICH_DIVIDER]]""", balance_markup()
 
 
 async def consumption_history_text(user_id: int):
@@ -2323,11 +2323,11 @@ async def consumption_history_text(user_id: int):
 ⛂ - آخرین ۲۰ مصرف : {len(rows)} رکورد
 ⛂ - مجموع مصرف ثبت‌شده : {total:,} جم
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 ⛂ - مصرف فعال : 1 جم / دقیقه
 
-─────━━───── ◈ ─────━━─────""", balance_markup()
+[[RICH_DIVIDER]]""", balance_markup()
 
 
 async def transactions_text(user_id: int):
@@ -2350,7 +2350,7 @@ async def transactions_text(user_id: int):
 
 {body}
 
-─────━━───── ◈ ─────━━─────""", balance_markup()
+[[RICH_DIVIDER]]""", balance_markup()
 
 
 def manage_menu_markup(connected: bool = False, enabled: bool = False):
@@ -2488,7 +2488,7 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
 ⛂ موجودی : {balance:,} جم ترون
 ⛂ مصرف فعال : 1 جم ترون در دقیقه
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 <b>◈ وضـعیـت سـرویـس</b>
 
@@ -2512,7 +2512,7 @@ async def mini_manage_text(user_id: int):
 ⛂ موجودی : {balance:,} جم ترون
 ⛂ مصرف فعال : 1 جم ترون در دقیقه
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 ⚙️ وضـعیـت سـرویـس
 
@@ -4090,7 +4090,7 @@ async def salf_panel_text(user_id: int):
 وضعیت Worker : آنلاین
 مصرف فعال : 1 جم / دقیقه
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 دسترسی اختصاصی برای این حساب"""
 
@@ -4188,7 +4188,7 @@ async def referral_text(user_id: int):
 
 ⛂ - با دعوت دوستانت برای هر رفرال معتبر جم ترون دریافت کن.
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 <b>◈ شرایط رفرال</b>
 
@@ -4203,7 +4203,7 @@ async def referral_text(user_id: int):
 ⛂ - رفرال 11 تا 20  ›  40 ترون
 ⛂ - رفرال 21+        ›  50 ترون
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 ⌁ لینک دعوت اختصاصی :
 {html.escape(invite)}
@@ -4284,7 +4284,7 @@ async def admin_panel_text():
 ⛂ ثبت تمام شارژها در Ledger
 ⛂ تراکنش اتمیک برای جلوگیری از دوباره‌کاری
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 برای شارژ مستقیم:
 <code>شارژ شناسه مقدار</code>
@@ -4471,7 +4471,7 @@ async def process_bot_message(message: dict):
             lines.append(f"⛂ {index:02d} › <code>{html.escape(emoji_id)}</code>")
         lines.extend([
             "",
-            "─────━━───── ◈ ─────━━─────",
+            "[[RICH_DIVIDER]]",
             "",
             "✓ شناسه با موفقیت دریافت شد.",
             "⛂ این ID را می‌توانیم در Railway برای Custom Emoji سیستم SALF1 قرار دهیم.",
@@ -5612,7 +5612,7 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
 
 خرید و مدیریت جم سلف.
 
-─────━━───── ◈ ─────━━─────""",
+[[RICH_DIVIDER]]""",
             shop_markup())
         return
 
@@ -5622,7 +5622,7 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
 
 بسته موردنظر خود را انتخاب کنید.
 
-─────━━───── ◈ ─────━━─────""",
+[[RICH_DIVIDER]]""",
             package_markup())
         return
 
@@ -5646,14 +5646,14 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
 ⛂ - مقدار : <b>{amount:,} جم</b>
 ⛂ - مصرف : <b>1 جم / دقیقه</b>
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 وضعیت خرید
 
 ⛂ - مبلغ قابل پرداخت : در مرحله فروش
 ⛂ - وضعیت پرداخت : در انتظار پرداخت
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 - پس از تایید پرداخت جم‌ها به موجودی شما اضافه می‌شوند.
 - تا قبل از تایید نهایی موجودی حساب شما تغییری نمی‌کند.""",
@@ -5685,7 +5685,7 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
 ⛂ مقدار : <b>{amount:,} جم ترون</b>
 ⛂ مصرف : <b>1 جم / دقیقه</b>
 
-─────━━───── ◈ ─────━━─────
+[[RICH_DIVIDER]]
 
 روش پرداخت را انتخاب کنید.""",
             payment_markup(package_id),
