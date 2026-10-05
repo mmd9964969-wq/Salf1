@@ -3605,10 +3605,22 @@ async def presence_profile_save(user_id: int, name: str):
 
 async def salf_settings_text(user_id: int):
     row = await db_user(str(user_id))
-    config = await clock_get_settings(user_id)
+    clock_config = await clock_get_settings(user_id)
+    presence_config = await presence_get_settings(user_id)
+
     connected = bool(row["account_connected"]) if row else False
     enabled = bool(row["salf_enabled"]) if row else False
-    clock_enabled = bool(config.get("enabled"))
+    clock_enabled = bool(clock_config.get("enabled"))
+    presence_enabled = bool(
+        presence_config.get("online_enabled") or presence_config.get("typing_enabled")
+    )
+    target_count = len(presence_config.get("targets") or [])
+    active_modules = int(clock_enabled) + int(presence_enabled)
+    trial_active = bool(
+        row
+        and row["trial_expires_at"] is not None
+        and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
+    )
 
     return f"""<b>Sᴀʟғ1 · تنظیمات سلف</b>
 
@@ -3618,31 +3630,49 @@ async def salf_settings_text(user_id: int):
 
 اکانت : {"【 متصل 】" if connected else "【 متصل نیست 】"}
 سلف : {"【 فعال 】" if enabled else "【 خاموش 】"}
+تست رایگان : {"【 فعال 】" if trial_active else "【 غیرفعال 】"}
 
 {RICH_DIVIDER}
 
-◈ قابلیت‌های سلف
+◈ قابلیت‌های فعال
 
 ساعت : {"【 فعال 】" if clock_enabled else "【 خاموش 】"}
-ماژول‌های فعال : 【 {"۱" if clock_enabled else "۰"} 】
+مرکز حضور : {"【 فعال 】" if presence_enabled else "【 خاموش 】"}
+مقصدهای حضور : 【 {target_count} 】
+ماژول‌های فعال : 【 {active_modules} 】
+
+{RICH_DIVIDER}
+
+◈ موتور سرویس
+
+Session : {"● پایدار" if connected else "○ قطع"}
+موتور ساعت : {"● آماده" if clock_enabled else "○ خاموش"}
+موتور حضور : {"● آماده" if presence_enabled else "○ خاموش"}
+ذخیره تنظیمات : {"● فعال" if row else "○ بدون داده"}
 
 {RICH_DIVIDER}
 
 ◈ راهنما
 
-برای استفاده از قابلیت‌های سلف، ابتدا اتصال اکانت و وضعیت سلف را بررسی کنید. سپس وارد «قابلیت‌های سلف» شوید و تنظیمات ساعت را انجام دهید. پس از ذخیره و فعال‌سازی، ساعت با تنظیمات انتخاب‌شده روی مقصدهای فعال اجرا می‌شود."""
+این صفحه مرکز وضعیت SALF1 است. برای تنظیم قابلیت‌ها وارد «قابلیت‌های سلف» شوید. وضعیت هر ماژول، مقصدها و موتورهای فعال از همین صفحه قابل مشاهده است.
+
+{RICH_DIVIDER}
+
+{rich_button_row(rich_button("› قابلیت‌های سلف", "self_features", "primary"))}
+{rich_button_row(rich_button("‹ بازگشت", "panel", "primary"))}"""
 
 def salf_settings_markup():
-    return {"inline_keyboard": [
-        [{"text":"› قابلیت‌های سلف","callback_data":"self_features"}],
-        [{"text":"‹ بازگشت","callback_data":"panel"}],
-    ]}
+    return None
 
 async def self_features_text(user_id: int):
     clock_config = await clock_get_settings(user_id)
     presence_config = await presence_get_settings(user_id)
+
     clock_enabled = bool(clock_config.get("enabled"))
-    presence_enabled = bool(presence_config.get("online_enabled") or presence_config.get("typing_enabled"))
+    presence_online = bool(presence_config.get("online_enabled"))
+    presence_typing = bool(presence_config.get("typing_enabled"))
+    presence_enabled = bool(presence_online or presence_typing)
+    target_count = len(presence_config.get("targets") or [])
     active_count = int(clock_enabled) + int(presence_enabled)
 
     return f"""<b>Sᴀʟғ1 · قابلیت‌های سلف</b>
@@ -3653,34 +3683,44 @@ async def self_features_text(user_id: int):
 
 ساعت : {"【 فعال 】" if clock_enabled else "【 خاموش 】"}
 مرکز حضور : {"【 فعال 】" if presence_enabled else "【 خاموش 】"}
+آنلاین : {"【 فعال 】" if presence_online else "【 خاموش 】"}
+در حال نوشتن : {"【 فعال 】" if presence_typing else "【 خاموش 】"}
+مقصدهای حضور : 【 {target_count} 】
 قابلیت‌های فعال : 【 {active_count} 】
 
 {RICH_DIVIDER}
 
-◈ قابلیت‌های قابل استفاده
+◈ ماژول ساعت
 
-★ - ساعت
-★ - نمایش و بروزرسانی خودکار زمان بر اساس منطقه زمانی انتخاب‌شده.
-★ - تنظیم مقصد، قالب نمایش، ظاهر، فونت و زمان‌بندی.
+وضعیت : {"● آماده" if clock_enabled else "○ خاموش"}
+منطقه زمانی : {html.escape(str(clock_config.get("timezone") or "UTC"))}
+قالب : {html.escape(CLOCK_FORMAT_NAMES.get(str(clock_config.get("format")), "24 ساعته + ثانیه"))}
+مقصدهای پروفایل : {sum(1 for key in ("destination_name", "destination_bio", "destination_last_name") if clock_config.get(key))}
 
-★ - مرکز حضور
-★ - آنلاین نگه‌داشتن اکانت با تمدید خودکار حضور.
-★ - نمایش «در حال نوشتن» در PV و گروه‌های منتخب.
-★ - زمان‌بندی، حالت هوشمند، مدیریت مقصدها و آمار سلامت موتور.
+{RICH_DIVIDER}
+
+◈ ماژول مرکز حضور
+
+وضعیت : {"● آماده" if presence_enabled else "○ خاموش"}
+حالت : {html.escape(PRESENCE_MODE_NAMES.get(str(presence_config.get("mode")), "دائمی"))}
+نوع تایپینگ : {html.escape(PRESENCE_TYPING_MODE_NAMES.get(str(presence_config.get("typing_mode")), "پیوسته"))}
+منطقه زمانی : {html.escape(str(presence_config.get("timezone") or clock_config.get("timezone") or "UTC"))}
+مقصدها : 【 {target_count} 】
 
 {RICH_DIVIDER}
 
 ◈ راهنما
 
-برای تنظیم حضور، «مرکز حضور» را باز کنید. ابتدا آنلاین را فعال کنید، سپس مقصدهای PV یا گروه را اضافه کنید و در صورت نیاز «در حال نوشتن» را فعال کنید."""
+ساعت برای مدیریت زمان و پروفایل است. مرکز حضور برای وضعیت آنلاین و نمایش «در حال نوشتن» در PV یا گروه‌های انتخاب‌شده است. هر ماژول تنظیمات، زمان‌بندی و موتور مستقل خود را دارد.
 
+{RICH_DIVIDER}
+
+{rich_button_row(rich_button("› ساعت", "clock", "primary"))}
+{rich_button_row(rich_button("› مرکز حضور", "presence", "primary"))}
+{rich_button_row(rich_button("‹ بازگشت", "panel_self", "primary"))}"""
 
 def self_features_markup():
-    return {"inline_keyboard": [
-        [{"text":"› ساعت","callback_data":"clock"}],
-        [{"text":"› مرکز حضور","callback_data":"presence"}],
-        [{"text":"‹ بازگشت","callback_data":"panel_self"}],
-    ]}
+    return None
 
 async def clock_settings_text(user_id: int):
     config = await clock_get_settings(user_id)
@@ -4614,11 +4654,11 @@ async def process_callback(callback_query: dict):
         return
 
     if data == "panel_self":
-        await bot_edit(chat_id, message_id, await salf_settings_text(user_id), salf_settings_markup())
+        await bot_edit(chat_id, message_id, await salf_settings_text(user_id))
         return
 
     if data == "self_features":
-        await bot_edit(chat_id, message_id, await self_features_text(user_id), self_features_markup())
+        await bot_edit(chat_id, message_id, await self_features_text(user_id))
         return
 
     if data == "self_status_center":
