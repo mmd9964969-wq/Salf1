@@ -440,6 +440,12 @@ def client_for(customer_id: str, session_string: str | None = None) -> TelegramC
 
 
 async def restore_client(customer_id: str) -> TelegramClient:
+    # Every Telethon session must pass through the cross-worker advisory lock.
+    # This keeps login, health checks, panel delivery and automation on one
+    # exclusive runtime owner.
+    if not await acquire_session_runtime_lock(customer_id):
+        raise RuntimeError("session_lock_busy")
+
     existing = clients.get(customer_id)
     if existing is not None:
         return existing
@@ -2538,6 +2544,19 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             message_id=message_id,
         )
         return True
+
+    if not await acquire_session_runtime_lock(customer_id):
+        await command_audit(
+            customer_id,
+            PANEL_COMMAND_NAME,
+            "error",
+            reason="session_lock_busy",
+            source="self",
+            scope="ANYWHERE",
+            chat_id=destination_id,
+            message_id=message_id,
+        )
+        return False
 
     client = client_for(customer_id)
     owner_id = me_cache.get(customer_id)
