@@ -675,10 +675,27 @@ async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
                 )
                 return dict(bot_presence_cache[customer_id])
 
-            # Reading the bot dialog is the important second probe. Username
-            # resolution alone is not sufficient to conclude the bot is
-            # actually present/usable in this Telegram account.
+            # Probe 1: MTProto must be able to resolve the bot and read its
+            # private conversation context.
             await client.get_messages(entity, limit=1)
+
+            # Probe 2: Bot API must be able to address this user's private chat.
+            # This is the strongest practical signal that @Pers3anSelfBot is
+            # actually available to the connected account for panel delivery.
+            if BOT_TOKEN and http_session is not None:
+                bot_chat = await bot_api(
+                    "getChat",
+                    {"chat_id": int(me.id)},
+                    timeout=10,
+                )
+                if not isinstance(bot_chat, dict) or not bot_chat.get("ok"):
+                    await save_bot_presence(
+                        customer_id,
+                        "absent",
+                        error="bot_api_private_chat_unavailable",
+                        bot_id=entity_id,
+                    )
+                    return dict(bot_presence_cache[customer_id])
 
             await save_bot_presence(
                 customer_id,
@@ -1604,6 +1621,7 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     await ensure_bot_user(int(me.id), me.username, me.first_name)
     await save_session_vault(str(me.id), client)
     await update_account_state(str(me.id), True)
+    await grant_owner_unlimited()
 
     # Start the one-time 24-hour trial immediately after a successful
     # account login. The SALF enabled state must be calculated AFTER this
@@ -7230,7 +7248,6 @@ async def main():
             await init_command_runtime_tables()
             await set_account_health_columns()
             await grant_owner_unlimited()
-            await set_account_health_columns()
             await init_clock_settings_table()
             await init_presence_settings_table()
             await ensure_admin_ledger_table()
@@ -7271,7 +7288,6 @@ async def main():
             tasks.append(asyncio.create_task(clock_loop()))
             tasks.append(asyncio.create_task(presence_loop()))
             tasks.append(asyncio.create_task(session_supervisor_loop()))
-            tasks.append(asyncio.create_task(bot_presence_loop()))
             tasks.append(asyncio.create_task(bot_presence_loop()))
         if ROLE in {"billing", "all"}:
             tasks.append(asyncio.create_task(billing_loop()))
