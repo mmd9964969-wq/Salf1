@@ -2951,6 +2951,7 @@ async def clock_loop():
 
 PRESENCE_DEFAULTS = {
     "online_enabled": False,
+    "timezone": "UTC",
     "typing_enabled": False,
     "mode": "always",
     "typing_mode": "continuous",
@@ -3044,7 +3045,11 @@ async def presence_get_settings(user_id: int):
                 json.dumps(defaults, ensure_ascii=False),
             )
         return defaults
-    defaults.update(_presence_json(row["config"], {}))
+    stored = _presence_json(row["config"], {})
+    defaults.update(stored)
+    if "timezone" not in stored:
+        clock_config = await clock_get_settings(user_id)
+        defaults["timezone"] = str(clock_config.get("timezone") or "UTC")
     if not isinstance(defaults.get("targets"), list):
         defaults["targets"] = []
     if not isinstance(defaults.get("schedule_days"), list):
@@ -3181,7 +3186,10 @@ async def presence_apply_now(user_id: int, force: bool = False):
             return {"ok": False, "reason": "unauthorized"}
 
         now_utc = datetime.now(timezone.utc)
-        active_window = presence_schedule_active(config, now_utc)
+        local = now_utc.astimezone(
+            _clock_safe_timezone(str(config.get("timezone") or "UTC"))
+        )
+        active_window = presence_schedule_active(config, local)
         now_mono = time.monotonic()
         runtime = presence_runtime(user_id)
 
@@ -3211,8 +3219,16 @@ async def presence_apply_now(user_id: int, force: bool = False):
                     runtime["last_error"] = type(exc).__name__
                     await presence_stats_update(user_id, "online_failed", 1)
 
-        typing_active = bool(config.get("typing_enabled")) and bool(config.get("targets")) and active_window
-        if typing_active and str(config.get("mode") or "always") == "smart":
+        typing_active = (
+            bool(config.get("typing_enabled"))
+            and bool(config.get("targets"))
+            and active_window
+        )
+        typing_bursts = (
+            str(config.get("typing_mode") or "continuous") == "bursts"
+            or str(config.get("mode") or "always") == "smart"
+        )
+        if typing_active and typing_bursts:
             if now_mono < presence_typing_until.get(str(user_id), 0.0):
                 typing_active = True
             elif now_mono >= presence_next_burst.get(str(user_id), 0.0):
@@ -3256,7 +3272,11 @@ async def presence_apply_now(user_id: int, force: bool = False):
                         await presence_stats_update(user_id, "typing_failed", 1)
                 runtime["typing_next"] = now_mono + refresh
         else:
-            if config.get("typing_enabled") and (not active_window or not config.get("targets")):
+            if config.get("typing_enabled") and (
+                not active_window
+                or not config.get("targets")
+                or typing_bursts
+            ):
                 await presence_cancel_typing(user_id)
 
         return {"ok": True, "online": online_wanted, "typing": typing_active}
@@ -3364,6 +3384,7 @@ def presence_main_text(user_id: int, config: dict, row):
 
 حالت : {html.escape(mode_name)}
 نوع تایپینگ : {html.escape(typing_mode_name)}
+منطقه زمانی : {html.escape(str(config.get("timezone") or "UTC"))}
 بروزرسانی حضور : هر {max(30, int(config.get("online_refresh_seconds") or 45))} ثانیه
 تازه‌سازی تایپینگ : هر {max(4, int(config.get("typing_refresh_seconds") or 5))} ثانیه
 آخرین خطا : {html.escape(str(last_error))}
