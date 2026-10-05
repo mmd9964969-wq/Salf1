@@ -1683,10 +1683,9 @@ def normalize_text(value: str) -> str:
 
 
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
-    # Self-account panel is private to the account owner and is only callable
-    # from Saved Messages. The caller is already verified by handle_self_command.
+    """Send the SALF1 self-account panel into the exact chat where it was invoked."""
     if not is_owner:
-        return
+        return False
 
     row = await db_user(customer_id)
     connected = bool(row["account_connected"]) if row else False
@@ -1718,15 +1717,19 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
     print({
         "type": "custom_emoji.panel_send",
         "customer_id": customer_id,
+        "chat_id": getattr(event, "chat_id", None),
         "entities": len(custom_entities),
         "document_ids": [int(getattr(entity, "document_id", 0)) for entity in custom_entities],
     })
-    await client.send_message(
-        "me",
+
+    # Send the panel into the same chat where the owner entered "پنل".
+    # event.raw_text contains regular text and media captions.
+    await event.respond(
         rendered_text,
         formatting_entities=custom_entities,
         parse_mode=None,
     )
+    return True
 
 
 # Internal marker only. It is converted to Telegram's native Rich Message
@@ -2193,18 +2196,12 @@ async def handle_self_command(event, customer_id: str, text: str):
             owner_id = None
 
     sender_id = getattr(event, "sender_id", None)
-    chat_id = getattr(event, "chat_id", None)
     is_owner = bool(event.out or (owner_id and sender_id == owner_id))
-    is_saved_messages = bool(
-        owner_id
-        and event.is_private
-        and chat_id is not None
-        and int(chat_id) == int(owner_id)
-    )
 
     if normalized in {"پنل", "panel"}:
-        # The self-account panel is intentionally available only in Saved Messages.
-        if not is_saved_messages:
+        # Owner-only, but available from every Telegram location handled by
+        # the connected account. event.raw_text also contains media captions.
+        if not is_owner:
             return False
         await send_owner_panel(event, customer_id, is_owner)
         return True
