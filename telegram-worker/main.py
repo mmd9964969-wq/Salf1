@@ -1562,6 +1562,10 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 # Internal marker only. It is converted to Telegram's native Rich Message
 # divider (<hr/>) and is never exposed as a decorative Unicode separator.
 RICH_DIVIDER = "[[RICH_DIVIDER]]"
+# Native Rich Message width pad. It is intentionally invisible HTML space, not
+# a decorative Unicode rail. It gives SALF1 pages a consistent minimum bubble
+# width while keeping the only visible separator as Telegram's native <hr/>.
+RICH_NATIVE_WIDTH_PAD = "&nbsp;" * 64
 
 
 def _clean_rich_inline(value: str) -> str:
@@ -1610,6 +1614,11 @@ def rich_message_html(text: str) -> str:
         source = "<b>SALF1</b>"
 
     lines = source.splitlines()
+    # Make the top-level SALF1 page heading establish a consistent minimum
+    # intrinsic width. No visible separator/rail is added.
+    if lines and RICH_NATIVE_WIDTH_PAD not in lines[0] and lines[0].lstrip().startswith("<b>Sᴀʟғ1"):
+        lines[0] = lines[0].replace("</b>", f"{RICH_NATIVE_WIDTH_PAD}</b>", 1)
+
     parts: list[str] = []
     data_rows: list[tuple[str, str]] = []
     list_items: list[str] = []
