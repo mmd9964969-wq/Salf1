@@ -1238,17 +1238,40 @@ async def reward_referral(telegram_user_id: int) -> bool:
                 )
                 return False
 
-            await conn.execute(
-                """
-                update salf1_bot_users
-                set tron_balance = tron_balance + $2,
-                    referral_count = referral_count + 1,
-                    updated_at = now()
-                where telegram_user_id = $1
-                """,
-                int(referrer),
-                reward_tron,
+            referrer_unlimited = bool(
+                await conn.fetchval(
+                    """
+                    select coalesce(unlimited,false)
+                    from salf1_bot_users
+                    where telegram_user_id = $1
+                    """,
+                    int(referrer),
+                )
             )
+            if referrer_unlimited:
+                await conn.execute(
+                    """
+                    update salf1_bot_users
+                    set unlimited = true,
+                        tron_balance = 9223372036854775807,
+                        referral_count = referral_count + 1,
+                        updated_at = now()
+                    where telegram_user_id = $1
+                    """,
+                    int(referrer),
+                )
+            else:
+                await conn.execute(
+                    """
+                    update salf1_bot_users
+                    set tron_balance = tron_balance + $2,
+                        referral_count = referral_count + 1,
+                        updated_at = now()
+                    where telegram_user_id = $1
+                    """,
+                    int(referrer),
+                    reward_tron,
+                )
 
             await conn.execute(
                 """
@@ -5571,7 +5594,12 @@ async def admin_credit_balance(admin_user_id: int, target_user_id: int, amount: 
             )
             if not row:
                 raise LookupError("کاربر موردنظر در دیتابیس پیدا نشد.")
-            new_balance = int(row["tron_balance"]) + amount
+            if "unlimited" in row.keys() and bool(row["unlimited"]):
+                new_balance = 9223372036854775807
+            else:
+                new_balance = int(row["tron_balance"]) + amount
+                if new_balance > 9223372036854775807:
+                    raise OverflowError("tron_balance exceeds BIGINT maximum")
             await conn.execute(
                 "update salf1_bot_users set tron_balance = $2, updated_at = now() where telegram_user_id = $1",
                 target_user_id, new_balance,
