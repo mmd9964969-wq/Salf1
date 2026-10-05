@@ -1559,12 +1559,9 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
     )
 
 
-RICH_DIVIDER = "─────━━───── ◈ ─────━━─────"
-# SALF1 page width rail. Telegram Rich Messages size the message bubble from
-# its intrinsic content; there is no CSS-like fixed message width. This rail
-# gives every SALF1 control page the same minimum visual width without changing
-# the existing canonical divider.
-RICH_WIDTH_RAIL = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+# Internal marker only. It is converted to Telegram's native Rich Message
+# divider (<hr/>) and is never exposed as a decorative Unicode separator.
+RICH_DIVIDER = "[[RICH_DIVIDER]]"
 
 
 def _clean_rich_inline(value: str) -> str:
@@ -1612,15 +1609,6 @@ def rich_message_html(text: str) -> str:
     if not source:
         source = "<b>SALF1</b>"
 
-    # Normalize SALF1 control-page width. The rail is inserted once after the
-    # first heading so short pages (for example Presence Center) get the same
-    # intrinsic width as longer control pages.
-    if "Sᴀʟғ1" in source and RICH_WIDTH_RAIL not in source:
-        source_lines = source.splitlines()
-        insert_at = 1 if source_lines and source_lines[0].lstrip().startswith("<b>") else 0
-        source_lines.insert(insert_at, RICH_WIDTH_RAIL)
-        source = "\n".join(source_lines)
-
     lines = source.splitlines()
     parts: list[str] = []
     data_rows: list[tuple[str, str]] = []
@@ -1631,10 +1619,10 @@ def rich_message_html(text: str) -> str:
         if not data_rows:
             return
         rows = [
-            "<tr><td><b>عنوان</b></td><td><b>مقدار</b></td></tr>"
+            '<tr><th align="right">عنوان</th><th align="right">مقدار</th></tr>'
         ]
         rows.extend(
-            f"<tr><td>{label}</td><td>{value}</td></tr>"
+            f'<tr><td align="right">{label}</td><td align="right">{value}</td></tr>'
             for label, value in data_rows
         )
         parts.append(
@@ -1659,7 +1647,7 @@ def rich_message_html(text: str) -> str:
             flush_list()
             continue
 
-        if line == RICH_DIVIDER:
+        if line in {RICH_DIVIDER, "<hr/>"}:
             flush_table()
             flush_list()
             parts.append("<hr/>")
