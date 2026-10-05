@@ -7,8 +7,6 @@ import json
 import os
 import random
 import secrets
-import shutil
-from pathlib import Path
 from datetime import datetime, timedelta, timezone, time as dt_time
 from zoneinfo import ZoneInfo
 import time
@@ -16,8 +14,9 @@ import time
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events, functions
-from telethon.sessions import MemorySession
+from telethon.sessions import MemorySession, StringSession
 from telethon.tl.types import MessageEntityCustomEmoji, SendMessageTypingAction, SendMessageCancelAction
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from telethon.errors import (
     ApiIdInvalidError,
     PasswordHashInvalidError,
@@ -30,8 +29,6 @@ from telethon.errors import (
 
 HOST = "0.0.0.0"
 PORT = int(os.getenv("PORT", "8080"))
-SESSION_DIR = Path(os.getenv("SESSION_DIR", "/data"))
-SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 API_ID_RAW = os.getenv("TELEGRAM_API_ID", "")
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
@@ -182,6 +179,8 @@ TRIAL_HOURS = int(os.getenv("SALF1_TRIAL_HOURS", "24"))
 LOGIN_TOKEN_TTL_SECONDS = int(os.getenv("SALF1_LOGIN_TOKEN_TTL_SECONDS", "600"))
 LOGIN_BASE_URL = os.getenv("SALF1_LOGIN_BASE_URL", "").strip().rstrip("/")
 WEBHOOK_SECRET = os.getenv("SALF1_WEBHOOK_SECRET", "").strip()
+SESSION_ENCRYPTION_KEY = os.getenv("SALF1_SESSION_ENCRYPTION_KEY", "").strip()
+SESSION_VAULT_VERSION = 1
 
 clients: dict[str, TelegramClient] = {}
 pending_phones: dict[str, str] = {}
@@ -296,24 +295,216 @@ def customer_key(customer_id: str) -> str:
     return hashlib.sha256(customer_id.encode("utf-8")).hexdigest()[:24]
 
 
-def session_path(customer_id: str) -> str:
-    directory = SESSION_DIR / f"customer-{customer_key(customer_id)}"
-    directory.mkdir(parents=True, exist_ok=True)
-    return str(directory / "telegram")
+def _session_key() -> bytes:
+    raw = SESSION_ENCRYPTION_KEY.encode("utf-8")
+    if len(raw) < 32:
+        raise RuntimeError("SALF1_SESSION_ENCRYPTION_KEY is missing or too short")
+    return hashlib.sha256(raw).digest()
+
+
+def encrypt_session_string(customer_id: str, session_string: str) -> str:
+    nonce = os.urandom(12)
+    aad = f"SALF1_SESSION_V{SESSION_VAULT_VERSION}:{int(customer_id)}".encode("utf-8")
+    ciphertext = AESGCM(_session_key()).encrypt(
+        nonce,
+        str(session_string).encode("utf-8"),
+        aad,
+    )
+    return base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
+
+
+def decrypt_session_string(customer_id: str, encoded: str) -> str:
+    raw = base64.urlsafe_b64decode(str(encoded).encode("ascii"))
+    if len(raw) < 13:
+        raise RuntimeError("invalid encrypted Telegram session")
+    nonce, ciphertext = raw[:12], raw[12:]
+    aad = f"SALF1_SESSION_V{SESSION_VAULT_VERSION}:{int(customer_id)}".encode("utf-8")
+    plaintext = AESGCM(_session_key()).decrypt(nonce, ciphertext, aad)
+    return plaintext.decode("utf-8")
+
+
+async def init_session_vault_table():
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        create table if not exists salf1_telegram_sessions (
+            telegram_user_id bigint primary key,
+            ciphertext text not null,
+            key_version integer not null default 1,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        )
+        """
+    )
+
+
+async def save_session_vault(customer_id: str, client: TelegramClient):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    if len(SESSION_ENCRYPTION_KEY.encode("utf-8")) < 32:
+        raise RuntimeError("SALF1_SESSION_ENCRYPTION_KEY is not configured or too short")
+    session_string = str(client.session.save() or "").strip()
+    if not session_string:
+        raise RuntimeError("Telegram session could not be serialized")
+    await db_pool.execute(
+        """
+        insert into salf1_telegram_sessions (telegram_user_id, ciphertext, key_version)
+        values ($1, $2, $3)
+        on conflict (telegram_user_id) do update set
+            ciphertext = excluded.ciphertext,
+            key_version = excluded.key_version,
+            updated_at = now()
+        """,
+        int(customer_id),
+        encrypt_session_string(customer_id, session_string),
+        SESSION_VAULT_VERSION,
+    )
+
+
+async def load_session_vault(customer_id: str) -> str | None:
+    if db_pool is None:
+        return None
+    row = await db_pool.fetchrow(
+        "select ciphertext, key_version from salf1_telegram_sessions where telegram_user_id=$1",
+        int(customer_id),
+    )
+    if not row:
+        return None
+    if int(row["key_version"] or 0) != SESSION_VAULT_VERSION:
+        raise RuntimeError("unsupported Telegram session vault version")
+    return decrypt_session_string(customer_id, row["ciphertext"])
+
+
+async def delete_session_vault(customer_id: str):
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        "delete from salf1_telegram_sessions where telegram_user_id=$1",
+        int(customer_id),
+    )
+
+
+def definitive_session_failure(exc: Exception) -> bool:
+    name = type(exc).__name__.upper()
+    message = str(exc).upper()
+    return (
+        name in {"AUTHKEYUNREGISTEREDERROR", "SESSIONREVOKEDERROR", "USERDEACTIVATEDBANERROR", "USERDEACTIVATEDERROR"}
+        or "AUTH_KEY_UNREGISTERED" in message
+        or "SESSION_REVOKED" in message
+        or "USER_DEACTIVATED" in message
+    )
+
+
+async def invalidate_customer_session(customer_id: str, exc: Exception | None = None):
+    if exc is not None and not definitive_session_failure(exc):
+        return
+    try:
+        await delete_session_vault(customer_id)
+    except Exception as cleanup_exc:
+        print(f"Session vault cleanup failed for {customer_key(customer_id)}: {type(cleanup_exc).__name__}")
+    enabled_cache[customer_id] = False
+    me_cache.pop(customer_id, None)
+    await update_account_state(customer_id, False)
+    await set_salf_enabled(customer_id, False)
+
+
+def client_for(customer_id: str, session_string: str | None = None) -> TelegramClient:
+    client = clients.get(customer_id)
+    if client is None:
+        client = TelegramClient(StringSession(session_string or ""), int(API_ID_RAW), API_HASH)
+        attach_events(client, customer_id)
+        clients[customer_id] = client
+    return client
+
+
+async def restore_client(customer_id: str) -> TelegramClient:
+    existing = clients.get(customer_id)
+    if existing is not None:
+        return existing
+    return client_for(customer_id, await load_session_vault(customer_id))
+
+
+async def db_user(customer_id: str):
+    if db_pool is None:
+        return None
+    try:
+        user_id = int(customer_id)
+    except ValueError:
+        return None
+    async with db_pool.acquire() as conn:
+        return await conn.fetchrow(
+            "select * from salf1_bot_users where telegram_user_id=$1",
+            user_id,
+        )
+
+
+async def ensure_bot_user(
+    telegram_user_id: int,
+    username: str | None,
+    first_name: str | None,
+    referrer_user_id: int | None = None,
+):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    if referrer_user_id == telegram_user_id:
+        referrer_user_id = None
+    async with db_pool.acquire() as conn:
+        return await conn.fetchrow(
+            """
+            insert into salf1_bot_users (telegram_user_id, username, first_name, referrer_user_id)
+            values ($1, $2, $3, $4)
+            on conflict (telegram_user_id) do update set
+              username = excluded.username,
+              first_name = excluded.first_name,
+              updated_at = now()
+            returning *
+            """,
+            telegram_user_id, username, first_name, referrer_user_id,
+        )
+
+
+async def update_account_state(customer_id: str, connected: bool):
+    if db_pool is None:
+        return
+    try:
+        user_id = int(customer_id)
+    except ValueError:
+        return
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            update salf1_bot_users
+            set account_connected=$2, updated_at=now()
+            where telegram_user_id=$1
+            """,
+            user_id, connected,
+        )
+
+
+async def set_salf_enabled(customer_id: str, enabled: bool):
+    if db_pool is not None:
+        try:
+            user_id = int(customer_id)
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    "update salf1_bot_users set salf_enabled=$2, updated_at=now() where telegram_user_id=$1",
+                    user_id, enabled,
+                )
+        except (ValueError, asyncpg.PostgresError) as exc:
+            print(f"State update error: {type(exc).__name__}")
+            return
+    enabled_cache[customer_id] = enabled
 
 
 async def reset_customer_session(customer_id: str):
-    """Explicitly start a fresh Telegram authorization flow.
-    Used only when the user presses the account-login/reconnect button.
-    """
     client = clients.pop(customer_id, None)
     if client is not None:
         try:
             if client.is_connected():
                 await client.disconnect()
-        except Exception as exc:
-            print(f"Session disconnect warning for {customer_id}: {exc}")
-
+        except Exception:
+            pass
     pending_phones.pop(customer_id, None)
     pending_codes.pop(customer_id, None)
     pending_code_hashes.pop(customer_id, None)
@@ -324,11 +515,7 @@ async def reset_customer_session(customer_id: str):
     login_locks.pop(customer_id, None)
     me_cache.pop(customer_id, None)
     enabled_cache[customer_id] = False
-
-    session_dir = SESSION_DIR / f"customer-{customer_key(customer_id)}"
-    if session_dir.exists():
-        shutil.rmtree(session_dir, ignore_errors=True)
-
+    await delete_session_vault(customer_id)
     await update_account_state(customer_id, False)
     await set_salf_enabled(customer_id, False)
 
