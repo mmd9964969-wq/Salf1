@@ -661,12 +661,29 @@ async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
                 return dict(cached)
 
         if not await acquire_session_runtime_lock(customer_id):
-            await save_bot_presence(
-                customer_id,
-                "unknown",
-                error="session_in_use_by_another_worker",
+            row = await db_user(customer_id)
+            persisted_state = str(
+                row["bot_presence_state"]
+                if row and "bot_presence_state" in row.keys()
+                else "unknown"
             )
-            return dict(bot_presence_cache[customer_id])
+            persisted_checked_at = (
+                row["bot_presence_checked_at"]
+                if row and "bot_presence_checked_at" in row.keys()
+                else None
+            )
+            persisted_error = str(
+                row["bot_presence_error"]
+                if row and "bot_presence_error" in row.keys()
+                else ""
+            )
+            snapshot = {
+                "state": persisted_state,
+                "checked_at": persisted_checked_at or datetime.now(timezone.utc),
+                "error": persisted_error or "session_in_use_by_another_worker",
+            }
+            bot_presence_cache[customer_id] = snapshot
+            return dict(snapshot)
 
         client = clients.get(customer_id)
         try:
@@ -1403,14 +1420,37 @@ async def account_health_snapshot(customer_id: str, force: bool = False) -> dict
     existing = clients.get(customer_id)
 
     if not await acquire_session_runtime_lock(customer_id):
+        persisted_presence = str(
+            row["bot_presence_state"]
+            if row and "bot_presence_state" in row.keys()
+            else "unknown"
+        )
         return {
             "account_connected": bool(
                 (existing and existing.is_connected())
                 or (row and row["account_connected"])
             ),
-            "authorized": None,
-            "bot_presence": "unknown",
-            "state": "session_in_use",
+            "authorized": True if row and row["account_connected"] else None,
+            "bot_presence": persisted_presence,
+            "bot_presence_error": (
+                str(row["bot_presence_error"] or "")
+                if row and "bot_presence_error" in row.keys()
+                else ""
+            ),
+            "bot_presence_checked_at": (
+                row["bot_presence_checked_at"].isoformat()
+                if row
+                and "bot_presence_checked_at" in row.keys()
+                and row["bot_presence_checked_at"]
+                else None
+            ),
+            "state": (
+                "healthy"
+                if row
+                and row["account_connected"]
+                and persisted_presence == "present"
+                else "session_in_use"
+            ),
             "error": "Telegram session is active in another worker",
         }
 
