@@ -199,16 +199,76 @@ function pageHtml() {
   let body = "";
 
   if (state.stage === "entry") {
+    const gatewayCopy = state.lang === "fa"
+      ? {
+          title: "درگاه ورود امن",
+          subtitle: "اتصال اکانت از طریق کانال امن SALF1 انجام می‌شود.",
+          channel: "کانال امنیتی",
+          channelValue: "آماده",
+          session: "نشست",
+          sessionValue: "در انتظار ورود",
+          integrity: "اعتبار درگاه",
+          integrityValue: "تأیید شده",
+          system: "سامانه",
+          systemValue: "SALF1 WEB",
+          open: "باز کردن پنل ورود امن",
+          existing: "ورود به اکانت",
+          existingHint: "برای اکانت ساخته‌شده",
+          fresh: "اتصال اکانت جدید",
+          freshHint: "اتصال و ساخت دسترسی",
+          live: "در حال آماده‌سازی کانال امن..."
+        }
+      : {
+          title: "SECURE ACCESS GATE",
+          subtitle: "Account access is handled through the secure SALF1 channel.",
+          channel: "SECURE CHANNEL",
+          channelValue: "READY",
+          session: "SESSION",
+          sessionValue: "WAITING",
+          integrity: "GATE INTEGRITY",
+          integrityValue: "VERIFIED",
+          system: "SYSTEM",
+          systemValue: "SALF1 WEB",
+          open: "OPEN SECURE LOGIN",
+          existing: "ACCOUNT LOGIN",
+          existingHint: "FOR AN EXISTING ACCOUNT",
+          fresh: "CONNECT NEW ACCOUNT",
+          freshHint: "CONNECT & CREATE ACCESS",
+          live: "Preparing secure channel..."
+        };
+
     body =
-      '<div class="auth-stage entry-minimal" data-stage="entry">' +
-        '<div class="stage-mark">00 · ROYAL GATE</div>' +
+      '<div class="auth-stage secure-gateway-stage" data-stage="entry">' +
+        '<div class="gateway-orbit" aria-hidden="true">' +
+          '<span class="gateway-ring ring-a"></span>' +
+          '<span class="gateway-ring ring-b"></span>' +
+          '<span class="gateway-ring ring-c"></span>' +
+          '<span class="gateway-core"><i></i></span>' +
+        '</div>' +
+        '<div class="stage-mark">00 · SECURE ACCESS</div>' +
+        '<h1>' + gatewayCopy.title + '</h1>' +
+        '<p class="stage-subtitle">' + gatewayCopy.subtitle + '</p>' +
+        '<div class="secure-gateway">' +
+          '<div class="gateway-head">' +
+            '<div><span class="gateway-eyebrow">SALF1 · PRIVATE GATE</span><strong id="gatewayLive">' + gatewayCopy.live + '</strong></div>' +
+            '<span class="gateway-led" id="gatewayLed"></span>' +
+          '</div>' +
+          '<div class="gateway-grid">' +
+            '<div class="gateway-item"><span>' + gatewayCopy.channel + '</span><strong>' + gatewayCopy.channelValue + '</strong></div>' +
+            '<div class="gateway-item"><span>' + gatewayCopy.session + '</span><strong>' + gatewayCopy.sessionValue + '</strong></div>' +
+            '<div class="gateway-item"><span>' + gatewayCopy.integrity + '</span><strong>' + gatewayCopy.integrityValue + '</strong></div>' +
+            '<div class="gateway-item"><span>' + gatewayCopy.system + '</span><strong>' + gatewayCopy.systemValue + '</strong></div>' +
+          '</div>' +
+          '<div class="gateway-track"><span></span></div>' +
+        '</div>' +
         '<div class="entry-options ' + (state.entryOpen ? "open" : "") + '">' +
-          '<button class="royal-button" id="entryLogin" type="button"><span class="button-light"></span><span class="button-label">' + t("login") + '</span><span class="button-mark">↗</span></button>' +
+          '<button class="royal-button gateway-open-button" id="entryLogin" type="button"><span class="button-light"></span><span class="button-label">' + gatewayCopy.open + '</span><span class="button-mark">↗</span></button>' +
           '<div class="entry-choice-row">' +
-            '<button class="choice-button" id="existingLogin" type="button"><span class="choice-index">01</span><strong>' + (state.lang==="fa" ? "ورود به اکانت" : "ACCOUNT LOGIN") + '</strong><small>' + (state.lang==="fa" ? "برای اکانت ساخته‌شده" : "FOR AN EXISTING ACCOUNT") + '</small><b>↗</b></button>' +
-            '<button class="choice-button" id="newConnection" type="button"><span class="choice-index">02</span><strong>' + (state.lang==="fa" ? "اتصال اکانت جدید" : "CONNECT NEW ACCOUNT") + '</strong><small>' + (state.lang==="fa" ? "اتصال و ساخت دسترسی" : "CONNECT & CREATE ACCESS") + '</small><b>↗</b></button>' +
+            '<button class="choice-button" id="existingLogin" type="button"><span class="choice-index">01</span><strong>' + gatewayCopy.existing + '</strong><small>' + gatewayCopy.existingHint + '</small><b>↗</b></button>' +
+            '<button class="choice-button" id="newConnection" type="button"><span class="choice-index">02</span><strong>' + gatewayCopy.fresh + '</strong><small>' + gatewayCopy.freshHint + '</small><b>↗</b></button>' +
           '</div>' +
         '</div>' +
+        '<div class="gateway-livebar"><span class="gateway-live-dot"></span><span>SECURE CHANNEL</span><i></i><strong id="gatewayProgress">01 / 04</strong></div>' +
       '</div>';
   } else if (state.stage === "identifier") {
     body =
@@ -424,12 +484,40 @@ function render() {
   bindCommon();
   initCosmos();
   startLogoMorph();
+  startGatewayTicker();
 
   if(state.stage==="code") {
     setupOtp();
     startTimer(state.resendAfter || 60);
     document.querySelector(".otp-cell")?.focus();
   }
+}
+
+function startGatewayTicker() {
+  if (window.__salfGatewayTimer) {
+    clearInterval(window.__salfGatewayTimer);
+    window.__salfGatewayTimer = null;
+  }
+  if (state.stage !== "entry") return;
+
+  const messages = state.lang === "fa"
+    ? ["در حال آماده‌سازی کانال امن...","بررسی وضعیت درگاه...","هماهنگ‌سازی نشست...","کانال امن آماده است."]
+    : ["Preparing secure channel...","Checking gate status...","Synchronizing session...","Secure channel ready."];
+
+  let index = 0;
+  const paint = () => {
+    const live = document.querySelector("#gatewayLive");
+    const progress = document.querySelector("#gatewayProgress");
+    const led = document.querySelector("#gatewayLed");
+    if (!live || !progress || !led) return;
+    live.textContent = messages[index];
+    progress.textContent = String(index + 1).padStart(2,"0") + " / 04";
+    led.classList.toggle("ready", index === messages.length - 1);
+    index = (index + 1) % messages.length;
+  };
+
+  paint();
+  window.__salfGatewayTimer = setInterval(paint, 1800);
 }
 
 function bindCommon() {
