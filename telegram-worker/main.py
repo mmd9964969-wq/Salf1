@@ -210,6 +210,7 @@ presence_runtime_stats: dict[str, dict] = {}
 bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
+session_runtime_lock_connections: dict[str, object] = {}
 
 
 def configured():
@@ -390,11 +391,25 @@ async def delete_session_vault(customer_id: str):
     )
 
 
+def session_conflict_error(exc: Exception) -> bool:
+    name = type(exc).__name__.upper()
+    message = str(exc).upper()
+    return (
+        name == "AUTHKEYDUPLICATEDERROR"
+        or "AUTH_KEY_DUPLICATED" in message
+    )
+
+
 def definitive_session_failure(exc: Exception) -> bool:
     name = type(exc).__name__.upper()
     message = str(exc).upper()
     return (
-        name in {"AUTHKEYUNREGISTEREDERROR", "SESSIONREVOKEDERROR", "USERDEACTIVATEDBANERROR", "USERDEACTIVATEDERROR"}
+        name in {
+            "AUTHKEYUNREGISTEREDERROR",
+            "SESSIONREVOKEDERROR",
+            "USERDEACTIVATEDBANERROR",
+            "USERDEACTIVATEDERROR",
+        }
         or "AUTH_KEY_UNREGISTERED" in message
         or "SESSION_REVOKED" in message
         or "USER_DEACTIVATED" in message
@@ -404,6 +419,7 @@ def definitive_session_failure(exc: Exception) -> bool:
 async def invalidate_customer_session(customer_id: str, exc: Exception | None = None):
     if exc is not None and not definitive_session_failure(exc):
         return
+    await release_session_runtime_lock(customer_id)
     try:
         await delete_session_vault(customer_id)
     except Exception as cleanup_exc:
@@ -621,16 +637,14 @@ async def save_bot_presence(
 
 
 async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
-    # Presence is deliberately independent from SALF billing and salf_enabled.
+    # Presence is independent from SALF billing and salf_enabled.
     cached = bot_presence_cache.get(customer_id)
     now = datetime.now(timezone.utc)
 
     if not force and cached:
         checked_at = cached.get("checked_at")
-        if checked_at:
-            age = (now - checked_at).total_seconds()
-            if age < 45:
-                return dict(cached)
+        if checked_at and (now - checked_at).total_seconds() < 45:
+            return dict(cached)
 
     lock = bot_presence_check_locks.setdefault(customer_id, asyncio.Lock())
     async with lock:
@@ -640,8 +654,19 @@ async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
             if checked_at and (now - checked_at).total_seconds() < 45:
                 return dict(cached)
 
-        client = await restore_client(customer_id)
+        if not await acquire_session_runtime_lock(customer_id):
+            await save_bot_presence(
+                customer_id,
+                "unknown",
+                error="session_in_use_by_another_worker",
+            )
+            return dict(bot_presence_cache[customer_id])
+
+        client = clients.get(customer_id)
         try:
+            if client is None:
+                client = await restore_client(customer_id)
+
             if not client.is_connected():
                 await client.connect()
 
@@ -658,14 +683,11 @@ async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
             me_cache[customer_id] = int(me.id)
             await update_account_state(customer_id, True)
 
-            # The canonical Bot API identity is the same @Pers3anSelfBot used
-            # by the panel runtime. Resolve it through the authorized user
-            # session and verify that Telegram identifies it as a bot.
             target_username = bot_username or "Pers3anSelfBot"
             entity = await client.get_entity("@" + target_username.lstrip("@"))
-
             entity_id = int(getattr(entity, "id", 0) or 0)
             is_bot = bool(getattr(entity, "bot", False))
+
             if not entity_id or not is_bot:
                 await save_bot_presence(
                     customer_id,
@@ -675,33 +697,11 @@ async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
                 )
                 return dict(bot_presence_cache[customer_id])
 
-            # Probe 1: MTProto must be able to resolve the bot and read its
-            # private conversation context.
+            # A readable bot dialog is the second probe; resolving a username
+            # alone is not enough to claim the bot is actually present/usable.
             await client.get_messages(entity, limit=1)
 
-            # Probe 2: Bot API must be able to address this user's private chat.
-            # This is the strongest practical signal that @Pers3anSelfBot is
-            # actually available to the connected account for panel delivery.
-            if BOT_TOKEN and http_session is not None:
-                bot_chat = await bot_api(
-                    "getChat",
-                    {"chat_id": int(me.id)},
-                    timeout=10,
-                )
-                if not isinstance(bot_chat, dict) or not bot_chat.get("ok"):
-                    await save_bot_presence(
-                        customer_id,
-                        "absent",
-                        error="bot_api_private_chat_unavailable",
-                        bot_id=entity_id,
-                    )
-                    return dict(bot_presence_cache[customer_id])
-
-            await save_bot_presence(
-                customer_id,
-                "present",
-                bot_id=entity_id,
-            )
+            await save_bot_presence(customer_id, "present", bot_id=entity_id)
             return dict(bot_presence_cache[customer_id])
 
         except Exception as exc:
@@ -711,6 +711,12 @@ async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
                     customer_id,
                     "absent",
                     error=f"session_failure:{type(exc).__name__}",
+                )
+            elif session_conflict_error(exc):
+                await save_bot_presence(
+                    customer_id,
+                    "unknown",
+                    error=f"session_conflict:{type(exc).__name__}",
                 )
             else:
                 await save_bot_presence(
@@ -748,6 +754,14 @@ async def bot_presence_loop():
 
 
 async def set_salf_enabled(customer_id: str, enabled: bool):
+    # Owner is an unlimited service account. Balance controls can never turn
+    # SALF off for the owner.
+    try:
+        if await is_owner_account(customer_id):
+            enabled = True
+    except Exception:
+        pass
+
     if db_pool is not None:
         try:
             user_id = int(customer_id)
@@ -770,6 +784,7 @@ async def set_salf_enabled(customer_id: str, enabled: bool):
 
 async def reset_customer_session(customer_id: str):
     client = clients.pop(customer_id, None)
+    await release_session_runtime_lock(customer_id)
     if client is not None:
         try:
             if client.is_connected():
@@ -1254,9 +1269,18 @@ async def reward_referral(telegram_user_id: int) -> bool:
 
 async def account_health_snapshot(customer_id: str, force: bool = False) -> dict:
     row = await db_user(customer_id)
-    session_connected = bool(row and row["account_connected"])
+    existing = clients.get(customer_id)
 
-    client = clients.get(customer_id)
+    if not await acquire_session_runtime_lock(customer_id):
+        return {
+            "account_connected": bool(existing and existing.is_connected()),
+            "authorized": None,
+            "bot_presence": "unknown",
+            "state": "session_in_use",
+            "error": "Telegram session is active in another worker",
+        }
+
+    client = existing
     authorized = None
     username = None
     session_id = None
@@ -1266,7 +1290,7 @@ async def account_health_snapshot(customer_id: str, force: bool = False) -> dict
             client = await restore_client(customer_id)
         except Exception as exc:
             return {
-                "account_connected": session_connected,
+                "account_connected": False,
                 "authorized": False,
                 "bot_presence": "unknown",
                 "state": "session_unavailable",
@@ -1323,10 +1347,21 @@ async def account_health_snapshot(customer_id: str, force: bool = False) -> dict
                 "state": "reauth_required",
                 "error": type(exc).__name__,
             }
+        elif session_conflict_error(exc):
+            # Do not delete the encrypted session on an overlap conflict.
+            # The next worker can recover once the conflicting runtime exits.
+            health = {
+                "account_connected": False,
+                "authorized": None,
+                "bot_presence": "unknown",
+                "state": "session_conflict",
+                "error": type(exc).__name__,
+            }
         else:
+            live_connected = bool(client and client.is_connected())
             presence = bot_presence_cache.get(customer_id) or {}
             health = {
-                "account_connected": session_connected,
+                "account_connected": live_connected,
                 "authorized": authorized,
                 "bot_presence": presence.get("state", "unknown"),
                 "bot_presence_error": presence.get("error", ""),
@@ -3228,10 +3263,11 @@ async def handle_self_command(event, customer_id: str, text: str):
 
     if normalized in {"موجودی", "balance"}:
         row = await db_user(customer_id)
+        unlimited = await is_owner_account(customer_id)
         balance = int(row["tron_balance"]) if row else 0
         trial = row["trial_expires_at"] if row else None
-        enabled = bool(row["salf_enabled"]) if row else False
-        trial_text = "فعال" if trial and trial > datetime.now(trial.tzinfo) else "پایان‌یافته"
+        enabled = True if unlimited else bool(row["salf_enabled"]) if row else False
+        trial_text = "∞" if unlimited else ("فعال" if trial and trial > datetime.now(trial.tzinfo) else "پایان‌یافته")
         await self_respond(event, 
             f"""<b>◈ موجودی SALF1</b>
 
@@ -3246,8 +3282,10 @@ async def handle_self_command(event, customer_id: str, text: str):
 
     if normalized in {"وضعیت سلف", "self status", "status"}:
         row = await db_user(customer_id)
-        connected = bool(row["account_connected"]) if row else False
-        enabled = bool(row["salf_enabled"]) if row else False
+        live_status = await account_status(customer_id)
+        connected = bool(live_status.get("connected"))
+        unlimited = bool(live_status.get("unlimited"))
+        enabled = True if unlimited else bool(row["salf_enabled"]) if row else False
         await self_respond(event, 
             f"""<b>◈ وضعیت SALF1</b>
 
@@ -3269,7 +3307,8 @@ async def handle_self_command(event, customer_id: str, text: str):
             return True
         trial_active = bool(row and row["trial_expires_at"] is not None and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo))
         balance = int(row["tron_balance"])
-        if not trial_active and balance <= 0:
+        unlimited = await is_owner_account(customer_id)
+        if not unlimited and not trial_active and balance <= 0:
             await self_respond(event, 
                 "⛂ اعتبار کافی نیست. ابتدا ترون دریافت کنید.",
                 parse_mode="html",
@@ -3377,6 +3416,9 @@ async def init_loaded_sessions():
             enabled_cache[cid]=False
             continue
         try:
+            if not await acquire_session_runtime_lock(cid):
+                print(f"Session restore deferred for {customer_key(cid)}: session_lock_busy")
+                continue
             client=client_for(cid,decrypt_session_string(cid,row["ciphertext"]))
             await client.connect()
             if await client.is_user_authorized():
@@ -6877,7 +6919,7 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
             message_id,
             f"""<b>◈ وضعیت SALF1</b>
 
-⛂ اکانت : {"● متصل" if result.get("authorized") else "○ متصل نیست"}
+⛂ اکانت : {"● متصل" if result.get("connected") else "○ متصل نیست"}
 ⛂ حضور بات : {bot_text}
 ⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
 ⛂ تست 24 ساعته : {"∞" if unlimited else ("● فعال" if trial_active else "○ پایان‌یافته")}
@@ -6978,6 +7020,7 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
                 pass
             clients.pop(str(user_id), None)
 
+        await release_session_runtime_lock(str(user_id))
         await delete_session_vault(str(user_id))
         me_cache.pop(str(user_id), None)
         enabled_cache[str(user_id)] = False
@@ -7216,6 +7259,12 @@ async def session_supervisor_loop():
                             continue
                     if client.is_connected():
                         continue
+                    if not await acquire_session_runtime_lock(customer_id):
+                        print(
+                            f"Session reconnect deferred for "
+                            f"{customer_key(customer_id)}: session_lock_busy"
+                        )
+                        continue
                     try:
                         await client.connect()
                     except Exception as exc:
@@ -7293,6 +7342,7 @@ async def main():
             tasks.append(asyncio.create_task(billing_loop()))
         await asyncio.Event().wait()
     finally:
+        await release_all_session_runtime_locks()
         if db_pool is not None:
             await db_pool.close()
         if http_session is not None:
