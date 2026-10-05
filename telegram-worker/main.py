@@ -2478,23 +2478,23 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
     enabled = bool(row["salf_enabled"]) if row else False
     balance = int(row["tron_balance"]) if row else 0
     return f"""
-<b>◈ Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
+<b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
 خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
-⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
-⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست رایگان 24 ساعت : {trial_remaining_text(row)}
-⛂ موجودی : {balance:,} جم ترون
-⛂ مصرف فعال : 1 جم ترون در دقیقه
+اکانت : {"متصل" if connected else "متصل نیست"}
+سلف : {"روشن" if enabled else "خاموش"}
+تست رایگان : {trial_remaining_text(row)}
+موجودی : {balance:,} جم ترون
+مصرف فعال : 1 جم ترون در دقیقه
 
 [[RICH_DIVIDER]]
 
-<b>◈ وضـعیـت سـرویـس</b>
+◈ وضـعیـت سـرویـس
 
-★ - برای شروع، اکانت خود را متصل کنید.
+برای شروع، اکانت خود را متصل کنید.
 """
-    
+
 
 async def mini_manage_text(user_id: int):
     row = await db_user(str(user_id))
@@ -2502,21 +2502,21 @@ async def mini_manage_text(user_id: int):
     enabled = bool(row["salf_enabled"]) if row else False
     balance = int(row["tron_balance"]) if row else 0
     return f"""
-<b>◈ مـدیـریـت اکـانـت سـلـف</b>
+<b>Sᴀʟғ1 · مـدیـریـت اکـانـت</b>
 
-- خـوش اومـدی <b>[ {html.escape(str(row["first_name"] if row else "کاربر"))} ]</b> مـحتـرم.
+خـوش اومـدی <b>[ {html.escape(str(row["first_name"] if row else "کاربر"))} ]</b> مـحتـرم.
 
-⛂ اکانت : {"● متصل" if connected else "○ متصل نیست"}
-⛂ سلف : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست رایگان 24 ساعت : {trial_remaining_text(row)}
-⛂ موجودی : {balance:,} جم ترون
-⛂ مصرف فعال : 1 جم ترون در دقیقه
+اکانت : {"متصل" if connected else "متصل نیست"}
+سلف : {"روشن" if enabled else "خاموش"}
+تست رایگان : {trial_remaining_text(row)}
+موجودی : {balance:,} جم ترون
+مصرف فعال : 1 جم ترون در دقیقه
 
 [[RICH_DIVIDER]]
 
-⚙️ وضـعیـت سـرویـس
+◈ وضـعیـت سـرویـس
 
-★ - برای شروع، اکانت خود را متصل کنید.
+برای شروع، اکانت خود را متصل کنید.
 """
 
 
@@ -4079,20 +4079,22 @@ async def salf_panel_text(user_id: int):
     return f"""<b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
 نام : {html.escape(str(row["first_name"] if row else "کاربر"))}
-شناسه : <code>{user_id}</code>
+شناسه : {user_id}
 اکانت : {"متصل" if connected else "متصل نیست"}
 سلف : {"فعال" if enabled else "خاموش"}
 پلن : رایگان
 زمان باقی‌مانده : {trial_remaining_text(row)}
 موجودی : {balance:,} جم
-
 وضعیت سیستم : پایدار
 وضعیت Worker : آنلاین
 مصرف فعال : 1 جم / دقیقه
 
 [[RICH_DIVIDER]]
 
-دسترسی اختصاصی برای این حساب"""
+◈ دسترسی سرویس
+
+این پنل مرکز مدیریت و وضعیت SALF1 برای همین حساب است.
+"""
 
 
 def _strip_invalid_button_emojis(reply_markup: dict) -> dict:
