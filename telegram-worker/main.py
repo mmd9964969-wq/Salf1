@@ -1683,47 +1683,72 @@ def normalize_text(value: str) -> str:
 
 
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
-    """Send the SALF1 self-account panel into the exact chat where it was invoked."""
+    """Open the real SALF1 Command Center where the owner typed «پنل»."""
     if not is_owner:
         return False
 
+    chat_id = getattr(event, "chat_id", None)
+    if chat_id is None:
+        return False
+
+    panel_text = await salf_panel_text(int(customer_id))
+    panel_markup = salf_panel_markup()
+
     row = await db_user(customer_id)
     connected = bool(row["account_connected"]) if row else False
-    enabled = bool(row["salf_enabled"]) if row else False
-    balance = int(row["tron_balance"]) if row else 0
-    trial_left = trial_remaining_text(row)
-    name = html.escape(str(row["first_name"] if row else "کاربر"))
 
-    text = f"""Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ
+    # In normal chats, prefer the Bot API Rich Message because it supports
+    # SALF1's native Rich buttons and callback navigation.
+    # Saved Messages/self-chat cannot be targeted by the bot, so fall back to
+    # the connected user session there.
+    is_saved_messages = bool(
+        event.is_private
+        and me_cache.get(customer_id)
+        and int(chat_id) == int(me_cache[customer_id])
+    )
 
-نام : {name}
-شناسه : {customer_id}
-اکانت : {"متصل" if connected else "متصل نیست"}
-سلف : {"فعال" if enabled else "خاموش"}
-پلن : رایگان
-زمان باقی‌مانده : {trial_left}
-موجودی : {balance:,} جم
+    if not is_saved_messages and BOT_TOKEN and http_session is not None:
+        try:
+            result = await bot_send(
+                int(chat_id),
+                panel_text,
+                panel_markup,
+            )
+            if isinstance(result, dict) and result.get("ok"):
+                print({
+                    "type": "custom_emoji.panel_send",
+                    "customer_id": customer_id,
+                    "chat_id": int(chat_id),
+                    "transport": "bot_rich_message",
+                    "connected": connected,
+                })
+                return True
+        except Exception as exc:
+            print(
+                f"Rich panel delivery fallback for {customer_key(customer_id)}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
-وضعیت سیستم : پایدار
-وضعیت Worker : آنلاین
-مصرف فعال : 1 جم / دقیقه
-
-[[RICH_DIVIDER]]
-
-دسترسی اختصاصی برای این حساب"""
-
+    # Saved Messages and any chat where the bot cannot post:
+    # send the real Command Center content through the connected account.
+    # User accounts cannot receive bot callback queries, so interactive
+    # callback buttons are intentionally not attached in this fallback.
     client = client_for(customer_id)
-    rendered_text, custom_entities = await render_telethon_custom_emoji(client, text)
+    rendered_text, custom_entities = await render_telethon_custom_emoji(
+        client,
+        panel_text,
+    )
     print({
         "type": "custom_emoji.panel_send",
         "customer_id": customer_id,
-        "chat_id": getattr(event, "chat_id", None),
+        "chat_id": int(chat_id),
+        "transport": "user_session",
         "entities": len(custom_entities),
-        "document_ids": [int(getattr(entity, "document_id", 0)) for entity in custom_entities],
+        "document_ids": [
+            int(getattr(entity, "document_id", 0))
+            for entity in custom_entities
+        ],
     })
-
-    # Send the panel into the same chat where the owner entered "پنل".
-    # event.raw_text contains regular text and media captions.
     await event.respond(
         rendered_text,
         formatting_entities=custom_entities,
