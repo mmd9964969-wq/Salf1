@@ -1783,7 +1783,6 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
                 with_my_score=False,
                 silent=False,
                 background=False,
-                with_video=False,
                 top_msg_id=None,
                 schedule_date=None,
             )
