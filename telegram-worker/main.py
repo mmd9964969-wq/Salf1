@@ -1560,6 +1560,11 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 
 
 RICH_DIVIDER = "─────━━───── ◈ ─────━━─────"
+# SALF1 page width rail. Telegram Rich Messages size the message bubble from
+# its intrinsic content; there is no CSS-like fixed message width. This rail
+# gives every SALF1 control page the same minimum visual width without changing
+# the existing canonical divider.
+RICH_WIDTH_RAIL = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 
 def _clean_rich_inline(value: str) -> str:
@@ -1606,6 +1611,15 @@ def rich_message_html(text: str) -> str:
     source = str(text or "").strip()
     if not source:
         source = "<b>SALF1</b>"
+
+    # Normalize SALF1 control-page width. The rail is inserted once after the
+    # first heading so short pages (for example Presence Center) get the same
+    # intrinsic width as longer control pages.
+    if "Sᴀʟғ1" in source and RICH_WIDTH_RAIL not in source:
+        source_lines = source.splitlines()
+        insert_at = 1 if source_lines and source_lines[0].lstrip().startswith("<b>") else 0
+        source_lines.insert(insert_at, RICH_WIDTH_RAIL)
+        source = "\n".join(source_lines)
 
     lines = source.splitlines()
     parts: list[str] = []
