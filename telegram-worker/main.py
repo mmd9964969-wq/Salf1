@@ -2704,6 +2704,7 @@ async def handle_self_command(event, customer_id: str, text: str):
             )
             return
 
+    normalized = normalize_text(text)
     if normalized not in {
         "پنل",
         "panel",
