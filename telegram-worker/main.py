@@ -1296,6 +1296,90 @@ async def reward_referral(telegram_user_id: int) -> bool:
     return True
 
 
+async def acquire_session_runtime_lock(customer_id: str) -> bool:
+    """
+    Own the Telegram authorization key exclusively across Railway replicas.
+    A PostgreSQL advisory lock lives on one dedicated pooled connection for as
+    long as this worker owns the customer session.
+    """
+    if db_pool is None:
+        return True
+    customer_id = str(customer_id)
+    if customer_id in session_runtime_lock_connections:
+        return True
+
+    try:
+        lock_key = int(customer_id)
+    except (TypeError, ValueError):
+        return False
+
+    conn = None
+    try:
+        conn = await db_pool.acquire()
+        locked = await conn.fetchval(
+            "select pg_try_advisory_lock($1::bigint)",
+            lock_key,
+        )
+        if not locked:
+            await db_pool.release(conn)
+            return False
+
+        session_runtime_lock_connections[customer_id] = conn
+        print(
+            f"Session runtime lock acquired: "
+            f"{customer_key(customer_id)}"
+        )
+        return True
+    except Exception as exc:
+        if conn is not None:
+            try:
+                await db_pool.release(conn)
+            except Exception:
+                pass
+        print(
+            f"Session runtime lock error for "
+            f"{customer_key(customer_id)}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return False
+
+
+async def release_session_runtime_lock(customer_id: str):
+    if db_pool is None:
+        return
+
+    customer_id = str(customer_id)
+    conn = session_runtime_lock_connections.pop(customer_id, None)
+    if conn is None:
+        return
+
+    try:
+        await conn.fetchval(
+            "select pg_advisory_unlock($1::bigint)",
+            int(customer_id),
+        )
+    except Exception as exc:
+        print(
+            f"Session runtime unlock error for "
+            f"{customer_key(customer_id)}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    finally:
+        try:
+            await db_pool.release(conn)
+        except Exception:
+            pass
+    print(
+        f"Session runtime lock released: "
+        f"{customer_key(customer_id)}"
+    )
+
+
+async def release_all_session_runtime_locks():
+    for customer_id in list(session_runtime_lock_connections):
+        await release_session_runtime_lock(customer_id)
+
+
 async def account_health_snapshot(customer_id: str, force: bool = False) -> dict:
     row = await db_user(customer_id)
     existing = clients.get(customer_id)
