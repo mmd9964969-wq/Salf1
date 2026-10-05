@@ -943,44 +943,27 @@ async def reward_referral(telegram_user_id: int) -> bool:
 async def account_status(customer_id: str):
     if not configured():
         return {"connected": False, "authorized": False, "error": "telegram api not configured"}
-
     try:
-        client = await restore_client(customer_id)
+        client=await restore_client(customer_id)
         await client.connect()
-        authorized_user = await client.is_user_authorized()
+        authorized_user=await client.is_user_authorized()
     except Exception as exc:
         if definitive_session_failure(exc):
-            await invalidate_customer_session(customer_id, exc)
-            return {"connected": False, "authorized": False, "state": "reauth_required"}
-        row = await db_user(customer_id)
-        return {
-            "connected": bool(row and row["account_connected"]),
-            "authorized": None,
-            "state": "degraded",
-        }
-
+            await invalidate_customer_session(customer_id,exc)
+            return {"connected":False,"authorized":False,"state":"reauth_required"}
+        row=await db_user(customer_id)
+        return {"connected":bool(row and row["account_connected"]),"authorized":None,"state":"degraded"}
     if not authorized_user:
         await invalidate_customer_session(customer_id)
-        return {"connected": False, "authorized": False, "state": "reauth_required"}
-
-    me = await client.get_me()
-    me_cache[customer_id] = int(me.id)
-    await update_account_state(customer_id, True)
-    row = await db_user(customer_id)
-    if row:
-        enabled_cache[customer_id] = bool(row["salf_enabled"])
-
-    return {
-        "connected": True,
-        "authorized": True,
-        "state": "connected",
-        "user": {
-            "id": me.id,
-            "username": me.username,
-            "first_name": me.first_name,
-            "last_name": me.last_name,
-        },
-    }
+        return {"connected":False,"authorized":False,"state":"reauth_required"}
+    me=await client.get_me()
+    me_cache[customer_id]=int(me.id)
+    await update_account_state(customer_id,True)
+    row=await db_user(customer_id)
+    if row: enabled_cache[customer_id]=bool(row["salf_enabled"])
+    return {"connected":True,"authorized":True,"state":"connected","user":{
+        "id":me.id,"username":me.username,"first_name":me.first_name,"last_name":me.last_name
+    }}
 
 
 async def start_customer_login(customer_id: str, phone: str, force_resend: bool = False):
@@ -2367,55 +2350,35 @@ def attach_events(client: TelegramClient, customer_id: str):
 async def init_loaded_sessions():
     if not configured() or db_pool is None:
         return
-
-    rows = await db_pool.fetch(
+    rows=await db_pool.fetch(
         """
-        select u.telegram_user_id, u.salf_enabled, u.account_connected,
-               s.ciphertext, s.key_version
+        select u.telegram_user_id,u.salf_enabled,u.account_connected,s.ciphertext,s.key_version
         from salf1_bot_users u
-        left join salf1_telegram_sessions s
-          on s.telegram_user_id = u.telegram_user_id
-        where u.account_connected = true
-           or s.telegram_user_id is not null
+        left join salf1_telegram_sessions s on s.telegram_user_id=u.telegram_user_id
+        where u.account_connected=true or s.telegram_user_id is not null
         """
     )
-
     for row in rows:
-        customer_id = str(row["telegram_user_id"])
-        ciphertext = row["ciphertext"]
-
-        if not ciphertext:
-            if row["account_connected"]:
-                await update_account_state(customer_id, False)
-            enabled_cache[customer_id] = False
+        cid=str(row["telegram_user_id"])
+        if not row["ciphertext"]:
+            if row["account_connected"]: await update_account_state(cid,False)
+            enabled_cache[cid]=False
             continue
-
         try:
-            client = client_for(
-                customer_id,
-                decrypt_session_string(customer_id, ciphertext),
-            )
+            client=client_for(cid,decrypt_session_string(cid,row["ciphertext"]))
             await client.connect()
             if await client.is_user_authorized():
-                me = await client.get_me()
-                if str(int(me.id)) != customer_id:
-                    raise RuntimeError("Telegram session identity mismatch")
-                me_cache[customer_id] = int(me.id)
-                await update_account_state(customer_id, True)
-                enabled_cache[customer_id] = bool(row["salf_enabled"])
-                print(
-                    f"Loaded encrypted customer session: {customer_key(customer_id)}"
-                )
+                me=await client.get_me()
+                if str(int(me.id))!=cid: raise RuntimeError("Telegram session identity mismatch")
+                me_cache[cid]=int(me.id)
+                await update_account_state(cid,True)
+                enabled_cache[cid]=bool(row["salf_enabled"])
+                print(f"Loaded encrypted customer session: {customer_key(cid)}")
             else:
-                await invalidate_customer_session(customer_id)
+                await invalidate_customer_session(cid)
         except Exception as exc:
-            if definitive_session_failure(exc):
-                await invalidate_customer_session(customer_id, exc)
-            else:
-                print(
-                    f"Session restore deferred for {customer_key(customer_id)}: "
-                    f"{type(exc).__name__}"
-                )
+            if definitive_session_failure(exc): await invalidate_customer_session(cid,exc)
+            else: print(f"Session restore deferred for {customer_key(cid)}: {type(exc).__name__}")
 
 
 def main_menu_markup():
