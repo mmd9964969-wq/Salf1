@@ -1760,6 +1760,18 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             int(message_id),
             from_peer=bot_target,
         )
+        if forwarded:
+            try:
+                await bot_api(
+                    "deleteMessage",
+                    {"chat_id": int(owner_id), "message_id": int(message_id)},
+                    timeout=15,
+                )
+            except Exception as cleanup_exc:
+                print(
+                    f"Panel source cleanup failed for {customer_key(customer_id)}: "
+                    f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+                )
         print({
             "type": "custom_emoji.panel_forward",
             "customer_id": customer_id,
@@ -1767,6 +1779,7 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             "source_bot": bot_target,
             "source_message_id": int(message_id),
             "forwarded": bool(forwarded),
+            "source_deleted": bool(forwarded),
         })
         return True
     except Exception as exc:
@@ -3921,11 +3934,21 @@ Session : {"● پایدار" if connected else "○ قطع"}
 
 {RICH_DIVIDER}
 
-{rich_button_row(rich_button("› قابلیت‌های سلف", "self_features", "primary"))}
-{rich_button_row(rich_button("‹ بازگشت", "panel", "primary"))}"""
+"""
 
 def salf_settings_markup():
-    return None
+    return {"inline_keyboard": [
+        [custom_emoji_button("› قابلیت‌های سلف", "self_features", "self")],
+        [custom_emoji_button("‹ بازگشت", "panel", "self")],
+    ]}
+
+
+def self_features_markup():
+    return {"inline_keyboard": [
+        [custom_emoji_button("› ساعت", "clock", "automation")],
+        [custom_emoji_button("› مرکز حضور", "presence", "self")],
+        [custom_emoji_button("‹ بازگشت", "panel_self", "self")],
+    ]}
 
 async def self_features_text(user_id: int):
     clock_config = await clock_get_settings(user_id)
@@ -3978,12 +4001,7 @@ async def self_features_text(user_id: int):
 
 {RICH_DIVIDER}
 
-{rich_button_row(rich_button("› ساعت", "clock", "primary"))}
-{rich_button_row(rich_button("› مرکز حضور", "presence", "primary"))}
-{rich_button_row(rich_button("‹ بازگشت", "panel_self", "primary"))}"""
-
-def self_features_markup():
-    return None
+"""
 
 async def clock_settings_text(user_id: int):
     config = await clock_get_settings(user_id)
@@ -4802,18 +4820,10 @@ async def process_bot_message(message: dict):
             await bot_send(chat["id"], await admin_panel_text(), admin_panel_markup())
             return
 
-    if normalized in {"panel", "پنل"}:
-        # The panel command is slashless and private-chat only.
-        if text.startswith("/") or chat.get("type") != "private":
-            return
-
-        await bot_send(
-            chat["id"],
-            await salf_panel_text(user_id),
-            salf_panel_markup(),
-        )
-
-        return
+    # «پنل» belongs to the connected self-account flow. Do not open the
+    # Command Center inside the bot chat when the bot itself receives that word.
+    # The self worker generates the canonical bot message and forwards it to the
+    # exact place where the owner typed «پنل».
 
     if normalized in {"مدیریت سلف", "مدیریت", "salf", "self"}:
         await bot_send(chat["id"], await mini_manage_text(user_id), await user_manage_markup(user_id))
@@ -4919,11 +4929,21 @@ async def process_callback(callback_query: dict):
         return
 
     if data == "panel_self":
-        await bot_edit(chat_id, message_id, await salf_settings_text(user_id))
+        await bot_edit(
+            chat_id,
+            message_id,
+            await salf_settings_text(user_id),
+            salf_settings_markup(),
+        )
         return
 
     if data == "self_features":
-        await bot_edit(chat_id, message_id, await self_features_text(user_id))
+        await bot_edit(
+            chat_id,
+            message_id,
+            await self_features_text(user_id),
+            self_features_markup(),
+        )
         return
 
     if data == "self_status_center":
