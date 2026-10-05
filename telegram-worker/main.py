@@ -17,7 +17,7 @@ import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events, functions
 from telethon.sessions import MemorySession
-from telethon.tl.types import MessageEntityCustomEmoji
+from telethon.tl.types import MessageEntityCustomEmoji, SendMessageTypingAction, SendMessageCancelAction
 from telethon.errors import (
     ApiIdInvalidError,
     PasswordHashInvalidError,
@@ -201,6 +201,11 @@ bot_username = ""
 web_login_tokens: dict[str, dict] = {}
 clock_last_outputs: dict[str, dict] = {}
 clock_next_allowed: dict[str, float] = {}
+presence_next_online: dict[str, float] = {}
+presence_last_online_state: dict[str, bool] = {}
+presence_typing_until: dict[str, float] = {}
+presence_next_burst: dict[str, float] = {}
+presence_runtime_stats: dict[str, dict] = {}
 
 
 def configured():
@@ -1646,6 +1651,14 @@ def rich_message_html(text: str) -> str:
             parts.append("<hr/>")
             continue
 
+        # Native Telegram Rich Message button rows must not be converted into
+        # ordinary paragraphs; preserve their callback/style attributes.
+        if line.startswith("<tg-button-row") or line.startswith("<tg-button "):
+            flush_table()
+            flush_list()
+            parts.append(line)
+            continue
+
         if line.startswith("<b>") and line.endswith("</b>"):
             inner = _clean_rich_heading(line)
             if inner:
@@ -1701,6 +1714,104 @@ async def handle_self_command(event, customer_id: str, text: str):
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
+
+        if state == "presence_target_add":
+            client = clients.get(str(user_id))
+            if client is None or not client.is_connected():
+                bot_states.pop(user_id, None)
+                await bot_send(chat["id"], "<b>Sᴀʟғ1 · مقصد حضور</b>\n\nاکانت متصل نیست.")
+                return
+            value = text.strip()
+            if not value or len(value) > 200:
+                await bot_send(chat["id"], "<b>Sᴀʟғ1 · مقصد حضور</b>\n\nشناسه یا نام کاربری مقصد معتبر نیست.")
+                return
+            try:
+                entity = await client.get_entity(value)
+                if getattr(entity, "id", None) is None:
+                    raise ValueError("invalid_target")
+                if getattr(entity, "bot", False):
+                    raise ValueError("bot_target")
+
+                class_name = entity.__class__.__name__
+                if class_name == "User":
+                    kind = "PV"
+                elif getattr(entity, "megagroup", False) or class_name == "Chat":
+                    kind = "گروه"
+                elif class_name == "Channel":
+                    if not getattr(entity, "megagroup", False):
+                        raise ValueError("channel_not_supported")
+                    kind = "گروه"
+                else:
+                    raise ValueError("target_not_supported")
+
+                title = (
+                    getattr(entity, "title", None)
+                    or getattr(entity, "first_name", None)
+                    or getattr(entity, "username", None)
+                    or str(entity.id)
+                )
+                config = await presence_get_settings(user_id)
+                targets = list(config.get("targets") or [])
+                peer_ref = value.strip()
+                duplicate = any(
+                    str((target or {}).get("peer") or "").lower() == peer_ref.lower()
+                    for target in targets
+                )
+                if not duplicate:
+                    targets.append({
+                        "peer": peer_ref,
+                        "title": str(title)[:60],
+                        "kind": kind,
+                    })
+                config["targets"] = targets[-20:]
+                await presence_save_settings(user_id, config)
+                bot_states.pop(user_id, None)
+                await bot_send(chat["id"], await presence_targets_page(user_id))
+            except Exception as exc:
+                await bot_send(
+                    chat["id"],
+                    f"""<b>Sᴀʟғ1 · مقصد حضور</b>
+
+مقصد شناسایی نشد یا نوع مقصد پشتیبانی نمی‌شود.
+
+نمونه
+<code>@username</code>
+<code>-1001234567890</code>
+
+خطا : {html.escape(type(exc).__name__)}"""
+                )
+            return
+
+        if state in {"presence_schedule_start", "presence_schedule_end"}:
+            import re
+            if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", text):
+                await bot_send(
+                    chat["id"],
+                    "<b>Sᴀʟғ1 · زمان‌بندی حضور</b>\n\nزمان را با فرمت <code>HH:MM</code> ارسال کنید.",
+                )
+                return
+            config = await presence_get_settings(user_id)
+            if state == "presence_schedule_start":
+                config["schedule_start"] = text
+            else:
+                config["schedule_end"] = text
+            config["schedule_enabled"] = True
+            config["mode"] = "schedule"
+            await presence_save_settings(user_id, config)
+            bot_states.pop(user_id, None)
+            await bot_send(chat["id"], await presence_schedule_page(user_id))
+            return
+
+        if state == "presence_profile_save":
+            name = text.strip()
+            if not name:
+                await bot_send(chat["id"], "<b>Sᴀʟғ1 · پروفایل حضور</b>\n\nنام پروفایل را ارسال کنید.")
+                return
+            await presence_profile_save(user_id, name)
+            bot_states.pop(user_id, None)
+            await bot_send(chat["id"], await presence_profiles_page(user_id))
+            return
+
         if state == "clock_timezone_custom":
             try:
                 tz = ZoneInfo(text)
@@ -2836,6 +2947,641 @@ async def clock_loop():
             print(f"Clock loop error: {type(exc).__name__}: {exc}")
         await asyncio.sleep(1)
 
+
+
+PRESENCE_DEFAULTS = {
+    "online_enabled": False,
+    "typing_enabled": False,
+    "mode": "always",
+    "typing_mode": "continuous",
+    "typing_duration_seconds": 20,
+    "typing_break_seconds": 40,
+    "typing_refresh_seconds": 5,
+    "online_refresh_seconds": 45,
+    "schedule_enabled": False,
+    "schedule_start": "00:00",
+    "schedule_end": "23:59",
+    "schedule_days": [0, 1, 2, 3, 4, 5, 6],
+    "targets": [],
+    "max_targets_per_cycle": 8,
+    "rate_limit_guard": True,
+    "retry": True,
+    "logging": True,
+    "profiles": [],
+}
+
+PRESENCE_MODE_NAMES = {
+    "always": "دائمی",
+    "schedule": "زمان‌بندی",
+    "smart": "هوشمند",
+}
+
+PRESENCE_TYPING_MODE_NAMES = {
+    "continuous": "پیوسته",
+    "bursts": "بازه‌ای",
+}
+
+PRESENCE_RUNTIME_LIMITS = {
+    "typing_duration_seconds": {10, 20, 30, 60},
+    "typing_break_seconds": {20, 40, 60, 120},
+    "typing_refresh_seconds": {4, 5, 6, 10},
+    "online_refresh_seconds": {30, 45, 60, 120},
+}
+
+def presence_default_config():
+    return json.loads(json.dumps(PRESENCE_DEFAULTS))
+
+def _presence_json(value, fallback):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else fallback
+        except Exception:
+            return fallback
+    return fallback
+
+async def init_presence_settings_table():
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        create table if not exists salf1_presence_settings (
+            customer_id bigint primary key,
+            config jsonb not null default '{}'::jsonb,
+            stats jsonb not null default '{}'::jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        )
+        """
+    )
+
+async def presence_record(user_id: int):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        """
+        select customer_id, config, stats, created_at, updated_at
+        from salf1_presence_settings
+        where customer_id = $1
+        """,
+        int(user_id),
+    )
+
+async def presence_get_settings(user_id: int):
+    defaults = presence_default_config()
+    row = await presence_record(user_id)
+    if not row:
+        if db_pool is not None:
+            await db_pool.execute(
+                """
+                insert into salf1_presence_settings (customer_id, config)
+                values ($1, $2::jsonb)
+                on conflict (customer_id) do nothing
+                """,
+                int(user_id),
+                json.dumps(defaults, ensure_ascii=False),
+            )
+        return defaults
+    defaults.update(_presence_json(row["config"], {}))
+    if not isinstance(defaults.get("targets"), list):
+        defaults["targets"] = []
+    if not isinstance(defaults.get("schedule_days"), list):
+        defaults["schedule_days"] = list(range(7))
+    return defaults
+
+async def presence_save_settings(user_id: int, config: dict):
+    if db_pool is None:
+        return
+    clean = presence_default_config()
+    clean.update(config or {})
+    clean["targets"] = list(clean.get("targets") or [])[:20]
+    clean["schedule_days"] = sorted({
+        int(day) for day in (clean.get("schedule_days") or list(range(7)))
+        if str(day).isdigit() and int(day) in range(7)
+    })
+    await db_pool.execute(
+        """
+        insert into salf1_presence_settings (customer_id, config)
+        values ($1, $2::jsonb)
+        on conflict (customer_id) do update set
+            config = excluded.config,
+            updated_at = now()
+        """,
+        int(user_id),
+        json.dumps(clean, ensure_ascii=False),
+    )
+
+async def presence_stats_update(user_id: int, key: str, amount: int = 1):
+    if db_pool is None:
+        return
+    await db_pool.execute(
+        """
+        insert into salf1_presence_settings (customer_id, config, stats)
+        values ($1, $2::jsonb, $3::jsonb)
+        on conflict (customer_id) do update set
+            stats = jsonb_set(
+                coalesce(salf1_presence_settings.stats, '{}'::jsonb),
+                ARRAY[$4],
+                to_jsonb(coalesce((salf1_presence_settings.stats->>$4)::bigint, 0) + $5),
+                true
+            ),
+            updated_at = now()
+        """,
+        int(user_id),
+        json.dumps(presence_default_config(), ensure_ascii=False),
+        json.dumps({key: int(amount)}, ensure_ascii=False),
+        str(key),
+        int(amount),
+    )
+
+def presence_schedule_active(config: dict, now_local: datetime) -> bool:
+    if str(config.get("mode") or "always") != "schedule":
+        return True
+    if not bool(config.get("schedule_enabled")):
+        return True
+
+    days = {
+        int(x) for x in (config.get("schedule_days") or list(range(7)))
+        if str(x).isdigit() and int(x) in range(7)
+    }
+    if now_local.weekday() not in days:
+        return False
+
+    start_raw = str(config.get("schedule_start") or "00:00")
+    end_raw = str(config.get("schedule_end") or "23:59")
+    try:
+        start = datetime.strptime(start_raw, "%H:%M").time()
+        end = datetime.strptime(end_raw, "%H:%M").time()
+    except ValueError:
+        return True
+
+    if start <= end:
+        return start <= now_local.time() <= end
+    return now_local.time() >= start or now_local.time() <= end
+
+def presence_runtime(user_id: int):
+    return presence_runtime_stats.setdefault(
+        str(user_id),
+        {
+            "online_success": 0,
+            "online_failed": 0,
+            "typing_success": 0,
+            "typing_failed": 0,
+            "last_error": "",
+            "last_activity": 0.0,
+            "typing_next": 0.0,
+        },
+    )
+
+async def presence_mark_offline(user_id: int):
+    client = clients.get(str(user_id))
+    if client is None or not client.is_connected():
+        return
+    try:
+        if await client.is_user_authorized():
+            await client(functions.account.UpdateStatusRequest(offline=True))
+            presence_last_online_state[str(user_id)] = False
+            await presence_stats_update(user_id, "online_offline", 1)
+    except Exception as exc:
+        runtime = presence_runtime(user_id)
+        runtime["last_error"] = type(exc).__name__
+
+async def presence_cancel_typing(user_id: int):
+    client = clients.get(str(user_id))
+    if client is None or not client.is_connected():
+        return
+    config = await presence_get_settings(user_id)
+    targets = list(config.get("targets") or [])
+    limit = max(1, min(20, int(config.get("max_targets_per_cycle") or 8)))
+    for target in targets[:limit]:
+        ref = str((target or {}).get("peer") or "").strip()
+        if not ref:
+            continue
+        try:
+            entity = await client.get_input_entity(ref)
+            await client(
+                functions.messages.SetTypingRequest(
+                    peer=entity,
+                    action=SendMessageCancelAction(),
+                )
+            )
+        except Exception:
+            continue
+
+async def presence_apply_now(user_id: int, force: bool = False):
+    config = await presence_get_settings(user_id)
+    client = clients.get(str(user_id))
+    if client is None or not client.is_connected():
+        return {"ok": False, "reason": "client_offline"}
+
+    try:
+        if not await client.is_user_authorized():
+            return {"ok": False, "reason": "unauthorized"}
+
+        now_utc = datetime.now(timezone.utc)
+        active_window = presence_schedule_active(config, now_utc)
+        now_mono = time.monotonic()
+        runtime = presence_runtime(user_id)
+
+        online_wanted = bool(config.get("online_enabled")) and active_window
+        if not online_wanted:
+            if presence_last_online_state.get(str(user_id)):
+                await presence_mark_offline(user_id)
+        else:
+            online_due = force or now_mono >= presence_next_online.get(str(user_id), 0.0)
+            if online_due:
+                try:
+                    await client(functions.account.UpdateStatusRequest(offline=False))
+                    presence_next_online[str(user_id)] = now_mono + max(
+                        30, int(config.get("online_refresh_seconds") or 45)
+                    )
+                    presence_last_online_state[str(user_id)] = True
+                    runtime["online_success"] += 1
+                    runtime["last_activity"] = now_mono
+                    await presence_stats_update(user_id, "online_success", 1)
+                except FloodWaitError as exc:
+                    presence_next_online[str(user_id)] = now_mono + max(1, int(exc.seconds))
+                    runtime["online_failed"] += 1
+                    runtime["last_error"] = f"FLOOD_WAIT_{int(exc.seconds)}"
+                    await presence_stats_update(user_id, "online_flood_wait", 1)
+                except Exception as exc:
+                    runtime["online_failed"] += 1
+                    runtime["last_error"] = type(exc).__name__
+                    await presence_stats_update(user_id, "online_failed", 1)
+
+        typing_active = bool(config.get("typing_enabled")) and bool(config.get("targets")) and active_window
+        if typing_active and str(config.get("mode") or "always") == "smart":
+            if now_mono < presence_typing_until.get(str(user_id), 0.0):
+                typing_active = True
+            elif now_mono >= presence_next_burst.get(str(user_id), 0.0):
+                duration = max(5, int(config.get("typing_duration_seconds") or 20))
+                break_seconds = max(10, int(config.get("typing_break_seconds") or 40))
+                presence_typing_until[str(user_id)] = now_mono + duration
+                presence_next_burst[str(user_id)] = now_mono + duration + break_seconds
+                typing_active = True
+            else:
+                typing_active = False
+
+        if typing_active:
+            typing_next = float(runtime.get("typing_next", 0.0) or 0.0)
+            if force or now_mono >= typing_next:
+                targets = list(config.get("targets") or [])
+                limit = max(1, min(20, int(config.get("max_targets_per_cycle") or 8)))
+                refresh = max(4, int(config.get("typing_refresh_seconds") or 5))
+                for target in targets[:limit]:
+                    ref = str((target or {}).get("peer") or "").strip()
+                    if not ref:
+                        continue
+                    try:
+                        entity = await client.get_input_entity(ref)
+                        await client(
+                            functions.messages.SetTypingRequest(
+                                peer=entity,
+                                action=SendMessageTypingAction(),
+                            )
+                        )
+                        runtime["typing_success"] += 1
+                        runtime["last_activity"] = now_mono
+                        await presence_stats_update(user_id, "typing_success", 1)
+                    except FloodWaitError as exc:
+                        runtime["typing_failed"] += 1
+                        runtime["last_error"] = f"FLOOD_WAIT_{int(exc.seconds)}"
+                        await presence_stats_update(user_id, "typing_flood_wait", 1)
+                        break
+                    except Exception as exc:
+                        runtime["typing_failed"] += 1
+                        runtime["last_error"] = type(exc).__name__
+                        await presence_stats_update(user_id, "typing_failed", 1)
+                runtime["typing_next"] = now_mono + refresh
+        else:
+            if config.get("typing_enabled") and (not active_window or not config.get("targets")):
+                await presence_cancel_typing(user_id)
+
+        return {"ok": True, "online": online_wanted, "typing": typing_active}
+    except Exception as exc:
+        runtime = presence_runtime(user_id)
+        runtime["last_error"] = type(exc).__name__
+        await presence_stats_update(user_id, "errors", 1)
+        if config.get("logging"):
+            print(f"Presence engine error for {user_id}: {type(exc).__name__}: {exc}")
+        return {"ok": False, "reason": "engine_error"}
+
+async def presence_loop():
+    while True:
+        try:
+            if db_pool is not None:
+                rows = await db_pool.fetch(
+                    """
+                    select p.customer_id
+                    from salf1_presence_settings p
+                    join salf1_bot_users u
+                      on u.telegram_user_id = p.customer_id
+                    where (
+                        coalesce((p.config->>'online_enabled')::boolean, false) = true
+                        or coalesce((p.config->>'typing_enabled')::boolean, false) = true
+                    )
+                    and u.account_connected = true
+                    and u.salf_enabled = true
+                    """
+                )
+                for row in rows:
+                    await presence_apply_now(int(row["customer_id"]))
+        except Exception as exc:
+            print(f"Presence loop error: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(4)
+
+def rich_button(text_value: str, callback_data: str, style: str) -> str:
+    safe_text = html.escape(str(text_value), quote=False)
+    safe_data = html.escape(str(callback_data), quote=True)
+    safe_style = html.escape(str(style), quote=True)
+    return f'<tg-button type="callback_data" style="{safe_style}" data="{safe_data}">{safe_text}</tg-button>'
+
+def rich_button_row(*buttons: str, align: str = "center") -> str:
+    return f'<tg-button-row align="{align}">{"".join(buttons)}</tg-button-row>'
+
+async def presence_target_text(user_id: int):
+    config = await presence_get_settings(user_id)
+    targets = list(config.get("targets") or [])
+    items = []
+    for index, target in enumerate(targets[:20], 1):
+        title = html.escape(str((target or {}).get("title") or (target or {}).get("peer") or "مقصد"))
+        kind = html.escape(str((target or {}).get("kind") or "نامشخص"))
+        items.append(f"{index}. {title} — {kind}")
+    body = "\n".join(items) if items else "■ هنوز مقصدی اضافه نشده است."
+    return f"""<b>Sᴀʟғ1 · مقصدهای حضور</b>
+
+{RICH_DIVIDER}
+
+◈ مقصدهای فعال
+
+{body}
+
+{RICH_DIVIDER}
+
+◈ راهنما
+
+برای نمایش «در حال نوشتن»، حداقل یک مقصد اضافه کنید. مقصد می‌تواند PV یا گروه/سوپرگروه باشد. شناسه یا نام کاربری عمومی مقصد را در مرحله افزودن وارد کنید.
+
+{rich_button_row(rich_button("افزودن مقصد", "presence_target_add", "success"))}
+{rich_button_row(rich_button("پاک‌سازی مقصدها", "presence_target_clear_confirm", "danger"))}"""
+
+async def presence_targets_page(user_id: int):
+    config = await presence_get_settings(user_id)
+    buttons = []
+    targets = list(config.get("targets") or [])
+    for index, _ in enumerate(targets[:20]):
+        buttons.append(rich_button_row(rich_button(f"حذف {index+1}", f"presence_target_remove_{index}", "danger")))
+    buttons.append(rich_button_row(rich_button("‹ بازگشت", "presence", "primary")))
+    return (await presence_target_text(user_id)) + "\n" + "\n".join(buttons)
+
+def presence_main_text(user_id: int, config: dict, row):
+    connected = bool(row["account_connected"]) if row else False
+    salf_enabled = bool(row["salf_enabled"]) if row else False
+    runtime = presence_runtime(user_id)
+    mode_name = PRESENCE_MODE_NAMES.get(str(config.get("mode")), "دائمی")
+    typing_mode_name = PRESENCE_TYPING_MODE_NAMES.get(str(config.get("typing_mode")), "پیوسته")
+    target_count = len(config.get("targets") or [])
+    live = presence_last_online_state.get(str(user_id), False)
+    last_error = runtime.get("last_error") or "بدون خطا"
+
+    return f"""<b>Sᴀʟғ1 · مرکز حضور</b>
+
+{RICH_DIVIDER}
+
+◈ وضعیت زنده
+
+اکانت : {"【 متصل 】" if connected else "【 متصل نیست 】"}
+سلف : {"【 فعال 】" if salf_enabled else "【 خاموش 】"}
+وضعیت آنلاین : {"【 آنلاین 】" if live else "【 آفلاین 】"}
+در حال نوشتن : {"【 فعال 】" if config.get("typing_enabled") else "【 خاموش 】"}
+مقصدها : 【 {target_count} 】
+
+{RICH_DIVIDER}
+
+◈ رفتار
+
+حالت : {html.escape(mode_name)}
+نوع تایپینگ : {html.escape(typing_mode_name)}
+بروزرسانی حضور : هر {max(30, int(config.get("online_refresh_seconds") or 45))} ثانیه
+تازه‌سازی تایپینگ : هر {max(4, int(config.get("typing_refresh_seconds") or 5))} ثانیه
+آخرین خطا : {html.escape(str(last_error))}
+
+{RICH_DIVIDER}
+
+◈ موتور
+
+اتصال Session : {"● پایدار" if connected else "○ قطع"}
+موتور آنلاین : {"● آماده" if config.get("online_enabled") else "○ خاموش"}
+موتور تایپینگ : {"● آماده" if config.get("typing_enabled") and target_count else "○ منتظر مقصد"}"""
+
+async def presence_page(user_id: int):
+    config = await presence_get_settings(user_id)
+    row = await db_user(str(user_id))
+    return (
+        presence_main_text(user_id, config, row)
+        + "\n" + RICH_DIVIDER
+        + "\n" + rich_button_row(rich_button("فعال" if config.get("online_enabled") else "غیرفعال", "presence_toggle_online", "success" if config.get("online_enabled") else "danger"))
+        + "\n" + rich_button_row(rich_button("فعال" if config.get("typing_enabled") else "غیرفعال", "presence_toggle_typing", "success" if config.get("typing_enabled") else "danger"))
+        + "\n" + rich_button_row(rich_button("حالت حضور", "presence_mode", "primary"))
+        + "\n" + rich_button_row(rich_button("مقصدها", "presence_targets", "primary"))
+        + "\n" + rich_button_row(rich_button("زمان‌بندی", "presence_schedule", "primary"))
+        + "\n" + rich_button_row(rich_button("رفتار تایپینگ", "presence_behavior", "primary"))
+        + "\n" + rich_button_row(rich_button("پروفایل‌ها", "presence_profiles", "primary"))
+        + "\n" + rich_button_row(rich_button("آمار و سلامت", "presence_stats", "primary"))
+        + "\n" + rich_button_row(rich_button("تنظیمات پیشرفته", "presence_advanced", "primary"))
+        + "\n" + rich_button_row(rich_button("‹ بازگشت", "self_features", "primary"))
+    )
+
+async def presence_mode_page(user_id: int):
+    config = await presence_get_settings(user_id)
+    mode = str(config.get("mode") or "always")
+    return f"""<b>Sᴀʟғ1 · حالت حضور</b>
+
+{RICH_DIVIDER}
+
+◈ حالت فعلی
+
+حالت : {html.escape(PRESENCE_MODE_NAMES.get(mode, "دائمی"))}
+
+{RICH_DIVIDER}
+
+◈ رفتار حالت‌ها
+
+★ - دائمی : آنلاین ماندن بدون بازه زمانی.
+★ - زمان‌بندی : آنلاین و فعالیت فقط در بازه تعیین‌شده.
+★ - هوشمند : آنلاین نگه‌داشتن حضور و اجرای تایپینگ به‌صورت بازه‌ای.
+
+{RICH_DIVIDER}
+
+{rich_button_row(rich_button("دائمی", "presence_mode_always", "success" if mode == "always" else "danger"))}
+{rich_button_row(rich_button("زمان‌بندی", "presence_mode_schedule", "success" if mode == "schedule" else "danger"))}
+{rich_button_row(rich_button("هوشمند", "presence_mode_smart", "success" if mode == "smart" else "danger"))}
+{rich_button_row(rich_button("‹ بازگشت", "presence", "primary"))}"""
+
+async def presence_behavior_page(user_id: int):
+    config = await presence_get_settings(user_id)
+    typing_mode = str(config.get("typing_mode") or "continuous")
+    duration = int(config.get("typing_duration_seconds") or 20)
+    break_seconds = int(config.get("typing_break_seconds") or 40)
+    refresh = int(config.get("typing_refresh_seconds") or 5)
+    return f"""<b>Sᴀʟғ1 · رفتار تایپینگ</b>
+
+{RICH_DIVIDER}
+
+◈ تنظیمات فعلی
+
+حالت تایپ : {html.escape(PRESENCE_TYPING_MODE_NAMES.get(typing_mode, "پیوسته"))}
+مدت بازه : {duration} ثانیه
+استراحت : {break_seconds} ثانیه
+تازه‌سازی : هر {refresh} ثانیه
+
+{RICH_DIVIDER}
+
+◈ حالت تایپ
+
+{rich_button_row(rich_button("پیوسته", "presence_typing_continuous", "success" if typing_mode == "continuous" else "danger"))}
+{rich_button_row(rich_button("بازه‌ای", "presence_typing_bursts", "success" if typing_mode == "bursts" else "danger"))}
+
+◈ مدت بازه
+
+{rich_button_row(rich_button("۱۰", "presence_duration_10", "success" if duration == 10 else "danger"), rich_button("۲۰", "presence_duration_20", "success" if duration == 20 else "danger"), rich_button("۳۰", "presence_duration_30", "success" if duration == 30 else "danger"))}
+
+◈ استراحت
+
+{rich_button_row(rich_button("۲۰", "presence_break_20", "success" if break_seconds == 20 else "danger"), rich_button("۴۰", "presence_break_40", "success" if break_seconds == 40 else "danger"), rich_button("۶۰", "presence_break_60", "success" if break_seconds == 60 else "danger"))}
+
+{rich_button_row(rich_button("‹ بازگشت", "presence", "primary"))}"""
+
+async def presence_schedule_page(user_id: int):
+    config = await presence_get_settings(user_id)
+    days = {
+        int(x) for x in (config.get("schedule_days") or list(range(7)))
+        if str(x).isdigit() and int(x) in range(7)
+    }
+    day_names = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"]
+    day_buttons = []
+    for py_day, name in enumerate(day_names):
+        actual = (py_day + 5) % 7
+        day_buttons.append(
+            rich_button(name, f"presence_day_{actual}", "success" if actual in days else "danger")
+        )
+
+    return f"""<b>Sᴀʟғ1 · زمان‌بندی حضور</b>
+
+{RICH_DIVIDER}
+
+◈ بازه فعلی
+
+زمان شروع : {html.escape(str(config.get("schedule_start") or "00:00"))}
+زمان پایان : {html.escape(str(config.get("schedule_end") or "23:59"))}
+روزهای فعال : {len(days)} روز
+وضعیت زمان‌بندی : {"【 فعال 】" if config.get("schedule_enabled") else "【 خاموش 】"}
+
+{RICH_DIVIDER}
+
+◈ روزهای فعال
+
+{rich_button_row(*day_buttons)}
+
+{rich_button_row(rich_button("زمان شروع", "presence_schedule_start", "primary"))}
+{rich_button_row(rich_button("زمان پایان", "presence_schedule_end", "primary"))}
+{rich_button_row(rich_button("فعال" if config.get("schedule_enabled") else "غیرفعال", "presence_schedule_toggle", "success" if config.get("schedule_enabled") else "danger"))}
+{rich_button_row(rich_button("‹ بازگشت", "presence", "primary"))}"""
+
+async def presence_advanced_page(user_id: int):
+    config = await presence_get_settings(user_id)
+    return f"""<b>Sᴀʟғ1 · تنظیمات پیشرفته حضور</b>
+
+{RICH_DIVIDER}
+
+◈ حفاظت موتور
+
+تعداد مقصد در هر چرخه : {max(1, min(20, int(config.get("max_targets_per_cycle") or 8)))}
+حفاظت نرخ درخواست : {"【 فعال 】" if config.get("rate_limit_guard") else "【 خاموش 】"}
+تلاش مجدد : {"【 فعال 】" if config.get("retry") else "【 خاموش 】"}
+گزارش خطا : {"【 فعال 】" if config.get("logging") else "【 خاموش 】"}
+
+{RICH_DIVIDER}
+
+{rich_button_row(rich_button("حفاظت نرخ درخواست", "presence_rate_guard", "success" if config.get("rate_limit_guard") else "danger"))}
+{rich_button_row(rich_button("تلاش مجدد", "presence_retry", "success" if config.get("retry") else "danger"))}
+{rich_button_row(rich_button("گزارش خطا", "presence_logging", "success" if config.get("logging") else "danger"))}
+{rich_button_row(rich_button("‹ بازگشت", "presence", "primary"))}"""
+
+async def presence_stats_page(user_id: int):
+    record = await presence_record(user_id)
+    stats = _presence_json(record["stats"], {}) if record else {}
+    runtime = presence_runtime(user_id)
+    return f"""<b>Sᴀʟғ1 · آمار و سلامت حضور</b>
+
+{RICH_DIVIDER}
+
+◈ آمار موتور
+
+آنلاین موفق : {int(stats.get("online_success", 0) or 0):,}
+آنلاین خطادار : {int(stats.get("online_failed", 0) or 0):,}
+تایپینگ موفق : {int(stats.get("typing_success", 0) or 0):,}
+تایپینگ خطادار : {int(stats.get("typing_failed", 0) or 0):,}
+توقف آنلاین : {int(stats.get("online_offline", 0) or 0):,}
+خطاهای موتور : {int(stats.get("errors", 0) or 0):,}
+خطاهای Flood Wait : {int(stats.get("online_flood_wait", 0) or 0) + int(stats.get("typing_flood_wait", 0) or 0):,}
+
+{RICH_DIVIDER}
+
+◈ اجرای فعلی
+
+آنلاین موفق : {int(runtime.get("online_success", 0))}
+تایپینگ موفق : {int(runtime.get("typing_success", 0))}
+آخرین خطا : {html.escape(str(runtime.get("last_error") or "بدون خطا"))}
+
+{rich_button_row(rich_button("بروزرسانی فوری", "presence_force_sync", "primary"))}
+{rich_button_row(rich_button("‹ بازگشت", "presence", "primary"))}"""
+
+async def presence_profiles_page(user_id: int):
+    config = await presence_get_settings(user_id)
+    profiles = list(config.get("profiles") or [])
+    lines = [
+        "<b>Sᴀʟғ1 · پروفایل‌های حضور</b>",
+        "",
+        RICH_DIVIDER,
+        "",
+        "◈ پروفایل‌های ذخیره‌شده",
+    ]
+    if profiles:
+        for index, profile in enumerate(profiles[:10], 1):
+            lines.append(
+                f"{index}. {html.escape(str((profile or {}).get('name') or f'پروفایل {index}'))}"
+            )
+    else:
+        lines.append("■ پروفایلی ذخیره نشده است.")
+    lines.extend([
+        "",
+        RICH_DIVIDER,
+        "",
+        rich_button_row(rich_button("ذخیره وضعیت فعلی", "presence_profile_save", "success")),
+        rich_button_row(rich_button("حذف همه پروفایل‌ها", "presence_profile_clear", "danger")),
+        rich_button_row(rich_button("‹ بازگشت", "presence", "primary")),
+    ])
+    return "\n".join(lines)
+
+async def presence_profile_save(user_id: int, name: str):
+    config = await presence_get_settings(user_id)
+    profiles = list(config.get("profiles") or [])
+    profiles.append({
+        "name": str(name).strip()[:40],
+        "online_enabled": bool(config.get("online_enabled")),
+        "typing_enabled": bool(config.get("typing_enabled")),
+        "mode": str(config.get("mode") or "always"),
+        "typing_mode": str(config.get("typing_mode") or "continuous"),
+        "typing_duration_seconds": int(config.get("typing_duration_seconds") or 20),
+        "typing_break_seconds": int(config.get("typing_break_seconds") or 40),
+        "targets": list(config.get("targets") or [])[:20],
+    })
+    config["profiles"] = profiles[-10:]
+    await presence_save_settings(user_id, config)
+
 async def salf_settings_text(user_id: int):
     row = await db_user(str(user_id))
     config = await clock_get_settings(user_id)
@@ -2872,8 +3618,11 @@ def salf_settings_markup():
     ]}
 
 async def self_features_text(user_id: int):
-    config = await clock_get_settings(user_id)
-    clock_enabled = bool(config.get("enabled"))
+    clock_config = await clock_get_settings(user_id)
+    presence_config = await presence_get_settings(user_id)
+    clock_enabled = bool(clock_config.get("enabled"))
+    presence_enabled = bool(presence_config.get("online_enabled") or presence_config.get("typing_enabled"))
+    active_count = int(clock_enabled) + int(presence_enabled)
 
     return f"""<b>Sᴀʟғ1 · قابلیت‌های سلف</b>
 
@@ -2882,27 +3631,33 @@ async def self_features_text(user_id: int):
 ◈ وضعیت قابلیت‌ها
 
 ساعت : {"【 فعال 】" if clock_enabled else "【 خاموش 】"}
-قابلیت‌های فعال : 【 {"۱" if clock_enabled else "۰"} 】
+مرکز حضور : {"【 فعال 】" if presence_enabled else "【 خاموش 】"}
+قابلیت‌های فعال : 【 {active_count} 】
 
 {RICH_DIVIDER}
 
-◈ قابلیت قابل استفاده
+◈ قابلیت‌های قابل استفاده
 
 ★ - ساعت
-
 ★ - نمایش و بروزرسانی خودکار زمان بر اساس منطقه زمانی انتخاب‌شده.
 ★ - تنظیم مقصد، قالب نمایش، ظاهر، فونت و زمان‌بندی.
-★ - پیش‌نمایش، آمار عملکرد و تنظیمات پیشرفته.
+
+★ - مرکز حضور
+★ - آنلاین نگه‌داشتن اکانت با تمدید خودکار حضور.
+★ - نمایش «در حال نوشتن» در PV و گروه‌های منتخب.
+★ - زمان‌بندی، حالت هوشمند، مدیریت مقصدها و آمار سلامت موتور.
 
 {RICH_DIVIDER}
 
 ◈ راهنما
 
-برای شروع، «ساعت» را انتخاب کنید. در صفحه ساعت می‌توانید مقصدهای موردنظر، منطقه زمانی، قالب نمایش، ظاهر و زمان‌بندی را تنظیم کنید. تنظیمات پس از ذخیره و فعال‌سازی روی مقصدهای انتخاب‌شده اعمال می‌شوند."""
+برای تنظیم حضور، «مرکز حضور» را باز کنید. ابتدا آنلاین را فعال کنید، سپس مقصدهای PV یا گروه را اضافه کنید و در صورت نیاز «در حال نوشتن» را فعال کنید."""
+
 
 def self_features_markup():
     return {"inline_keyboard": [
         [{"text":"› ساعت","callback_data":"clock"}],
+        [{"text":"› مرکز حضور","callback_data":"presence"}],
         [{"text":"‹ بازگشت","callback_data":"panel_self"}],
     ]}
 
@@ -3536,12 +4291,16 @@ async def process_bot_message(message: dict):
         state = str(current_state.get("state") or "")
 
         if normalize_text(text) in {"لغو", "cancel", "انصراف"}:
+            previous_state = state
             bot_states.pop(user_id, None)
-            await bot_send(
-                chat["id"],
-                await clock_settings_text(user_id),
-                await clock_main_markup_async(user_id),
-            )
+            if previous_state.startswith("presence_"):
+                await bot_send(chat["id"], await presence_page(user_id))
+            else:
+                await bot_send(
+                    chat["id"],
+                    await clock_settings_text(user_id),
+                    await clock_main_markup_async(user_id),
+                )
             return
 
         if state == "clock_timezone_custom":
@@ -3858,6 +4617,262 @@ async def process_callback(callback_query: dict):
 این صفحه وضعیت اتصال اکانت و سرویس SALF1 را نشان می‌دهد.""",
             {"inline_keyboard":[[{"text":"‹ بازگشت","callback_data":"panel_self"}]]},
         )
+        return
+
+
+    if data == "presence":
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data == "presence_toggle_online":
+        row = await db_user(str(user_id))
+        config = await presence_get_settings(user_id)
+        if not row or not row["account_connected"] or not row["salf_enabled"]:
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        config["online_enabled"] = not bool(config.get("online_enabled"))
+        await presence_save_settings(user_id, config)
+        if config["online_enabled"]:
+            presence_next_online[str(user_id)] = 0.0
+            await presence_apply_now(user_id, force=True)
+        else:
+            await presence_mark_offline(user_id)
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data == "presence_toggle_typing":
+        row = await db_user(str(user_id))
+        config = await presence_get_settings(user_id)
+        if not row or not row["account_connected"] or not row["salf_enabled"] or not config.get("targets"):
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        config["typing_enabled"] = not bool(config.get("typing_enabled"))
+        await presence_save_settings(user_id, config)
+        if config["typing_enabled"]:
+            now_mono = time.monotonic()
+            presence_typing_until[str(user_id)] = now_mono + max(5, int(config.get("typing_duration_seconds") or 20))
+            presence_next_burst[str(user_id)] = now_mono
+            await presence_apply_now(user_id, force=True)
+        else:
+            await presence_cancel_typing(user_id)
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data == "presence_mode":
+        await bot_edit(chat_id, message_id, await presence_mode_page(user_id))
+        return
+
+    if data.startswith("presence_mode_"):
+        mode = data.removeprefix("presence_mode_")
+        if mode in PRESENCE_MODE_NAMES:
+            config = await presence_get_settings(user_id)
+            config["mode"] = mode
+            if mode == "schedule":
+                config["schedule_enabled"] = True
+            await presence_save_settings(user_id, config)
+            presence_next_burst[str(user_id)] = 0.0
+            await presence_apply_now(user_id, force=True)
+            await bot_edit(chat_id, message_id, await presence_mode_page(user_id))
+        return
+
+    if data == "presence_targets":
+        await bot_edit(chat_id, message_id, await presence_targets_page(user_id))
+        return
+
+    if data == "presence_target_add":
+        bot_states[user_id] = {"state":"presence_target_add"}
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>Sᴀʟғ1 · افزودن مقصد حضور</b>
+
+مقصد PV یا گروه را در پیام بعدی ارسال کنید.
+
+نمونه
+<code>@username</code>
+<code>-1001234567890</code>
+
+برای لغو، «لغو» را ارسال کنید.
+
+<tg-button-row align="center"><tg-button type="callback_data" style="primary" data="presence_targets">‹ بازگشت</tg-button></tg-button-row>""",
+        )
+        return
+
+    if data.startswith("presence_target_remove_"):
+        index = int(data.removeprefix("presence_target_remove_"))
+        config = await presence_get_settings(user_id)
+        targets = list(config.get("targets") or [])
+        if 0 <= index < len(targets):
+            targets.pop(index)
+            config["targets"] = targets
+            if not targets:
+                config["typing_enabled"] = False
+            await presence_save_settings(user_id, config)
+            if not targets:
+                await presence_cancel_typing(user_id)
+        await bot_edit(chat_id, message_id, await presence_targets_page(user_id))
+        return
+
+    if data == "presence_target_clear_confirm":
+        await bot_edit(
+            chat_id,
+            message_id,
+            f"""<b>Sᴀʟғ1 · پاک‌سازی مقصدها</b>
+
+{RICH_DIVIDER}
+
+تمام مقصدهای ذخیره‌شده برای موتور تایپینگ حذف می‌شوند.
+
+{rich_button_row(rich_button("تأیید حذف", "presence_target_clear", "danger"))}
+{rich_button_row(rich_button("لغو", "presence_targets", "primary"))}""",
+        )
+        return
+
+    if data == "presence_target_clear":
+        config = await presence_get_settings(user_id)
+        config["targets"] = []
+        config["typing_enabled"] = False
+        await presence_save_settings(user_id, config)
+        await presence_cancel_typing(user_id)
+        await bot_edit(chat_id, message_id, await presence_targets_page(user_id))
+        return
+
+    if data == "presence_schedule":
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id))
+        return
+
+    if data == "presence_schedule_toggle":
+        config = await presence_get_settings(user_id)
+        config["schedule_enabled"] = not bool(config.get("schedule_enabled"))
+        if config["schedule_enabled"]:
+            config["mode"] = "schedule"
+        elif config.get("mode") == "schedule":
+            config["mode"] = "always"
+        await presence_save_settings(user_id, config)
+        await presence_apply_now(user_id, force=True)
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id))
+        return
+
+    if data in {"presence_schedule_start", "presence_schedule_end"}:
+        bot_states[user_id] = {"state": data}
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>Sᴀʟғ1 · زمان‌بندی حضور</b>
+
+زمان را با فرمت <code>HH:MM</code> ارسال کنید.
+
+نمونه
+<code>08:00</code>
+<code>23:30</code>
+
+<tg-button-row align="center"><tg-button type="callback_data" style="primary" data="presence_schedule">‹ بازگشت</tg-button></tg-button-row>""",
+        )
+        return
+
+    if data.startswith("presence_day_"):
+        day = int(data.removeprefix("presence_day_"))
+        config = await presence_get_settings(user_id)
+        days = {
+            int(x) for x in (config.get("schedule_days") or list(range(7)))
+            if str(x).isdigit() and int(x) in range(7)
+        }
+        if day in days:
+            days.remove(day)
+        else:
+            days.add(day)
+        config["schedule_days"] = sorted(days)
+        config["schedule_enabled"] = True
+        config["mode"] = "schedule"
+        await presence_save_settings(user_id, config)
+        await presence_apply_now(user_id, force=True)
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id))
+        return
+
+    if data == "presence_behavior":
+        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
+        return
+
+    if data.startswith("presence_typing_"):
+        mode = data.removeprefix("presence_typing_")
+        if mode in PRESENCE_TYPING_MODE_NAMES:
+            config = await presence_get_settings(user_id)
+            config["typing_mode"] = mode
+            await presence_save_settings(user_id, config)
+            presence_typing_until.pop(str(user_id), None)
+            presence_next_burst[str(user_id)] = 0.0
+        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
+        return
+
+    if data.startswith("presence_duration_"):
+        value = int(data.removeprefix("presence_duration_"))
+        if value in PRESENCE_RUNTIME_LIMITS["typing_duration_seconds"]:
+            config = await presence_get_settings(user_id)
+            config["typing_duration_seconds"] = value
+            await presence_save_settings(user_id, config)
+        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
+        return
+
+    if data.startswith("presence_break_"):
+        value = int(data.removeprefix("presence_break_"))
+        if value in PRESENCE_RUNTIME_LIMITS["typing_break_seconds"]:
+            config = await presence_get_settings(user_id)
+            config["typing_break_seconds"] = value
+            await presence_save_settings(user_id, config)
+        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
+        return
+
+    if data == "presence_stats":
+        await bot_edit(chat_id, message_id, await presence_stats_page(user_id))
+        return
+
+    if data == "presence_force_sync":
+        await presence_apply_now(user_id, force=True)
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data == "presence_advanced":
+        await bot_edit(chat_id, message_id, await presence_advanced_page(user_id))
+        return
+
+    if data in {"presence_rate_guard", "presence_retry", "presence_logging"}:
+        key = {
+            "presence_rate_guard": "rate_limit_guard",
+            "presence_retry": "retry",
+            "presence_logging": "logging",
+        }[data]
+        config = await presence_get_settings(user_id)
+        config[key] = not bool(config.get(key))
+        await presence_save_settings(user_id, config)
+        await bot_edit(chat_id, message_id, await presence_advanced_page(user_id))
+        return
+
+    if data == "presence_profiles":
+        await bot_edit(chat_id, message_id, await presence_profiles_page(user_id))
+        return
+
+    if data == "presence_profile_save":
+        bot_states[user_id] = {"state":"presence_profile_save"}
+        await bot_edit(
+            chat_id,
+            message_id,
+            """<b>Sᴀʟғ1 · ذخیره پروفایل حضور</b>
+
+نام پروفایل را در پیام بعدی ارسال کنید.
+
+نمونه
+<code>شب</code>
+<code>روز کاری</code>
+
+<tg-button-row align="center"><tg-button type="callback_data" style="primary" data="presence_profiles">‹ بازگشت</tg-button></tg-button-row>""",
+        )
+        return
+
+    if data == "presence_profile_clear":
+        config = await presence_get_settings(user_id)
+        config["profiles"] = []
+        await presence_save_settings(user_id, config)
+        await bot_edit(chat_id, message_id, await presence_profiles_page(user_id))
         return
 
     if data == "clock":
@@ -4483,6 +5498,13 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         return
 
     if data == "disconnect":
+        await presence_cancel_typing(user_id)
+        await presence_mark_offline(user_id)
+        presence_next_online.pop(str(user_id), None)
+        presence_last_online_state.pop(str(user_id), None)
+        presence_typing_until.pop(str(user_id), None)
+        presence_next_burst.pop(str(user_id), None)
+        presence_runtime_stats.pop(str(user_id), None)
         client = clients.get(str(user_id))
         if client:
             try:
@@ -4724,6 +5746,7 @@ async def main():
             print("Salf1 worker database connected.")
             await init_web_login_tokens_table()
             await init_clock_settings_table()
+            await init_presence_settings_table()
             await ensure_admin_ledger_table()
             print("Salf1 web login token store ready.")
         except Exception as exc:
@@ -4760,6 +5783,7 @@ async def main():
         if ROLE in {"bot", "all"}:
             tasks.append(asyncio.create_task(mini_bot_loop()))
             tasks.append(asyncio.create_task(clock_loop()))
+            tasks.append(asyncio.create_task(presence_loop()))
         if ROLE in {"billing", "all"}:
             tasks.append(asyncio.create_task(billing_loop()))
         await asyncio.Event().wait()
