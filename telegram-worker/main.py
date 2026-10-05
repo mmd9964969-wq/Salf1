@@ -703,9 +703,27 @@ async def check_bot_presence(customer_id: str, force: bool = False) -> dict:
                 )
                 return dict(bot_presence_cache[customer_id])
 
-            # A readable bot dialog is the second probe; resolving a username
-            # alone is not enough to claim the bot is actually present/usable.
+            # Probe 1: the connected account can resolve and read the bot
+            # conversation through MTProto.
             await client.get_messages(entity, limit=1)
+
+            # Probe 2: the Bot API can address this exact account. Together
+            # these probes separate a valid Telegram Session from an actually
+            # usable @Pers3anSelfBot relationship.
+            if BOT_TOKEN and http_session is not None:
+                bot_chat = await bot_api(
+                    "getChat",
+                    {"chat_id": int(me.id)},
+                    timeout=10,
+                )
+                if not isinstance(bot_chat, dict) or not bot_chat.get("ok"):
+                    await save_bot_presence(
+                        customer_id,
+                        "absent",
+                        error="bot_api_private_chat_unavailable",
+                        bot_id=entity_id,
+                    )
+                    return dict(bot_presence_cache[customer_id])
 
             await save_bot_presence(customer_id, "present", bot_id=entity_id)
             return dict(bot_presence_cache[customer_id])
