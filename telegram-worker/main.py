@@ -1404,7 +1404,10 @@ async def account_health_snapshot(customer_id: str, force: bool = False) -> dict
 
     if not await acquire_session_runtime_lock(customer_id):
         return {
-            "account_connected": bool(existing and existing.is_connected()),
+            "account_connected": bool(
+                (existing and existing.is_connected())
+                or (row and row["account_connected"])
+            ),
             "authorized": None,
             "bot_presence": "unknown",
             "state": "session_in_use",
@@ -3085,6 +3088,19 @@ async def handle_self_command(event, customer_id: str, text: str):
 
     user_id = int(customer_id)
     chat = {"id": getattr(event, "chat_id", None)}
+    normalized = normalize_text(text)
+
+    # Global-priority panel command: it must work from every self-account
+    # destination and must interrupt any pending interactive state.
+    if normalized in PANEL_COMMAND_ALIASES:
+        sender_id = getattr(event, "sender_id", None)
+        is_owner = bool(sender_id is not None and int(sender_id) == int(customer_id))
+        if not is_owner:
+            return False
+        bot_states.pop(user_id, None)
+        await send_owner_panel(event, customer_id, True)
+        return True
+
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
@@ -3359,8 +3375,6 @@ async def handle_self_command(event, customer_id: str, text: str):
 
     normalized = normalize_text(text)
     if normalized not in {
-        "پنل",
-        "panel",
         "موجودی",
         "balance",
         "سلف روشن",
@@ -3387,14 +3401,6 @@ async def handle_self_command(event, customer_id: str, text: str):
 
     sender_id = getattr(event, "sender_id", None)
     is_owner = bool(owner_id and sender_id == owner_id)
-
-    if normalized in {"پنل", "panel"}:
-        # Owner-only, but available from every Telegram location handled by
-        # the connected account. event.raw_text also contains media captions.
-        if not is_owner:
-            return False
-        await send_owner_panel(event, customer_id, is_owner)
-        return True
 
     if not is_owner:
         await self_respond(event, 
