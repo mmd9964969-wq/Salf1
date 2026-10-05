@@ -2875,7 +2875,9 @@ def attach_events(client: TelegramClient, customer_id: str):
                 await invalidate_customer_session(customer_id, exc)
             print(
                 f"Telegram event handler error for {customer_key(customer_id)}: "
-                f"{type(exc).__name__}"
+                f"{type(exc).__name__}: {exc} "
+                f"chat_id={getattr(event, 'chat_id', None)} "
+                f"message_id={getattr(getattr(event, 'message', None), 'id', None)}"
             )
 
     client.add_event_handler(handler, events.NewMessage(incoming=True, outgoing=True))
