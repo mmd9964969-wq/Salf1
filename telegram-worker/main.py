@@ -1683,27 +1683,32 @@ def normalize_text(value: str) -> str:
 
 
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
-    """Generate the real panel through @Pers3anSelfBot, then forward that
-    exact bot message to the place where the owner typed «پنل».
+    """Create the canonical panel with @Pers3anSelfBot and forward it to the
+    exact Telegram peer where the owner typed «پنل».
 
-    This intentionally avoids rendering a second copy through the user
-    session. Forwarding the bot's own message preserves its Rich Message
-    markup and callback buttons.
+    The user session is only the transport layer here: it never renders a
+    second panel locally. The Bot API creates the source message, then the
+    connected self account forwards that exact message to the original peer.
     """
+
     if not is_owner:
         return False
 
     destination_id = getattr(event, "chat_id", None)
     if destination_id is None:
+        print(
+            f"Panel destination missing for {customer_key(customer_id)}"
+        )
         return False
 
     if not BOT_TOKEN or http_session is None:
         print("Panel forward unavailable: SALF1 Bot API is not configured.")
         return False
 
+    client = client_for(customer_id)
+
     owner_id = me_cache.get(customer_id)
     if owner_id is None:
-        client = client_for(customer_id)
         try:
             me = await client.get_me()
             owner_id = int(me.id)
@@ -1715,13 +1720,11 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             )
             return False
 
-    # First make the canonical panel message in the bot's private chat with
-    # the owner. The forwarded message then remains a message authored by the
-    # bot, with its original Rich Message buttons intact.
     panel_text = await salf_panel_text(int(customer_id))
     panel_markup = salf_panel_markup()
-
     bot_target = "@" + (bot_username or "Pers3anSelfBot").lstrip("@")
+
+    # 1) @Pers3anSelfBot creates the canonical Rich Message.
     try:
         result = await bot_send(
             int(owner_id),
@@ -1737,8 +1740,7 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
 
     if not isinstance(result, dict) or not result.get("ok"):
         print(
-            f"Panel bot send rejected for {customer_key(customer_id)}: "
-            f"{result}"
+            f"Panel bot send rejected for {customer_key(customer_id)}: {result}"
         )
         return False
 
@@ -1751,42 +1753,91 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
         )
         return False
 
-    client = client_for(customer_id)
+    # 2) Resolve both Telegram peers through the connected self account.
+    # Do not rely on a bare numeric peer or a username string during the
+    # forward: channels, megagroups, Saved Messages and private peers can
+    # require different InputPeer constructors.
     try:
-        # Forward the exact bot-authored message to the original command
-        # location: private chat, group, channel, or Saved Messages.
-        forwarded = await client.forward_messages(
-            int(destination_id),
-            int(message_id),
-            from_peer=bot_target,
+        bot_input = await client.get_input_entity(bot_target)
+        destination_input = await client.get_input_entity(int(destination_id))
+    except Exception as exc:
+        print(
+            f"Panel peer resolution failed for {customer_key(customer_id)} "
+            f"destination={destination_id} source={bot_target}: "
+            f"{type(exc).__name__}: {exc}"
         )
-        if forwarded:
-            try:
-                await bot_api(
-                    "deleteMessage",
-                    {"chat_id": int(owner_id), "message_id": int(message_id)},
-                    timeout=15,
-                )
-            except Exception as cleanup_exc:
-                print(
-                    f"Panel source cleanup failed for {customer_key(customer_id)}: "
-                    f"{type(cleanup_exc).__name__}: {cleanup_exc}"
-                )
+        return False
+
+    # 3) Forward the exact bot-authored message to the original location.
+    # Use the raw MTProto request so the source peer and destination peer are
+    # explicit. This works for private chats, groups, channels and Saved
+    # Messages wherever the connected account has permission to post.
+    try:
+        forwarded = await client(
+            functions.messages.ForwardMessagesRequest(
+                from_peer=bot_input,
+                id=[int(message_id)],
+                random_id=[secrets.randbits(63)],
+                to_peer=destination_input,
+                drop_author=False,
+                with_my_score=False,
+                silent=False,
+                background=False,
+                with_video=False,
+                top_msg_id=None,
+                schedule_date=None,
+            )
+        )
+
+        forwarded_ok = bool(getattr(forwarded, "updates", None))
+        if not forwarded_ok:
+            raise RuntimeError("Telegram returned no forwarded update")
+
+        try:
+            await bot_api(
+                "deleteMessage",
+                {"chat_id": int(owner_id), "message_id": int(message_id)},
+                timeout=15,
+            )
+        except Exception as cleanup_exc:
+            print(
+                f"Panel source cleanup failed for {customer_key(customer_id)}: "
+                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+            )
+
         print({
             "type": "custom_emoji.panel_forward",
             "customer_id": customer_id,
             "destination_chat_id": int(destination_id),
             "source_bot": bot_target,
             "source_message_id": int(message_id),
-            "forwarded": bool(forwarded),
-            "source_deleted": bool(forwarded),
+            "forwarded": True,
+            "source_deleted": True,
         })
         return True
+
     except Exception as exc:
         print(
-            f"Panel forward failed for {customer_key(customer_id)} "
-            f"destination={destination_id}: {type(exc).__name__}: {exc}"
+            f"Panel MTProto forward failed for {customer_key(customer_id)} "
+            f"destination={destination_id} source={bot_target} "
+            f"source_message_id={message_id}: "
+            f"{type(exc).__name__}: {exc}"
         )
+
+        # The panel was only a temporary staging message. Remove it so a
+        # failed forward never makes the bot chat look like the destination.
+        try:
+            await bot_api(
+                "deleteMessage",
+                {"chat_id": int(owner_id), "message_id": int(message_id)},
+                timeout=15,
+            )
+        except Exception as cleanup_exc:
+            print(
+                f"Panel failed-source cleanup failed for "
+                f"{customer_key(customer_id)}: "
+                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+            )
         return False
 
 
