@@ -671,17 +671,24 @@ def customer_error():
     )
 
 
-def client_for(customer_id: str) -> TelegramClient:
+def client_for(customer_id: str, session_string: str | None = None) -> TelegramClient:
     client = clients.get(customer_id)
     if client is None:
         client = TelegramClient(
-            session_path(customer_id),
+            StringSession(session_string or ""),
             int(API_ID_RAW),
             API_HASH,
         )
         attach_events(client, customer_id)
         clients[customer_id] = client
     return client
+
+
+async def restore_client(customer_id: str) -> TelegramClient:
+    existing = clients.get(customer_id)
+    if existing is not None:
+        return existing
+    return client_for(customer_id, await load_session_vault(customer_id))
 
 
 async def db_user(customer_id: str):
@@ -937,13 +944,24 @@ async def account_status(customer_id: str):
     if not configured():
         return {"connected": False, "authorized": False, "error": "telegram api not configured"}
 
-    client = client_for(customer_id)
-    await client.connect()
-    authorized_user = await client.is_user_authorized()
+    try:
+        client = await restore_client(customer_id)
+        await client.connect()
+        authorized_user = await client.is_user_authorized()
+    except Exception as exc:
+        if definitive_session_failure(exc):
+            await invalidate_customer_session(customer_id, exc)
+            return {"connected": False, "authorized": False, "state": "reauth_required"}
+        row = await db_user(customer_id)
+        return {
+            "connected": bool(row and row["account_connected"]),
+            "authorized": None,
+            "state": "degraded",
+        }
+
     if not authorized_user:
-        enabled_cache[customer_id] = False
-        await update_account_state(customer_id, False)
-        return {"connected": False, "authorized": False}
+        await invalidate_customer_session(customer_id)
+        return {"connected": False, "authorized": False, "state": "reauth_required"}
 
     me = await client.get_me()
     me_cache[customer_id] = int(me.id)
@@ -955,6 +973,7 @@ async def account_status(customer_id: str):
     return {
         "connected": True,
         "authorized": True,
+        "state": "connected",
         "user": {
             "id": me.id,
             "username": me.username,
@@ -965,6 +984,8 @@ async def account_status(customer_id: str):
 
 
 async def start_customer_login(customer_id: str, phone: str, force_resend: bool = False):
+    if len(SESSION_ENCRYPTION_KEY.encode("utf-8")) < 32:
+        raise RuntimeError("SALF1_SESSION_ENCRYPTION_KEY is not configured or too short")
     # Validate API credentials before touching the user's login flow.
     await validate_telegram_api_configuration()
 
@@ -1008,7 +1029,7 @@ async def start_customer_login(customer_id: str, phone: str, force_resend: bool 
             pending_code_delivery.pop(customer_id, None)
             pending_2fa.discard(customer_id)
 
-        client = client_for(customer_id)
+        client = await restore_client(customer_id)
         await client.connect()
 
         # Opening a login flow must never replace an already-authorized session.
@@ -1067,10 +1088,9 @@ async def start_customer_login(customer_id: str, phone: str, force_resend: bool 
             )
         )
 
-        safe_phone = phone[-4:] if len(phone) >= 4 else phone
         print(
-            f"Telegram login code requested for customer {customer_id}: "
-            f"phone=***{safe_phone}, delivery={delivery}, type={sent_type}, "
+            f"Telegram login code requested for customer {customer_key(customer_id)}: "
+            f"delivery={delivery}, type={sent_type}, "
             f"timeout={getattr(sent, 'timeout', 0) or 0}"
         )
 
@@ -1153,39 +1173,18 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
                 "Telegram authorization did not complete; account was not connected"
             )
 
-        try:
-            client.session.save()
-        except Exception as exc:
-            print(f"Session save warning: {type(exc).__name__}")
-
         me = await client.get_me()
 
-    # Convert the temporary login key (phone / flow identity) into the stable
-    # Telegram numeric user ID. The account session then follows the numeric ID.
+    # Convert temporary flow identity to the stable Telegram user ID.
     previous_customer_id = customer_id
     stable_customer_id = str(int(me.id))
     if previous_customer_id != stable_customer_id:
-        old_dir = SESSION_DIR / f"customer-{customer_key(previous_customer_id)}"
-        new_dir = SESSION_DIR / f"customer-{customer_key(stable_customer_id)}"
-
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-
-        new_dir.parent.mkdir(parents=True, exist_ok=True)
-        if old_dir.exists() and not new_dir.exists():
-            shutil.move(str(old_dir), str(new_dir))
-
+        session_string = str(client.session.save() or "").strip()
+        if not session_string:
+            raise RuntimeError("Telegram session could not be serialized")
+        await client.disconnect()
         clients.pop(previous_customer_id, None)
-
-        client = TelegramClient(
-            session_path(stable_customer_id),
-            int(API_ID_RAW),
-            API_HASH,
-        )
-        attach_events(client, stable_customer_id)
-        clients[stable_customer_id] = client
+        client = client_for(stable_customer_id, session_string)
         await client.connect()
         me = await client.get_me()
         customer_id = stable_customer_id
@@ -1207,6 +1206,7 @@ async def verify_customer_login(customer_id: str, code: str, password: str = "")
     login_locks.pop(customer_id, None)
     me_cache[customer_id] = int(me.id)
     await ensure_bot_user(int(me.id), me.username, me.first_name)
+    await save_session_vault(str(me.id), client)
     await update_account_state(str(me.id), True)
 
     # Start the one-time 24-hour trial immediately after a successful
@@ -2333,7 +2333,12 @@ async def message_event(event, customer_id: str):
         },
     }
 
-    print(payload)
+    print({
+        "type": "telegram.message",
+        "customer": customer_key(customer_id),
+        "chat_type": chat_type,
+        "message_id": payload["message"]["message_id"],
+    })
 
     result = await send_event_to_backend(payload)
     if isinstance(result, dict) and result.get("ok"):
@@ -2349,7 +2354,12 @@ def attach_events(client: TelegramClient, customer_id: str):
         try:
             await message_event(event, customer_id)
         except Exception as exc:
-            print(f"Telegram event handler error: {exc}")
+            if definitive_session_failure(exc):
+                await invalidate_customer_session(customer_id, exc)
+            print(
+                f"Telegram event handler error for {customer_key(customer_id)}: "
+                f"{type(exc).__name__}"
+            )
 
     client.add_event_handler(handler, events.NewMessage(incoming=True, outgoing=True))
 
@@ -2360,30 +2370,52 @@ async def init_loaded_sessions():
 
     rows = await db_pool.fetch(
         """
-        select telegram_user_id, salf_enabled, account_connected
-        from salf1_bot_users
-        where account_connected = true
+        select u.telegram_user_id, u.salf_enabled, u.account_connected,
+               s.ciphertext, s.key_version
+        from salf1_bot_users u
+        left join salf1_telegram_sessions s
+          on s.telegram_user_id = u.telegram_user_id
+        where u.account_connected = true
+           or s.telegram_user_id is not null
         """
     )
 
     for row in rows:
         customer_id = str(row["telegram_user_id"])
+        ciphertext = row["ciphertext"]
+
+        if not ciphertext:
+            if row["account_connected"]:
+                await update_account_state(customer_id, False)
+            enabled_cache[customer_id] = False
+            continue
+
         try:
-            client = client_for(customer_id)
+            client = client_for(
+                customer_id,
+                decrypt_session_string(customer_id, ciphertext),
+            )
             await client.connect()
             if await client.is_user_authorized():
                 me = await client.get_me()
+                if str(int(me.id)) != customer_id:
+                    raise RuntimeError("Telegram session identity mismatch")
                 me_cache[customer_id] = int(me.id)
+                await update_account_state(customer_id, True)
                 enabled_cache[customer_id] = bool(row["salf_enabled"])
                 print(
-                    f"Loaded persisted customer session: {customer_id} "
-                    f"(enabled={enabled_cache[customer_id]})"
+                    f"Loaded encrypted customer session: {customer_key(customer_id)}"
                 )
             else:
-                await update_account_state(customer_id, False)
-                enabled_cache[customer_id] = False
+                await invalidate_customer_session(customer_id)
         except Exception as exc:
-            print(f"Failed to load customer {customer_id}: {exc}")
+            if definitive_session_failure(exc):
+                await invalidate_customer_session(customer_id, exc)
+            else:
+                print(
+                    f"Session restore deferred for {customer_key(customer_id)}: "
+                    f"{type(exc).__name__}"
+                )
 
 
 def main_menu_markup():
@@ -5766,14 +5798,31 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         presence_typing_until.pop(str(user_id), None)
         presence_next_burst.pop(str(user_id), None)
         presence_runtime_stats.pop(str(user_id), None)
-        client = clients.get(str(user_id))
+        client = await restore_client(str(user_id))
         if client:
+            try:
+                await client.connect()
+                if await client.is_user_authorized():
+                    await client(functions.auth.LogOutRequest())
+            except Exception as exc:
+                await bot_edit(
+                    chat_id,
+                    message_id,
+                    "⛂ خروج امن از حساب تلگرام تأیید نشد.\n\nSession ذخیره‌شده حذف نشد.",
+                    await user_manage_markup(user_id),
+                )
+                print(
+                    f"Secure logout failed for {customer_key(str(user_id))}: "
+                    f"{type(exc).__name__}"
+                )
+                return
             try:
                 await client.disconnect()
             except Exception:
                 pass
             clients.pop(str(user_id), None)
 
+        await delete_session_vault(str(user_id))
         me_cache.pop(str(user_id), None)
         enabled_cache[str(user_id)] = False
         pending_phones.pop(str(user_id), None)
@@ -5783,13 +5832,6 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         login_locks.pop(str(user_id), None)
         await update_account_state(str(user_id), False)
         await set_salf_enabled(str(user_id), False)
-
-        try:
-            session_file = Path(session_path(str(user_id)) + ".session")
-            if session_file.exists():
-                session_file.unlink()
-        except OSError as exc:
-            print(f"Session cleanup warning: {exc}")
 
         await bot_edit(
             chat_id,
@@ -5993,6 +6035,45 @@ async def mini_bot_loop():
     await asyncio.Event().wait()
 
 
+async def session_supervisor_loop():
+    while True:
+        try:
+            if db_pool is not None and SESSION_ENCRYPTION_KEY:
+                rows = await db_pool.fetch(
+                    "select telegram_user_id, ciphertext from salf1_telegram_sessions"
+                )
+                for row in rows:
+                    customer_id = str(row["telegram_user_id"])
+                    client = clients.get(customer_id)
+                    if client is None:
+                        try:
+                            client = client_for(
+                                customer_id,
+                                decrypt_session_string(customer_id, row["ciphertext"]),
+                            )
+                        except Exception as exc:
+                            print(
+                                f"Session restore deferred for {customer_key(customer_id)}: "
+                                f"{type(exc).__name__}"
+                            )
+                            continue
+                    if client.is_connected():
+                        continue
+                    try:
+                        await client.connect()
+                    except Exception as exc:
+                        if definitive_session_failure(exc):
+                            await invalidate_customer_session(customer_id, exc)
+                        else:
+                            print(
+                                f"Session reconnect deferred for {customer_key(customer_id)}: "
+                                f"{type(exc).__name__}"
+                            )
+        except Exception as exc:
+            print(f"Session supervisor error: {type(exc).__name__}")
+        await asyncio.sleep(30)
+
+
 async def main():
     global http_session, db_pool
 
@@ -6006,6 +6087,7 @@ async def main():
             )
             print("Salf1 worker database connected.")
             await init_web_login_tokens_table()
+            await init_session_vault_table()
             await init_clock_settings_table()
             await init_presence_settings_table()
             await ensure_admin_ledger_table()
@@ -6032,8 +6114,8 @@ async def main():
 
     http_session = ClientSession()
     try:
-        await repair_salf_activation_states()
         await init_loaded_sessions()
+        await repair_salf_activation_states()
         runner = web.AppRunner(build_app())
         await runner.setup()
         site = web.TCPSite(runner, HOST, PORT)
@@ -6045,6 +6127,7 @@ async def main():
             tasks.append(asyncio.create_task(mini_bot_loop()))
             tasks.append(asyncio.create_task(clock_loop()))
             tasks.append(asyncio.create_task(presence_loop()))
+            tasks.append(asyncio.create_task(session_supervisor_loop()))
         if ROLE in {"billing", "all"}:
             tasks.append(asyncio.create_task(billing_loop()))
         await asyncio.Event().wait()
