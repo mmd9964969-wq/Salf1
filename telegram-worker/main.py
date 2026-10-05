@@ -3120,7 +3120,14 @@ async def clock_apply_now(user_id: int, force: bool = False):
         return {"ok": False, "reason": "engine_error"}
 
 async def clock_loop():
+    """
+    Run the clock engine on real wall-clock second boundaries instead of
+    sleeping one second after each batch. This prevents drift: a minute-only
+    clock is evaluated on the exact :00 boundary, while second-enabled clocks
+    are evaluated once per second.
+    """
     while True:
+        cycle_started = time.perf_counter()
         try:
             if db_pool is not None:
                 rows = await db_pool.fetch(
@@ -3134,11 +3141,32 @@ async def clock_loop():
                       and u.salf_enabled = true
                     """
                 )
-                for row in rows:
-                    await clock_apply_now(int(row["customer_id"]))
+
+                # Process independent customer sessions concurrently so one
+                # account/network response cannot shift all other clocks.
+                if rows:
+                    results = await asyncio.gather(
+                        *(clock_apply_now(int(row["customer_id"])) for row in rows),
+                        return_exceptions=True,
+                    )
+                    for result in results:
+                        if isinstance(result, Exception):
+                            print(
+                                f"Clock customer cycle error: "
+                                f"{type(result).__name__}: {result}"
+                            )
         except Exception as exc:
             print(f"Clock loop error: {type(exc).__name__}: {exc}")
-        await asyncio.sleep(1)
+
+        # Re-align the next cycle to the next real UTC second boundary.
+        # Unlike sleep(1), this does not accumulate the duration of the work
+        # performed during the current cycle.
+        elapsed = time.perf_counter() - cycle_started
+        wall_fraction = time.time() % 1.0
+        delay = (1.0 - wall_fraction) if wall_fraction > 0.01 else 0.01
+        if elapsed >= 1.0:
+            delay = 0.01
+        await asyncio.sleep(delay)
 
 
 
