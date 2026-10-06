@@ -3843,6 +3843,9 @@ async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: 
 
 
 async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
+    # SALF1 panels are sent through the Rich Message gateway. Editing them
+    # must use the matching Rich Message edit operation; the old
+    # editMessageText path silently rejects the rich_message payload.
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
@@ -3852,7 +3855,21 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
         },
         **({"reply_markup": reply_markup} if reply_markup else {}),
     }
-    return await bot_api("editMessageText", payload)
+    result = await bot_api("editRichMessage", payload)
+    if isinstance(result, dict) and result.get("ok"):
+        return result
+
+    # Compatibility fallback for deployments whose gateway exposes only the
+    # legacy edit endpoint.
+    fallback = await bot_api("editMessageText", payload)
+    if isinstance(fallback, dict) and fallback.get("ok"):
+        return fallback
+
+    print(
+        f"Rich Message edit failed: chat={chat_id} message={message_id} "
+        f"editRichMessage={result} editMessageText={fallback}"
+    )
+    return fallback or result
 
 async def bot_answer_callback(callback_id: str):
     return await bot_api(
