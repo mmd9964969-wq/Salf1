@@ -213,6 +213,12 @@ presence_last_online_state: dict[str, bool] = {}
 presence_typing_until: dict[str, float] = {}
 presence_next_burst: dict[str, float] = {}
 presence_runtime_stats: dict[str, dict] = {}
+presence_activity_tasks: dict[str, asyncio.Task] = {}
+presence_activity_stop_events: dict[str, asyncio.Event] = {}
+presence_destination_locks: dict[str, asyncio.Lock] = {}
+presence_current_actions: dict[str, dict] = {}
+presence_rate_next: dict[str, float] = {}
+presence_watchdog_last_check: dict[str, float] = {}
 bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
@@ -4559,6 +4565,1226 @@ def rich_button(text_value: str, callback_data: str, style: str) -> str:
 
 def rich_button_row(*buttons: str, align: str = "center") -> str:
     return f'<tg-button-row align="{align}">{"".join(buttons)}</tg-button-row>'
+
+
+# ---------------------------------------------------------------------------
+# SALF1 Presence Status v2
+# This overlay intentionally leaves legacy presence code in place for rollback
+# compatibility while the new callbacks/runtime use these definitions.
+# ---------------------------------------------------------------------------
+
+PRESENCE_V2_ACTIONS = {
+    "typing": ("typing", "در حال نوشتن"),
+    "record_audio": ("record-audio", "در حال ضبط پیام صوتی"),
+    "record_video": ("record-video", "در حال ضبط ویدئو"),
+    "record_round": ("record-round", "در حال ضبط ویدئوی گرد"),
+    "upload_audio": ("audio", "در حال ارسال صوت"),
+    "upload_document": ("document", "در حال ارسال فایل"),
+    "upload_photo": ("photo", "در حال ارسال عکس"),
+    "upload_video": ("video", "در حال ارسال ویدئو"),
+    "upload_round": ("round", "در حال ارسال ویدئوی گرد"),
+    "location": ("location", "در حال انتخاب موقعیت"),
+    "contact": ("contact", "در حال انتخاب مخاطب"),
+}
+
+PRESENCE_V2_DAYS = {
+    5: "شنبه", 6: "یکشنبه", 0: "دوشنبه",
+    1: "سه‌شنبه", 2: "چهارشنبه", 3: "پنجشنبه", 4: "جمعه",
+}
+PRESENCE_V2_DAY_ALIASES = {
+    "شنبه": 5, "یکشنبه": 6, "دوشنبه": 0, "سه‌شنبه": 1, "سه شنبه": 1,
+    "چهارشنبه": 2, "پنجشنبه": 3, "جمعه": 4,
+    "sat": 5, "sun": 6, "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4,
+}
+PRESENCE_V2_TZ = ("Asia/Tehran", "Asia/Baku", "Europe/Berlin", "UTC")
+
+PRESENCE_V2_PRESETS = {
+    "calm": (
+        "آرام",
+        [
+            {"action": "typing", "min": 6, "max": 10, "pause_min": 15, "pause_max": 30},
+            {"action": "record_audio", "min": 7, "max": 12, "pause_min": 20, "pause_max": 35},
+        ],
+    ),
+    "normal": (
+        "عادی",
+        [
+            {"action": "typing", "min": 8, "max": 15, "pause_min": 5, "pause_max": 12},
+            {"action": "record_audio", "min": 8, "max": 18, "pause_min": 8, "pause_max": 20},
+            {"action": "typing", "min": 5, "max": 11, "pause_min": 10, "pause_max": 22},
+        ],
+    ),
+    "active": (
+        "فعال",
+        [
+            {"action": "typing", "min": 6, "max": 12, "pause_min": 4, "pause_max": 9},
+            {"action": "record_audio", "min": 8, "max": 16, "pause_min": 6, "pause_max": 14},
+            {"action": "record_round", "min": 7, "max": 14, "pause_min": 8, "pause_max": 16},
+        ],
+    ),
+    "night": (
+        "شبانه",
+        [
+            {"action": "typing", "min": 5, "max": 10, "pause_min": 25, "pause_max": 50},
+            {"action": "record_audio", "min": 8, "max": 15, "pause_min": 30, "pause_max": 60},
+        ],
+    ),
+}
+
+def _presence_v2_default_scenarios():
+    return [
+        {
+            "id": f"preset_{key}",
+            "name": name,
+            "steps": json.loads(json.dumps(steps)),
+            "enabled": True,
+        }
+        for key, (name, steps) in PRESENCE_V2_PRESETS.items()
+    ]
+
+def _presence_v2_defaults():
+    return {
+        "online_enabled": False,
+        "activity_enabled": False,
+        "timezone": "UTC",
+        "online_mode": "always",
+        "activity_mode": "dynamic",
+        "online_schedule_enabled": False,
+        "activity_schedule_enabled": False,
+        "online_windows": [{"days": list(range(7)), "start": "00:00", "end": "23:59", "enabled": True}],
+        "activity_windows": [{"days": list(range(7)), "start": "00:00", "end": "23:59", "enabled": True}],
+        "exceptions": [],
+        "targets": [],
+        "scenarios": _presence_v2_default_scenarios(),
+        "active_scenario": "preset_normal",
+        "profiles": [],
+        "active_profile": "",
+        "rate_limit_guard": True,
+        "retry": True,
+        "logging": True,
+        "watchdog": True,
+        "min_action_gap_seconds": 3.0,
+        "max_targets_per_cycle": 8,
+    }
+
+def _presence_v2_normalize(raw: dict | None):
+    cfg = _presence_v2_defaults()
+    incoming = raw if isinstance(raw, dict) else {}
+    cfg.update(incoming)
+    old_mode = str(incoming.get("mode") or "")
+    if "online_mode" not in incoming:
+        cfg["online_mode"] = "schedule" if old_mode == "schedule" else "always"
+    if old_mode == "smart":
+        cfg["online_mode"] = "always"
+        cfg["activity_mode"] = "dynamic"
+    if "activity_enabled" not in incoming:
+        cfg["activity_enabled"] = bool(incoming.get("typing_enabled"))
+    if "online_schedule_enabled" not in incoming:
+        cfg["online_schedule_enabled"] = bool(incoming.get("schedule_enabled"))
+    if "activity_schedule_enabled" not in incoming:
+        cfg["activity_schedule_enabled"] = bool(incoming.get("schedule_enabled"))
+
+    old_windows = []
+    if incoming.get("schedule_start") or incoming.get("schedule_end"):
+        old_windows = [{
+            "days": list(incoming.get("schedule_days") or range(7)),
+            "start": str(incoming.get("schedule_start") or "00:00"),
+            "end": str(incoming.get("schedule_end") or "23:59"),
+            "enabled": True,
+        }]
+    if not incoming.get("online_windows") and old_windows:
+        cfg["online_windows"] = old_windows
+    if not incoming.get("activity_windows") and old_windows:
+        cfg["activity_windows"] = json.loads(json.dumps(old_windows))
+
+    if not isinstance(cfg["targets"], list):
+        cfg["targets"] = []
+    for target in cfg["targets"]:
+        target["peer"] = str(target.get("peer") or "").strip()
+        target["title"] = str(target.get("title") or target["peer"])[:60]
+        target["enabled"] = bool(target.get("enabled", True))
+        target["scenario"] = str(target.get("scenario") or cfg["active_scenario"])
+
+    scenarios = cfg.get("scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        scenarios = _presence_v2_default_scenarios()
+    else:
+        ids = {str(x.get("id")) for x in scenarios if isinstance(x, dict)}
+        for preset_id, (name, steps) in PRESENCE_V2_PRESETS.items():
+            full_id = f"preset_{preset_id}"
+            if full_id not in ids:
+                scenarios.append({
+                    "id": full_id,
+                    "name": name,
+                    "steps": json.loads(json.dumps(steps)),
+                    "enabled": True,
+                })
+    cfg["scenarios"] = scenarios[:30]
+    ids = {str(x.get("id")) for x in cfg["scenarios"] if isinstance(x, dict)}
+    if str(cfg.get("active_scenario")) not in ids:
+        cfg["active_scenario"] = "preset_normal"
+
+    cfg["exceptions"] = cfg["exceptions"] if isinstance(cfg["exceptions"], list) else []
+    cfg["profiles"] = cfg["profiles"] if isinstance(cfg["profiles"], list) else []
+    cfg["min_action_gap_seconds"] = max(3.0, min(30.0, float(cfg.get("min_action_gap_seconds") or 3)))
+    cfg["max_targets_per_cycle"] = max(1, min(20, int(cfg.get("max_targets_per_cycle") or 8)))
+    return cfg
+
+async def init_presence_settings_table():
+    if db_pool is None:
+        return
+    await db_pool.execute("""
+        create table if not exists salf1_presence_settings (
+            customer_id bigint primary key,
+            config jsonb not null default '{}'::jsonb,
+            stats jsonb not null default '{}'::jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        create table if not exists salf1_presence_profiles (
+            id bigserial primary key,
+            customer_id bigint not null,
+            name text not null,
+            config jsonb not null default '{}'::jsonb,
+            active boolean not null default false,
+            created_at timestamptz not null default now()
+        );
+        create table if not exists salf1_presence_schedules (
+            id bigserial primary key,
+            customer_id bigint not null,
+            engine text not null,
+            name text not null,
+            timezone text not null default 'UTC',
+            enabled boolean not null default true,
+            unique(customer_id, engine)
+        );
+        create table if not exists salf1_presence_schedule_windows (
+            id bigserial primary key,
+            schedule_id bigint not null references salf1_presence_schedules(id) on delete cascade,
+            weekday smallint not null,
+            start_time time not null,
+            end_time time not null,
+            enabled boolean not null default true
+        );
+        create table if not exists salf1_presence_exceptions (
+            id bigserial primary key,
+            customer_id bigint not null,
+            engine text not null default 'all',
+            exception_date date not null,
+            mode text not null,
+            start_time time null,
+            end_time time null,
+            note text not null default ''
+        );
+        create table if not exists salf1_presence_destinations (
+            id bigserial primary key,
+            customer_id bigint not null,
+            peer text not null,
+            title text not null,
+            kind text not null default 'مقصد',
+            enabled boolean not null default true,
+            scenario_id text not null default 'preset_normal',
+            unique(customer_id, peer)
+        );
+        create table if not exists salf1_presence_scenarios (
+            id bigserial primary key,
+            customer_id bigint not null,
+            scenario_id text not null,
+            name text not null,
+            config jsonb not null default '{}'::jsonb,
+            unique(customer_id, scenario_id)
+        );
+        create table if not exists salf1_presence_scenario_steps (
+            id bigserial primary key,
+            scenario_id bigint not null references salf1_presence_scenarios(id) on delete cascade,
+            step_index integer not null,
+            action text not null,
+            min_seconds integer not null default 5,
+            max_seconds integer not null default 10,
+            pause_min_seconds integer not null default 5,
+            pause_max_seconds integer not null default 15
+        );
+        create table if not exists salf1_presence_runtime_state (
+            customer_id bigint primary key,
+            online_state text not null default 'offline',
+            activity_state text not null default 'idle',
+            active_action text not null default '',
+            destination_peer text not null default '',
+            heartbeat_at timestamptz null,
+            last_update_at timestamptz null,
+            last_error_code text not null default '',
+            updated_at timestamptz not null default now()
+        );
+        create table if not exists salf1_presence_activity_logs (
+            id bigserial primary key,
+            customer_id bigint not null,
+            event_type text not null,
+            destination_peer text not null default '',
+            action text not null default '',
+            meta jsonb not null default '{}'::jsonb,
+            created_at timestamptz not null default now()
+        );
+    """)
+
+async def presence_record(user_id: int):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        "select customer_id, config, stats, created_at, updated_at from salf1_presence_settings where customer_id=$1",
+        int(user_id),
+    )
+
+async def presence_get_settings(user_id: int):
+    row = await presence_record(user_id)
+    if not row:
+        cfg = _presence_v2_defaults()
+        try:
+            clock = await clock_get_settings(user_id)
+            cfg["timezone"] = str(clock.get("timezone") or "UTC")
+        except Exception:
+            pass
+        cfg = _presence_v2_normalize(cfg)
+        if db_pool is not None:
+            await db_pool.execute(
+                "insert into salf1_presence_settings(customer_id,config) values($1,$2::jsonb) on conflict do nothing",
+                int(user_id), json.dumps(cfg, ensure_ascii=False)
+            )
+        return cfg
+    return _presence_v2_normalize(_presence_json(row["config"], {}))
+
+async def _presence_v2_sync_relational(user_id: int, config: dict):
+    if db_pool is None:
+        return
+    uid = int(user_id)
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("delete from salf1_presence_profiles where customer_id=$1", uid)
+            for profile in config.get("profiles") or []:
+                await conn.execute(
+                    "insert into salf1_presence_profiles(customer_id,name,config,active) values($1,$2,$3::jsonb,$4)",
+                    uid, str(profile.get("name") or "پروفایل")[:50],
+                    json.dumps(profile.get("config") or {}, ensure_ascii=False),
+                    str(profile.get("id") or "") == str(config.get("active_profile") or "")
+                )
+            await conn.execute(
+                "delete from salf1_presence_scenario_steps where scenario_id in (select id from salf1_presence_scenarios where customer_id=$1)",
+                uid
+            )
+            await conn.execute("delete from salf1_presence_scenarios where customer_id=$1", uid)
+            for scenario in config.get("scenarios") or []:
+                row = await conn.fetchrow(
+                    "insert into salf1_presence_scenarios(customer_id,scenario_id,name,config) values($1,$2,$3,$4::jsonb) returning id",
+                    uid, str(scenario.get("id") or ""),
+                    str(scenario.get("name") or "سناریو")[:80],
+                    json.dumps(scenario, ensure_ascii=False)
+                )
+                for idx, step in enumerate(scenario.get("steps") or []):
+                    low = max(5, int(step.get("min") or 5))
+                    high = max(low, int(step.get("max") or low))
+                    pl = max(0, int(step.get("pause_min") or 5))
+                    ph = max(pl, int(step.get("pause_max") or pl))
+                    await conn.execute(
+                        "insert into salf1_presence_scenario_steps(scenario_id,step_index,action,min_seconds,max_seconds,pause_min_seconds,pause_max_seconds) values($1,$2,$3,$4,$5,$6,$7)",
+                        int(row["id"]), idx, str(step.get("action") or "typing"), low, high, pl, ph
+                    )
+            await conn.execute("delete from salf1_presence_destinations where customer_id=$1", uid)
+            for target in config.get("targets") or []:
+                await conn.execute(
+                    "insert into salf1_presence_destinations(customer_id,peer,title,kind,enabled,scenario_id) values($1,$2,$3,$4,$5,$6)",
+                    uid, str(target.get("peer") or ""), str(target.get("title") or "")[:60],
+                    str(target.get("kind") or "مقصد"), bool(target.get("enabled", True)),
+                    str(target.get("scenario") or config.get("active_scenario") or "preset_normal")
+                )
+            for engine in ("online", "activity"):
+                sid = await conn.fetchval(
+                    """insert into salf1_presence_schedules(customer_id,engine,name,timezone,enabled)
+                       values($1,$2,$3,$4,$5)
+                       on conflict(customer_id,engine) do update set timezone=excluded.timezone,enabled=excluded.enabled
+                       returning id""",
+                    uid, engine, f"وضعیت حضور · {engine}", str(config.get("timezone") or "UTC"),
+                    bool(config.get(f"{engine}_schedule_enabled"))
+                )
+                await conn.execute("delete from salf1_presence_schedule_windows where schedule_id=$1", int(sid))
+                for window in config.get(f"{engine}_windows") or []:
+                    if not bool(window.get("enabled", True)):
+                        continue
+                    try:
+                        st=datetime.strptime(str(window.get("start") or "00:00"),"%H:%M").time()
+                        en=datetime.strptime(str(window.get("end") or "23:59"),"%H:%M").time()
+                    except ValueError:
+                        continue
+                    for day in window.get("days") or []:
+                        if str(day).isdigit() and int(day) in range(7):
+                            await conn.execute(
+                                "insert into salf1_presence_schedule_windows(schedule_id,weekday,start_time,end_time) values($1,$2,$3,$4)",
+                                int(sid), int(day), st, en
+                            )
+            await conn.execute("delete from salf1_presence_exceptions where customer_id=$1", uid)
+            for item in config.get("exceptions") or []:
+                try:
+                    d=datetime.strptime(str(item.get("date")),"%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                st=datetime.strptime(str(item.get("start")),"%H:%M").time() if item.get("start") else None
+                en=datetime.strptime(str(item.get("end")),"%H:%M").time() if item.get("end") else None
+                await conn.execute(
+                    "insert into salf1_presence_exceptions(customer_id,engine,exception_date,mode,start_time,end_time,note) values($1,$2,$3,$4,$5,$6,$7)",
+                    uid, str(item.get("engine") or "all"), d, str(item.get("mode") or "off"), st, en, str(item.get("note") or "")[:120]
+                )
+
+async def presence_save_settings(user_id: int, config: dict):
+    if db_pool is None:
+        return
+    clean = _presence_v2_normalize(config)
+    await db_pool.execute(
+        """insert into salf1_presence_settings(customer_id,config)
+           values($1,$2::jsonb)
+           on conflict(customer_id) do update set config=excluded.config,updated_at=now()""",
+        int(user_id), json.dumps(clean, ensure_ascii=False)
+    )
+    try:
+        await _presence_v2_sync_relational(user_id, clean)
+    except Exception as exc:
+        print(f"Presence relational sync error: {type(exc).__name__}: {exc}")
+
+def _presence_v2_time_active(value, start, end):
+    try:
+        st=datetime.strptime(str(start),"%H:%M").time()
+        en=datetime.strptime(str(end),"%H:%M").time()
+    except ValueError:
+        return False
+    return (st <= value <= en) if st <= en else (value >= st or value <= en)
+
+def _presence_v2_engine_active(config, engine, local):
+    enabled = bool(config.get("online_enabled" if engine=="online" else "activity_enabled"))
+    if not enabled:
+        return False
+    item = next(
+        (x for x in config.get("exceptions") or []
+         if str(x.get("date"))==local.date().isoformat()
+         and str(x.get("engine") or "all") in {"all",engine}),
+        None
+    )
+    if item:
+        mode=str(item.get("mode") or "off")
+        if mode=="off": return False
+        if mode=="on": return True
+        if mode=="window":
+            return _presence_v2_time_active(local.time(),item.get("start","00:00"),item.get("end","23:59"))
+    if engine=="online" and str(config.get("online_mode") or "always") in {"always","manual"}:
+        return True
+    schedule_enabled=bool(config.get("online_schedule_enabled" if engine=="online" else "activity_schedule_enabled"))
+    if not schedule_enabled:
+        return True
+    windows=config.get("online_windows" if engine=="online" else "activity_windows") or []
+    for w in windows:
+        if not bool(w.get("enabled",True)): continue
+        days={int(x) for x in w.get("days") or [] if str(x).isdigit() and int(x) in range(7)}
+        if local.weekday() in days and _presence_v2_time_active(local.time(),w.get("start","00:00"),w.get("end","23:59")):
+            return True
+    return False
+
+def _presence_v2_scenario(config, target=None):
+    sid=str((target or {}).get("scenario") or config.get("active_scenario") or "preset_normal")
+    return next((x for x in config.get("scenarios") or [] if str(x.get("id"))==sid), None) or \
+           next((x for x in config.get("scenarios") or [] if str(x.get("id"))=="preset_normal"), None)
+
+async def presence_log(user_id, event_type, peer="", action="", meta=None):
+    if not db_pool or not bool((await presence_get_settings(user_id)).get("logging",True)):
+        return
+    if event_type not in {
+        "presence.started","presence.stopped","presence.schedule_started","presence.schedule_finished",
+        "activity.started","activity.heartbeat","activity.stopped","activity.cancelled",
+        "activity.destination_failed","activity.telegram_error"
+    }:
+        return
+    safe={}
+    for k,v in (meta or {}).items():
+        if str(k).lower() in {"phone","code","password","session","session_string","token"}:
+            continue
+        if isinstance(v,(str,int,float,bool)) or v is None: safe[str(k)]=v
+    await db_pool.execute(
+        "insert into salf1_presence_activity_logs(customer_id,event_type,destination_peer,action,meta) values($1,$2,$3,$4,$5::jsonb)",
+        int(user_id),event_type,str(peer or "")[:180],str(action or "")[:80],json.dumps(safe,ensure_ascii=False)
+    )
+
+async def _presence_v2_runtime_save(user_id):
+    if not db_pool: return
+    r=presence_runtime_stats.setdefault(str(user_id),{})
+    await db_pool.execute(
+        """insert into salf1_presence_runtime_state(customer_id,online_state,activity_state,active_action,destination_peer,heartbeat_at,last_update_at,last_error_code)
+           values($1,$2,$3,$4,$5,$6,$7,$8)
+           on conflict(customer_id) do update set
+             online_state=excluded.online_state,activity_state=excluded.activity_state,
+             active_action=excluded.active_action,destination_peer=excluded.destination_peer,
+             heartbeat_at=excluded.heartbeat_at,last_update_at=excluded.last_update_at,
+             last_error_code=excluded.last_error_code,updated_at=now()""",
+        int(user_id),str(r.get("online_state") or "offline"),str(r.get("activity_state") or "idle"),
+        str(r.get("active_action") or ""),str(r.get("destination_peer") or ""),
+        r.get("heartbeat_at"),r.get("last_update_at"),str(r.get("last_error_code") or "")
+    )
+
+def _presence_v2_error_code(exc):
+    name=type(exc).__name__.lower()
+    msg=str(exc).lower()
+    if definitive_session_failure(exc): return "SESSION_DISCONNECTED"
+    if "peeridinvalid" in name or "usernameinvalid" in name: return "DESTINATION_INVALID"
+    if any(x in name for x in ("chatadminrequired","channelprivate","userisblocked")): return "DESTINATION_FORBIDDEN"
+    if isinstance(exc,FloodWaitError) or "flood" in name: return "TELEGRAM_FLOOD_WAIT"
+    if "timeout" in msg or "connection" in msg: return "TELEGRAM_CONNECTION_ERROR"
+    return "ACTION_FAILED"
+
+def _presence_v2_error_text(code):
+    return {
+        "SESSION_DISCONNECTED":"اتصال اکانت تلگرام قطع شده است.",
+        "ACCOUNT_NOT_AUTHORIZED":"احراز هویت اکانت معتبر نیست.",
+        "DESTINATION_INVALID":"مقصد معتبر نیست.",
+        "DESTINATION_FORBIDDEN":"دسترسی به مقصد مجاز نیست.",
+        "TELEGRAM_FLOOD_WAIT":"تلگرام موقتاً نرخ درخواست را محدود کرده است.",
+        "TELEGRAM_CONNECTION_ERROR":"اتصال به تلگرام ناپایدار است.",
+        "HEARTBEAT_FAILED":"Heartbeat فعالیت از دست رفته است.",
+        "ACTION_FAILED":"اجرای فعالیت ناموفق بود.",
+    }.get(code or "","بدون خطا")
+
+async def _presence_v2_cancel_peer(client, peer):
+    try:
+        entity=await client.get_input_entity(peer)
+        await client.action(entity,"cancel")
+    except Exception:
+        pass
+
+async def _presence_v2_stop_task(user_id,key):
+    event=presence_activity_stop_events.get(key)
+    task=presence_activity_tasks.get(key)
+    if event: event.set()
+    state=presence_current_actions.get(key) or {}
+    client=clients.get(str(user_id))
+    if client and client.is_connected() and state.get("peer"):
+        await _presence_v2_cancel_peer(client,str(state["peer"]))
+    if task and task is not asyncio.current_task():
+        task.cancel()
+        try: await task
+        except asyncio.CancelledError: pass
+        except Exception: pass
+    presence_activity_tasks.pop(key,None)
+    presence_activity_stop_events.pop(key,None)
+    presence_current_actions.pop(key,None)
+    presence_destination_locks.pop(key,None)
+
+async def presence_stop_all(user_id, mark_offline=True):
+    prefix=f"{int(user_id)}:"
+    for key in [k for k in list(presence_activity_tasks) if k.startswith(prefix)]:
+        await _presence_v2_stop_task(user_id,key)
+    client=clients.get(str(user_id))
+    if client and client.is_connected():
+        await presence_cancel_typing(user_id)
+    r=presence_runtime_stats.setdefault(str(user_id),{})
+    r.update({"activity_state":"idle","active_action":"","destination_peer":"","heartbeat_at":None,"online_state":"offline","last_update_at":datetime.now(timezone.utc)})
+    if mark_offline and client and client.is_connected():
+        try:
+            if await client.is_user_authorized():
+                await client(functions.account.UpdateStatusRequest(offline=True))
+        except Exception: pass
+    await _presence_v2_runtime_save(user_id)
+
+async def _presence_v2_heartbeat(user_id,key,peer,label,stop_event):
+    r=presence_runtime_stats.setdefault(str(user_id),{})
+    while not stop_event.is_set():
+        now=datetime.now(timezone.utc)
+        r["heartbeat_at"]=now
+        r["last_update_at"]=now
+        state=presence_current_actions.get(key)
+        if state: state["heartbeat_at"]=now
+        await _presence_v2_runtime_save(user_id)
+        if time.monotonic()-float(r.get("_last_hb_log") or 0)>=30:
+            r["_last_hb_log"]=time.monotonic()
+            await presence_log(user_id,"activity.heartbeat",peer=peer,action=label)
+        try:
+            await asyncio.wait_for(stop_event.wait(),timeout=4)
+        except asyncio.TimeoutError:
+            pass
+
+async def _presence_v2_activity_task(user_id,target,stop_event):
+    peer=str(target.get("peer") or "").strip()
+    key=f"{int(user_id)}:{peer}"
+    client=clients.get(str(user_id))
+    step_index=0
+    last_action=""
+    try:
+        while not stop_event.is_set():
+            config=await presence_get_settings(user_id)
+            row=await db_user(str(user_id))
+            if not client or not client.is_connected() or not row or not row["account_connected"] or not row["salf_enabled"]:
+                break
+            _,local=_presence_v2_now_local(config)
+            if not _presence_v2_engine_active(config,"activity",local):
+                try: await asyncio.wait_for(stop_event.wait(),timeout=2)
+                except asyncio.TimeoutError: pass
+                continue
+            scenario=_presence_v2_scenario(config,target)
+            steps=[s for s in (scenario or {}).get("steps",[]) if str(s.get("action")) in PRESENCE_V2_ACTIONS]
+            if not steps:
+                try: await asyncio.wait_for(stop_event.wait(),timeout=5)
+                except asyncio.TimeoutError: pass
+                continue
+            if str(config.get("activity_mode") or "dynamic")=="dynamic":
+                choices=[s for s in steps if str(s.get("action"))!=last_action] or steps
+                step=random.choice(choices)
+            else:
+                step=steps[step_index%len(steps)]
+                step_index+=1
+            action_key=str(step.get("action"))
+            telegram_action,label=PRESENCE_V2_ACTIONS[action_key]
+            low=max(5,min(60,int(step.get("min") or 8)))
+            high=max(low,min(120,int(step.get("max") or low)))
+            pause_low=max(0,int(step.get("pause_min") or 5))
+            pause_high=max(pause_low,int(step.get("pause_max") or pause_low))
+            duration=random.uniform(low,high)
+            pause=random.uniform(pause_low,pause_high)
+
+            if config.get("rate_limit_guard",True):
+                due=float(presence_rate_next.get(key,0) or 0)
+                now_m=time.monotonic()
+                if due>now_m:
+                    try: await asyncio.wait_for(stop_event.wait(),timeout=due-now_m)
+                    except asyncio.TimeoutError: pass
+                if stop_event.is_set(): break
+                presence_rate_next[key]=time.monotonic()+max(3.0,float(config.get("min_action_gap_seconds") or 3))
+
+            try:
+                entity=await client.get_input_entity(peer)
+                lock=presence_destination_locks.setdefault(key,asyncio.Lock())
+                async with lock:
+                    now=datetime.now(timezone.utc)
+                    r=presence_runtime_stats.setdefault(str(user_id),{})
+                    r.update({"activity_state":"active","active_action":label,"destination_peer":peer,"heartbeat_at":now,"last_update_at":now,"last_error_code":""})
+                    presence_current_actions[key]={"peer":peer,"action":action_key,"label":label,"started_at":now,"heartbeat_at":now}
+                    await _presence_v2_runtime_save(user_id)
+                    await presence_log(user_id,"activity.started",peer=peer,action=action_key,meta={"duration":round(duration,1)})
+                    hb=asyncio.create_task(_presence_v2_heartbeat(user_id,key,peer,label,stop_event))
+                    try:
+                        async with client.action(entity,telegram_action,delay=4.0,auto_cancel=True):
+                            try: await asyncio.wait_for(stop_event.wait(),timeout=duration)
+                            except asyncio.TimeoutError: pass
+                    finally:
+                        hb.cancel()
+                        try: await hb
+                        except asyncio.CancelledError: pass
+                        except Exception: pass
+                    last_action=action_key
+                    if not stop_event.is_set():
+                        r["activity_success"]=int(r.get("activity_success") or 0)+1
+                    r.update({"activity_state":"idle","active_action":"","heartbeat_at":None,"last_update_at":datetime.now(timezone.utc)})
+                    presence_current_actions.pop(key,None)
+                    await _presence_v2_runtime_save(user_id)
+                    await presence_log(user_id,"activity.stopped" if not stop_event.is_set() else "activity.cancelled",peer=peer,action=action_key)
+            except FloodWaitError as exc:
+                r=presence_runtime_stats.setdefault(str(user_id),{})
+                r["activity_failed"]=int(r.get("activity_failed") or 0)+1
+                r["last_error_code"]="TELEGRAM_FLOOD_WAIT"
+                presence_rate_next[key]=time.monotonic()+max(1,int(exc.seconds))
+                await _presence_v2_runtime_save(user_id)
+                await presence_log(user_id,"activity.telegram_error",peer=peer,action=action_key,meta={"code":"TELEGRAM_FLOOD_WAIT","seconds":int(exc.seconds)})
+                try: await asyncio.wait_for(stop_event.wait(),timeout=min(300,max(1,int(exc.seconds))))
+                except asyncio.TimeoutError: pass
+            except Exception as exc:
+                code=_presence_v2_error_code(exc)
+                r=presence_runtime_stats.setdefault(str(user_id),{})
+                r["activity_failed"]=int(r.get("activity_failed") or 0)+1
+                r["last_error_code"]=code
+                await _presence_v2_runtime_save(user_id)
+                await presence_log(user_id,"activity.destination_failed" if code.startswith("DESTINATION") else "activity.telegram_error",peer=peer,action=action_key,meta={"code":code})
+                if code=="SESSION_DISCONNECTED": break
+                try: await asyncio.wait_for(stop_event.wait(),timeout=45 if code.startswith("DESTINATION") else 15)
+                except asyncio.TimeoutError: pass
+
+            if not stop_event.is_set():
+                try: await asyncio.wait_for(stop_event.wait(),timeout=pause)
+                except asyncio.TimeoutError: pass
+    except asyncio.CancelledError:
+        await presence_log(user_id,"activity.cancelled",peer=peer,action=last_action)
+        raise
+    finally:
+        presence_current_actions.pop(key,None)
+        presence_activity_tasks.pop(key,None)
+        presence_activity_stop_events.pop(key,None)
+        presence_destination_locks.pop(key,None)
+        r=presence_runtime_stats.setdefault(str(user_id),{})
+        if r.get("destination_peer")==peer:
+            r.update({"activity_state":"idle","active_action":"","destination_peer":"","heartbeat_at":None,"last_update_at":datetime.now(timezone.utc)})
+        await _presence_v2_runtime_save(user_id)
+
+def _presence_v2_now_local(config):
+    now=datetime.now(timezone.utc)
+    return now,now.astimezone(_clock_safe_timezone(str(config.get("timezone") or "UTC")))
+
+async def _presence_v2_sync_activity(user_id,config,active):
+    desired={}
+    if active:
+        for target in (config.get("targets") or [])[:int(config.get("max_targets_per_cycle") or 8)]:
+            if not bool(target.get("enabled",True)) or not str(target.get("peer") or "").strip():
+                continue
+            peer=str(target["peer"]).strip()
+            desired[f"{int(user_id)}:{peer}"]=target
+    prefix=f"{int(user_id)}:"
+    for key in [k for k in list(presence_activity_tasks) if k.startswith(prefix) and k not in desired]:
+        await _presence_v2_stop_task(user_id,key)
+    for key,target in desired.items():
+        task=presence_activity_tasks.get(key)
+        if task is None or task.done():
+            ev=asyncio.Event()
+            presence_activity_stop_events[key]=ev
+            presence_activity_tasks[key]=asyncio.create_task(_presence_v2_activity_task(user_id,target,ev))
+
+async def _presence_v2_watchdog(user_id):
+    config=await presence_get_settings(user_id)
+    if not bool(config.get("watchdog",True)): return
+    now=datetime.now(timezone.utc)
+    prefix=f"{int(user_id)}:"
+    for key,state in list(presence_current_actions.items()):
+        if not key.startswith(prefix): continue
+        task=presence_activity_tasks.get(key)
+        hb=state.get("heartbeat_at")
+        if task and not task.done() and hb and (now-hb).total_seconds()>12:
+            r=presence_runtime_stats.setdefault(str(user_id),{})
+            r["last_error_code"]="HEARTBEAT_FAILED"
+            await _presence_v2_runtime_save(user_id)
+            await presence_log(user_id,"activity.telegram_error",peer=str(state.get("peer") or ""),action=str(state.get("action") or ""),meta={"code":"HEARTBEAT_FAILED"})
+            await _presence_v2_stop_task(user_id,key)
+
+async def presence_apply_now(user_id:int,force:bool=False):
+    config=await presence_get_settings(user_id)
+    row=await db_user(str(user_id))
+    client=clients.get(str(user_id))
+    if not client or not client.is_connected() or not row or not row["account_connected"] or not row["salf_enabled"]:
+        await presence_stop_all(user_id,mark_offline=False)
+        return {"ok":False,"reason":"account_unavailable"}
+    try:
+        if not await client.is_user_authorized():
+            await presence_stop_all(user_id,mark_offline=False)
+            return {"ok":False,"reason":"ACCOUNT_NOT_AUTHORIZED"}
+        _,local=_presence_v2_now_local(config)
+        online_active=_presence_v2_engine_active(config,"online",local)
+        if online_active:
+            due=force or time.monotonic()>=float(presence_next_online.get(str(user_id),0) or 0)
+            if due:
+                await client(functions.account.UpdateStatusRequest(offline=False))
+                presence_next_online[str(user_id)]=time.monotonic()+max(30,int(config.get("online_refresh_seconds") or 45))
+                presence_last_online_state[str(user_id)]=True
+                r=presence_runtime_stats.setdefault(str(user_id),{})
+                r.update({"online_state":"online","last_update_at":datetime.now(timezone.utc),"last_error_code":""})
+                r["online_success"]=int(r.get("online_success") or 0)+1
+                await _presence_v2_runtime_save(user_id)
+                await presence_log(user_id,"presence.started")
+        elif presence_last_online_state.get(str(user_id)):
+            await presence_mark_offline(user_id)
+
+        activity_active=_presence_v2_engine_active(config,"activity",local)
+        await _presence_v2_sync_activity(user_id,config,activity_active)
+        await _presence_v2_watchdog(user_id)
+        return {"ok":True,"online":bool(online_active),"activity":bool(activity_active)}
+    except FloodWaitError as exc:
+        r=presence_runtime_stats.setdefault(str(user_id),{})
+        r["last_error_code"]="TELEGRAM_FLOOD_WAIT"
+        await _presence_v2_runtime_save(user_id)
+        presence_next_online[str(user_id)]=time.monotonic()+max(1,int(exc.seconds))
+        return {"ok":False,"reason":"TELEGRAM_FLOOD_WAIT"}
+    except Exception as exc:
+        code=_presence_v2_error_code(exc)
+        r=presence_runtime_stats.setdefault(str(user_id),{})
+        r["last_error_code"]=code
+        r["online_failed"]=int(r.get("online_failed") or 0)+1
+        await _presence_v2_runtime_save(user_id)
+        await presence_log(user_id,"activity.telegram_error",meta={"code":code})
+        if code=="SESSION_DISCONNECTED":
+            try: await invalidate_customer_session(str(user_id),exc)
+            except Exception: pass
+        return {"ok":False,"reason":code}
+
+async def presence_loop():
+    while True:
+        try:
+            if db_pool is not None:
+                rows=await db_pool.fetch("""
+                    select p.customer_id
+                    from salf1_presence_settings p
+                    join salf1_bot_users u on u.telegram_user_id=p.customer_id
+                    where (
+                        coalesce((p.config->>'online_enabled')::boolean,false)=true
+                        or coalesce((p.config->>'activity_enabled')::boolean,false)=true
+                        or coalesce((p.config->>'typing_enabled')::boolean,false)=true
+                    ) and u.account_connected=true and u.salf_enabled=true
+                """)
+                for row in rows:
+                    await presence_apply_now(int(row["customer_id"]))
+        except Exception as exc:
+            print(f"Presence loop error: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(3)
+
+async def presence_online_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    _,local=_presence_v2_now_local(cfg)
+    r=presence_runtime_stats.setdefault(str(user_id),{})
+    return f"""<b>Sᴀʟғ1 · آنلاین بودن</b>
+
+<blockquote><b>وضعیت</b>
+فعال : {"بله" if cfg.get("online_enabled") else "خیر"}
+حالت : {html.escape({"always":"همیشه آنلاین","schedule":"طبق برنامه","manual":"دستی"}.get(str(cfg.get("online_mode")),"همیشه آنلاین"))}
+منطقه زمانی : <code>{html.escape(str(cfg.get("timezone") or "UTC"))}</code>
+وضعیت لحظه‌ای : {"آنلاین" if r.get("online_state")=="online" else "آفلاین"}</blockquote>
+
+<blockquote><b>برنامه امروز</b>
+{html.escape(_presence_v2_windows_text([w for w in cfg.get("online_windows") or [] if local.weekday() in {int(x) for x in w.get("days") or [] if str(x).isdigit()}]))}
+وضعیت برنامه : {"در بازه" if _presence_v2_engine_active(cfg,"online",local) else "خارج از بازه"}</blockquote>
+
+{rich_button_row(rich_button("فعال" if cfg.get("online_enabled") else "غیرفعال","prs_online_toggle","success" if cfg.get("online_enabled") else "danger"))}
+{rich_button_row(rich_button("› همیشه آنلاین","prs_online_always","primary"),rich_button("› طبق برنامه","prs_online_schedule","primary"),rich_button("› دستی","prs_online_manual","primary"))}
+{rich_button_row(rich_button("› منطقه زمانی","prs_timezone","primary"))}
+{rich_button_row(rich_button("› برنامه آنلاین","prs_schedule_online","primary"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_online_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+
+def _presence_v2_windows_text(windows,limit=8):
+    lines=[]
+    for i,w in enumerate((windows or [])[:limit],1):
+        days="، ".join(PRESENCE_V2_DAYS.get(int(d),str(d)) for d in w.get("days") or [] if str(d).isdigit())
+        lines.append(f"{i}. {days or 'همه روزها'} · {w.get('start','00:00')} → {w.get('end','23:59')}")
+    return "\n".join(lines) if lines else "بدون بازه"
+
+async def presence_activity_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    r=presence_runtime_stats.setdefault(str(user_id),{})
+    current=[v for k,v in presence_current_actions.items() if k.startswith(f"{int(user_id)}:")]
+    item=current[0] if current else None
+    scenario=_presence_v2_scenario(cfg,item or {}) or {}
+    hb=r.get("heartbeat_at")
+    hb_ok=bool(hb and (datetime.now(timezone.utc)-hb).total_seconds()<=12)
+    return f"""<b>Sᴀʟғ1 · فعالیت داخل چت</b>
+
+<blockquote><b>وضعیت</b>
+فعال : {"بله" if cfg.get("activity_enabled") else "خیر"}
+حالت : {"پویا" if cfg.get("activity_mode")=="dynamic" else "سناریو"}
+سناریو : {html.escape(str(scenario.get("name") or "—"))}
+مقصدهای فعال : {sum(1 for t in cfg.get("targets") or [] if t.get("enabled",True))}</blockquote>
+
+<blockquote><b>لحظه‌ای</b>
+اکنون : {html.escape(str(item.get("label"))) if item else "بدون فعالیت"}
+مقصد : {html.escape(str(item.get("peer"))) if item else "—"}
+Heartbeat : {"سالم" if hb_ok else "—"}</blockquote>
+
+<blockquote><b>قواعد موتور</b>
+یک Action برای هر مقصد
+توقف خارج از برنامه
+Rate Limit امن
+بدون ارسال پیام واقعی</blockquote>
+
+{rich_button_row(rich_button("فعال" if cfg.get("activity_enabled") else "غیرفعال","prs_activity_toggle","success" if cfg.get("activity_enabled") else "danger"))}
+{rich_button_row(rich_button("› پویا","prs_activity_dynamic","primary"),rich_button("› سناریو","prs_activity_scenario","primary"))}
+{rich_button_row(rich_button("› سناریوها","prs_scenarios","primary"))}
+{rich_button_row(rich_button("› مقصدها","prs_destinations","primary"))}
+{rich_button_row(rich_button("› زمان‌بندی فعالیت","prs_schedule_activity","primary"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_activity_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+
+async def presence_timezone_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    return f"""<b>Sᴀʟғ1 · منطقه زمانی</b>
+
+<blockquote><b>منطقه فعلی</b>
+<code>{html.escape(str(cfg.get("timezone") or "UTC"))}</code>
+تمام Scheduleهای وضعیت حضور بر اساس این منطقه اجرا می‌شوند.</blockquote>
+
+{rich_button_row(*[
+    rich_button(tz,f"prs_tz_{tz.replace('/','_')}","success" if str(cfg.get("timezone"))==tz else "primary")
+    for tz in PRESENCE_V2_TZ
+])}
+{rich_button_row(rich_button("› ورود منطقه IANA","prs_tz_custom","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","prs_online","primary"))}"""
+
+async def presence_schedule_page(user_id,engine):
+    cfg=await presence_get_settings(user_id)
+    engine="activity" if engine=="activity" else "online"
+    key=f"{engine}_windows"
+    skey=f"{engine}_schedule_enabled"
+    return f"""<b>Sᴀʟғ1 · زمان‌بندی</b>
+
+<blockquote><b>{"آنلاین بودن" if engine=="online" else "فعالیت داخل چت"}</b>
+منطقه زمانی : <code>{html.escape(str(cfg.get("timezone") or "UTC"))}</code>
+زمان‌بندی : {"فعال" if cfg.get(skey) else "خاموش"}</blockquote>
+
+<blockquote><b>بازه‌ها</b>
+{html.escape(_presence_v2_windows_text(cfg.get(key) or [],10))}</blockquote>
+
+{rich_button_row(rich_button("› آنلاین بودن","prs_schedule_online","success" if engine=="online" else "primary"),rich_button("› فعالیت داخل چت","prs_schedule_activity","success" if engine=="activity" else "primary"))}
+{rich_button_row(rich_button("فعال" if cfg.get(skey) else "غیرفعال",f"prs_schedule_toggle_{engine}","success" if cfg.get(skey) else "danger"))}
+{rich_button_row(rich_button("› افزودن بازه",f"prs_schedule_add_{engine}","primary"))}
+{rich_button_row(rich_button("› پاک‌سازی",f"prs_schedule_clear_{engine}","danger"))}
+{rich_button_row(rich_button("› بروزرسانی",f"prs_schedule_refresh_{engine}","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+
+async def presence_exceptions_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    lines=[]
+    for item in (cfg.get("exceptions") or [])[:12]:
+        mode={"off":"خاموش","on":"فعال","window":f"{item.get('start','00:00')} → {item.get('end','23:59')}"}.get(str(item.get("mode")),"خاموش")
+        engine={"all":"همه","online":"آنلاین","activity":"فعالیت"}.get(str(item.get("engine") or "all"),"همه")
+        lines.append(f"{item.get('date')} · {engine} · {mode}")
+    return f"""<b>Sᴀʟғ1 · استثناها</b>
+
+<blockquote><b>قانون</b>
+استثناء همیشه بر برنامه عادی اولویت دارد.</blockquote>
+
+<blockquote><b>فهرست</b>
+{html.escape(chr(10).join(lines) if lines else "استثنایی ثبت نشده است.")}</blockquote>
+
+{rich_button_row(rich_button("› افزودن استثناء","prs_exception_add","primary"))}
+{rich_button_row(rich_button("› پاک‌سازی","prs_exception_clear","danger"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_exception_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+
+async def presence_targets_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    blocks=[]
+    for i,t in enumerate((cfg.get("targets") or [])[:20]):
+        blocks.append(
+            f"<b>{i+1}. {html.escape(str(t.get('title') or t.get('peer')))}</b>\n"
+            f"وضعیت : {'فعال' if t.get('enabled',True) else 'خاموش'}\n"
+            f"{rich_button_row(rich_button('فعال' if t.get('enabled',True) else 'غیرفعال',f'prs_destination_toggle_{i}','success' if t.get('enabled',True) else 'danger'),rich_button('حذف','prs_destination_remove_'+str(i),'danger'))}"
+        )
+    listing=("\n\n".join(blocks) if blocks else "مقصدی ثبت نشده است.")
+    return f"""<b>Sᴀʟғ1 · مقصدهای فعالیت</b>
+
+<blockquote>{listing}</blockquote>
+
+{rich_button_row(rich_button("› افزودن مقصد","prs_destination_add","primary"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_destinations_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","prs_activity","primary"))}"""
+
+async def presence_scenarios_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    blocks=[]
+    for i,s in enumerate((cfg.get("scenarios") or [])[:15]):
+        sid=str(s.get("id") or "")
+        active=sid==str(cfg.get("active_scenario") or "")
+        buttons=rich_button_row(
+            rich_button("› فعال" if active else "› فعال‌سازی",f"prs_scenario_apply_{i}","success" if active else "primary"),
+            *([rich_button("حذف",f"prs_scenario_delete_{i}","danger")] if sid.startswith("custom_") else [])
+        )
+        blocks.append(f"<b>{i+1}. {html.escape(str(s.get('name') or 'سناریو'))}</b> · {'فعال' if active else 'آماده'}\n{buttons}")
+    return f"""<b>Sᴀʟғ1 · سناریوها</b>
+
+<blockquote>{chr(10).join(blocks) if blocks else "سناریویی ثبت نشده است."}</blockquote>
+
+<blockquote>حالت پویا Action قبلی را پشت‌سرهم تکرار نمی‌کند.</blockquote>
+
+{rich_button_row(rich_button("› ساخت سناریو","prs_scenario_new","primary"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_scenarios_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","prs_activity","primary"))}"""
+
+async def presence_profiles_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    blocks=[]
+    for i,p in enumerate((cfg.get("profiles") or [])[:12]):
+        active=str(p.get("id"))==str(cfg.get("active_profile") or "")
+        blocks.append(
+            f"<b>{i+1}. {html.escape(str(p.get('name') or 'پروفایل'))}</b> · {'فعال' if active else 'ذخیره‌شده'}\n"
+            + rich_button_row(
+                rich_button("› فعال‌سازی",f"prs_profile_apply_{i}","success" if active else "primary"),
+                rich_button("حذف",f"prs_profile_delete_{i}","danger")
+            )
+        )
+    return f"""<b>Sᴀʟғ1 · پروفایل‌های حضور</b>
+
+<blockquote>{chr(10).join(blocks) if blocks else "پروفایلی ذخیره نشده است."}</blockquote>
+
+<blockquote>پروفایل وضعیت آنلاین، فعالیت، Schedule، Exception، مقصدها و سناریو را نگهداری می‌کند.</blockquote>
+
+{rich_button_row(rich_button("› ذخیره وضعیت فعلی","prs_profile_save","primary"))}
+{rich_button_row(rich_button("› پاک‌سازی","prs_profile_clear","danger"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_profiles_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+
+async def presence_advanced_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    return f"""<b>Sᴀʟғ1 · تنظیمات پیشرفته</b>
+
+<blockquote><b>حفاظت</b>
+Rate Limit : {"فعال" if cfg.get("rate_limit_guard") else "خاموش"}
+Retry : {"فعال" if cfg.get("retry") else "خاموش"}
+Logging : {"فعال" if cfg.get("logging") else "خاموش"}
+Watchdog : {"فعال" if cfg.get("watchdog") else "خاموش"}</blockquote>
+
+<blockquote><b>محدودیت داخلی</b>
+فاصله امن Action : حداقل ۳ ثانیه
+Heartbeat : هر ۴ ثانیه
+مقصدهای هم‌زمان : {int(cfg.get("max_targets_per_cycle") or 8)}
+هیچ پیام واقعی توسط Activity Engine ارسال نمی‌شود.</blockquote>
+
+{rich_button_row(rich_button("Rate Limit","prs_adv_rate","success" if cfg.get("rate_limit_guard") else "danger"))}
+{rich_button_row(rich_button("Retry","prs_adv_retry","success" if cfg.get("retry") else "danger"))}
+{rich_button_row(rich_button("Logging","prs_adv_log","success" if cfg.get("logging") else "danger"))}
+{rich_button_row(rich_button("Watchdog","prs_adv_watchdog","success" if cfg.get("watchdog") else "danger"))}
+{rich_button_row(rich_button("› سلامت موتور","prs_stats","primary"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_advanced_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+
+async def presence_stats_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    r=presence_runtime_stats.setdefault(str(user_id),{})
+    hb=r.get("heartbeat_at")
+    hb_ok=bool(hb and (datetime.now(timezone.utc)-hb).total_seconds()<=12)
+    return f"""<b>Sᴀʟғ1 · سلامت وضعیت حضور</b>
+
+<blockquote><b>Runtime</b>
+آنلاین : {html.escape(str(r.get("online_state") or "offline"))}
+Activity : {html.escape(str(r.get("activity_state") or "idle"))}
+Action : {html.escape(str(r.get("active_action") or "—"))}
+مقصد : {html.escape(str(r.get("destination_peer") or "—"))}
+Heartbeat : {"سالم" if hb_ok else "—"}</blockquote>
+
+<blockquote><b>خطا</b>
+{html.escape(_presence_v2_error_text(str(r.get("last_error_code") or "")))}</blockquote>
+
+{rich_button_row(rich_button("› بروزرسانی","prs_stats_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+
+async def presence_profile_save(user_id,name):
+    cfg=await presence_get_settings(user_id)
+    profiles=list(cfg.get("profiles") or [])
+    snapshot={k:json.loads(json.dumps(cfg.get(k))) for k in (
+        "online_enabled","activity_enabled","timezone","online_mode","activity_mode",
+        "online_schedule_enabled","activity_schedule_enabled","online_windows",
+        "activity_windows","exceptions","targets","scenarios","active_scenario"
+    )}
+    pid=f"profile_{secrets.token_hex(4)}"
+    profiles.append({"id":pid,"name":str(name)[:50],"config":snapshot})
+    cfg["profiles"]=profiles[-12:]
+    cfg["active_profile"]=pid
+    await presence_save_settings(user_id,cfg)
+
+async def presence_apply_profile(user_id,index):
+    cfg=await presence_get_settings(user_id)
+    profiles=list(cfg.get("profiles") or [])
+    if 0<=index<len(profiles):
+        merged=dict(cfg)
+        merged.update(json.loads(json.dumps(profiles[index].get("config") or {})))
+        merged["profiles"]=profiles
+        merged["active_profile"]=str(profiles[index].get("id") or "")
+        await presence_save_settings(user_id,merged)
+        await presence_apply_now(user_id,True)
+
+async def presence_profile_delete(user_id,index):
+    cfg=await presence_get_settings(user_id)
+    profiles=list(cfg.get("profiles") or [])
+    if 0<=index<len(profiles):
+        deleted=profiles.pop(index)
+        if str(deleted.get("id"))==str(cfg.get("active_profile")):
+            cfg["active_profile"]=""
+        cfg["profiles"]=profiles
+        await presence_save_settings(user_id,cfg)
+
+async def presence_profile_clear(user_id):
+    cfg=await presence_get_settings(user_id)
+    cfg["profiles"]=[]
+    cfg["active_profile"]=""
+    await presence_save_settings(user_id,cfg)
+
+async def presence_set_timezone(user_id,tz_name):
+    ZoneInfo(str(tz_name).strip())
+    cfg=await presence_get_settings(user_id)
+    cfg["timezone"]=str(tz_name).strip()
+    await presence_save_settings(user_id,cfg)
+    await presence_apply_now(user_id,True)
+
+async def presence_add_schedule_window(user_id,engine,day_token,start,end):
+    import re
+    days = list(range(7)) if day_token.casefold() in {"همه","all","*"} else None
+    if days is None:
+        if day_token.casefold() in PRESENCE_V2_DAY_ALIASES:
+            days=[PRESENCE_V2_DAY_ALIASES[day_token.casefold()]]
+        else:
+            try:
+                day=int(day_token)
+                if day not in range(7): raise ValueError
+                days=[day]
+            except Exception:
+                raise ValueError("روز معتبر نیست.")
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d",start) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d",end):
+        raise ValueError("زمان باید با فرمت HH:MM باشد.")
+    cfg=await presence_get_settings(user_id)
+    key=f"{engine}_windows"
+    cfg[key]=(cfg.get(key) or [])+[{"days":days,"start":start,"end":end,"enabled":True}]
+    cfg[f"{engine}_schedule_enabled"]=True
+    if engine=="online": cfg["online_mode"]="schedule"
+    await presence_save_settings(user_id,cfg)
+    await presence_apply_now(user_id,True)
+
+async def presence_clear_schedule(user_id,engine):
+    cfg=await presence_get_settings(user_id)
+    cfg[f"{engine}_windows"]=[]
+    cfg[f"{engine}_schedule_enabled"]=False
+    if engine=="online": cfg["online_mode"]="always"
+    await presence_save_settings(user_id,cfg)
+    await presence_apply_now(user_id,True)
+
+async def presence_add_exception(user_id,raw):
+    import re
+    parts=str(raw or "").strip().split()
+    if len(parts)<2: raise ValueError("فرمت: 2026-10-06 off یا 2026-10-07 18:00-23:00")
+    date_raw=parts[0]
+    datetime.strptime(date_raw,"%Y-%m-%d")
+    rule=parts[1]
+    item={"date":date_raw,"engine":"all","mode":"off"}
+    if rule.casefold() in {"off","خاموش"}:
+        pass
+    elif rule.casefold() in {"on","فعال"}:
+        item["mode"]="on"
+    elif re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d",rule):
+        item["mode"]="window"
+        item["start"],item["end"]=rule.split("-",1)
+    else:
+        raise ValueError("قانون استثناء معتبر نیست.")
+    if len(parts)>=3 and parts[2].casefold() in {"online","activity","all"}:
+        item["engine"]=parts[2].casefold()
+    cfg=await presence_get_settings(user_id)
+    cfg["exceptions"]=[x for x in (cfg.get("exceptions") or []) if str(x.get("date"))!=date_raw]
+    cfg["exceptions"].append(item)
+    await presence_save_settings(user_id,cfg)
+    await presence_apply_now(user_id,True)
+
+async def presence_target_add(user_id,peer_ref):
+    client=clients.get(str(user_id))
+    if not client or not client.is_connected(): raise ValueError("اکانت متصل نیست.")
+    entity=await client.get_entity(str(peer_ref).strip())
+    if getattr(entity,"bot",False): raise ValueError("مقصد ربات پشتیبانی نمی‌شود.")
+    class_name=entity.__class__.__name__
+    if class_name=="User":
+        kind="PV"
+    elif getattr(entity,"megagroup",False) or class_name=="Chat":
+        kind="گروه"
+    else:
+        raise ValueError("فقط PV و گروه پشتیبانی می‌شوند.")
+    title=getattr(entity,"title",None) or getattr(entity,"first_name",None) or getattr(entity,"username",None) or str(entity.id)
+    cfg=await presence_get_settings(user_id)
+    targets=list(cfg.get("targets") or [])
+    if not any(str(x.get("peer")).casefold()==str(peer_ref).strip().casefold() for x in targets):
+        targets.append({"peer":str(peer_ref).strip(),"title":str(title)[:60],"kind":kind,"enabled":True,"scenario":cfg.get("active_scenario","preset_normal")})
+    cfg["targets"]=targets[-20:]
+    await presence_save_settings(user_id,cfg)
+    await presence_apply_now(user_id,True)
+
+async def presence_create_custom_scenario(user_id,name,raw_steps):
+    steps=[]
+    for token in [x.strip() for x in str(raw_steps or "").split(",") if x.strip()][:20]:
+        action,bounds=(token.split(":",1) if ":" in token else (token,"8-15"))
+        action=action.strip().lower()
+        if action not in PRESENCE_V2_ACTIONS: raise ValueError(f"Action «{action}» معتبر نیست.")
+        low,high=(int(x) for x in bounds.split("-",1))
+        low=max(5,min(60,low)); high=max(low,min(120,high))
+        steps.append({"action":action,"min":low,"max":high,"pause_min":5,"pause_max":15})
+    if not steps: raise ValueError("حداقل یک Action لازم است.")
+    cfg=await presence_get_settings(user_id)
+    sid=f"custom_{secrets.token_hex(4)}"
+    scenarios=list(cfg.get("scenarios") or [])
+    scenarios.append({"id":sid,"name":str(name)[:50],"steps":steps,"enabled":True})
+    cfg["scenarios"]=scenarios[-30:]; cfg["active_scenario"]=sid
+    for t in cfg.get("targets") or []: t["scenario"]=sid
+    await presence_save_settings(user_id,cfg)
+    await presence_apply_now(user_id,True)
+
+async def handle_presence_input_state(user_id:int,chat_id:int,text:str)->bool:
+    state_obj=bot_states.get(int(user_id))
+    if not isinstance(state_obj,dict): return False
+    state=str(state_obj.get("state") or "")
+    if not state.startswith("presence_"): return False
+    if normalize_text(text) in {"لغو","cancel","انصراف"}:
+        bot_states.pop(int(user_id),None)
+        await bot_send(chat_id,await presence_page(user_id))
+        return True
+    try:
+        if state=="presence_target_add":
+            await presence_target_add(user_id,text); bot_states.pop(int(user_id),None)
+            await bot_send(chat_id,await presence_targets_page(user_id)); return True
+        if state in {"presence_schedule_add_online","presence_schedule_add_activity"}:
+            p=str(text).strip().split()
+            if len(p)!=2 or "-" not in p[1]: raise ValueError("فرمت: شنبه 08:00-12:00")
+            st,en=p[1].split("-",1)
+            await presence_add_schedule_window(user_id,"online" if state.endswith("_online") else "activity",p[0],st,en)
+            bot_states.pop(int(user_id),None)
+            await bot_send(chat_id,await presence_schedule_page(user_id,"online" if state.endswith("_online") else "activity")); return True
+        if state=="presence_exception_add":
+            await presence_add_exception(user_id,text); bot_states.pop(int(user_id),None)
+            await bot_send(chat_id,await presence_exceptions_page(user_id)); return True
+        if state=="presence_timezone_custom":
+            await presence_set_timezone(user_id,text); bot_states.pop(int(user_id),None)
+            await bot_send(chat_id,await presence_timezone_page(user_id)); return True
+        if state=="presence_profile_save":
+            await presence_profile_save(user_id,str(text).strip()); bot_states.pop(int(user_id),None)
+            await bot_send(chat_id,await presence_profiles_page(user_id)); return True
+        if state=="presence_scenario_name":
+            name=str(text).strip()
+            if not name: raise ValueError("نام سناریو را ارسال کنید.")
+            bot_states[user_id]={"state":"presence_scenario_steps","name":name}
+            await bot_send(chat_id,"""<b>Sᴀʟғ1 · ساخت سناریو</b>
+
+ترتیب Actionها را بفرستید:
+<code>typing:8-15,record_audio:10-20,typing:5-10</code>""")
+            return True
+        if state=="presence_scenario_steps":
+            await presence_create_custom_scenario(user_id,str(state_obj.get("name") or "سناریو"),text)
+            bot_states.pop(int(user_id),None)
+            await bot_send(chat_id,await presence_scenarios_page(user_id)); return True
+    except ValueError as exc:
+        await bot_send(chat_id,f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(str(exc))}</blockquote>")
+        return True
+    except Exception as exc:
+        code=_presence_v2_error_code(exc)
+        await bot_send(chat_id,f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(_presence_v2_error_text(code))}</blockquote>")
+        return True
+    return False
+
+async def presence_page(user_id):
+    cfg=await presence_get_settings(user_id)
+    row=await db_user(str(user_id))
+    r=presence_runtime_stats.setdefault(str(user_id),{})
+    current=[v for k,v in presence_current_actions.items() if k.startswith(f"{int(user_id)}:")]
+    item=current[0] if current else None
+    scenario=_presence_v2_scenario(cfg,item or {}) or {}
+    hb=r.get("heartbeat_at")
+    hb_ok=bool(hb and (datetime.now(timezone.utc)-hb).total_seconds()<=12)
+    return f"""<b>Sᴀʟғ1 · وضعیت حضور</b>
+
+<blockquote><b>وضعیت اصلی</b>
+آنلاین بودن : {"فعال" if cfg.get("online_enabled") else "غیرفعال"}
+فعالیت داخل چت : {"فعال" if cfg.get("activity_enabled") else "غیرفعال"}
+اکانت : {"متصل" if row and row["account_connected"] else "متصل نیست"}
+سلف : {"فعال" if row and row["salf_enabled"] else "خاموش"}
+منطقه زمانی : <code>{html.escape(str(cfg.get("timezone") or "UTC"))}</code></blockquote>
+
+<blockquote><b>وضعیت لحظه‌ای</b>
+اکنون : {html.escape(str(item.get("label"))) if item else "بدون فعالیت"}
+مقصد : {html.escape(str(item.get("peer"))) if item else "—"}
+Heartbeat : {"سالم" if hb_ok else ("منتظر" if cfg.get("activity_enabled") else "—")}
+آخرین بروزرسانی : {presence_runtime_stats.get(str(user_id),{}).get("last_update_at") or "—"}</blockquote>
+
+<blockquote><b>برنامه</b>
+آنلاین : {"در برنامه" if _presence_v2_engine_active(cfg,"online",_presence_v2_now_local(cfg)[1]) else "خارج از برنامه"}
+فعالیت : {"در برنامه" if _presence_v2_engine_active(cfg,"activity",_presence_v2_now_local(cfg)[1]) else "خارج از برنامه"}
+سناریو : {html.escape(str(scenario.get("name") or "—"))}
+مقصدهای فعال : {sum(1 for t in cfg.get("targets") or [] if t.get("enabled",True))}</blockquote>
+
+<blockquote><b>سلامت موتور</b>
+{"سالم" if not r.get("last_error_code") else html.escape(_presence_v2_error_text(str(r.get("last_error_code"))))}</blockquote>
+
+{rich_button_row(rich_button("› آنلاین بودن","prs_online","primary"))}
+{rich_button_row(rich_button("› فعالیت داخل چت","prs_activity","primary"))}
+{rich_button_row(rich_button("› پروفایل‌های حضور","prs_profiles","primary"))}
+{rich_button_row(rich_button("› زمان‌بندی","prs_schedule","primary"))}
+{rich_button_row(rich_button("› استثناها","prs_exceptions","primary"))}
+{rich_button_row(rich_button("› تنظیمات پیشرفته","prs_advanced","primary"))}
+{rich_button_row(rich_button("› بروزرسانی","prs_refresh","primary"))}
+{rich_button_row(rich_button("‹ بازگشت","self_features","primary"))}"""
+
 
 async def presence_target_text(user_id: int):
     config = await presence_get_settings(user_id)
