@@ -1,4 +1,5 @@
 import asyncio
+from urllib.parse import urlparse
 import base64
 import hashlib
 import hmac
@@ -2254,6 +2255,14 @@ async def post_json(url: str, payload: dict):
     if not url or http_session is None:
         return None
 
+    # The public web app root returns HTML, not the JSON event contract.
+    # Never send high-volume Telegram events to a root URL.
+    try:
+        if urlparse(url).path in {"", "/"}:
+            return None
+    except Exception:
+        return None
+
     headers = {"Content-Type": "application/json"}
     if WORKER_API_TOKEN:
         headers["X-Salf1-Worker-Token"] = WORKER_API_TOKEN
@@ -2267,6 +2276,9 @@ async def post_json(url: str, payload: dict):
         ) as response:
             if response.status >= 300:
                 print(f"Backend rejected request: HTTP {response.status}")
+                return None
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            if "application/json" not in content_type:
                 return None
             return await response.json()
     except Exception as exc:
