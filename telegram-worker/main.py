@@ -70,6 +70,11 @@ def _emoji_id(value: str) -> str:
     value = str(value or "").strip()
     return value if value.isdigit() else ""
 
+def rich_message_html(text: str) -> str:
+    """Backward-compatible Rich Message HTML passthrough for Telethon paths."""
+    return str(text)
+
+
 def render_custom_emoji(text: str) -> str:
     rendered = str(text)
     for name, (raw_id, alt) in CUSTOM_EMOJI.items():
