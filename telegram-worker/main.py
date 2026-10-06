@@ -365,10 +365,9 @@ bot_username = ""
 web_login_tokens: dict[str, dict] = {}
 clock_last_outputs: dict[str, dict] = {}
 clock_next_allowed: dict[str, float] = {}
+# وضعیت اجرای موتور جدید «وضعیت حضور»
 presence_next_online: dict[str, float] = {}
 presence_last_online_state: dict[str, bool] = {}
-presence_typing_until: dict[str, float] = {}
-presence_next_burst: dict[str, float] = {}
 presence_runtime_stats: dict[str, dict] = {}
 presence_activity_tasks: dict[str, asyncio.Task] = {}
 presence_activity_stop_events: dict[str, asyncio.Event] = {}
@@ -4384,383 +4383,7 @@ async def clock_loop():
 
 
 
-PRESENCE_DEFAULTS = {
-    "online_enabled": False,
-    "timezone": "UTC",
-    "typing_enabled": False,
-    "mode": "always",
-    "typing_mode": "continuous",
-    "typing_duration_seconds": 20,
-    "typing_break_seconds": 40,
-    "typing_refresh_seconds": 5,
-    "online_refresh_seconds": 45,
-    "schedule_enabled": False,
-    "schedule_start": "00:00",
-    "schedule_end": "23:59",
-    "schedule_days": [0, 1, 2, 3, 4, 5, 6],
-    "targets": [],
-    "max_targets_per_cycle": 8,
-    "rate_limit_guard": True,
-    "retry": True,
-    "logging": True,
-    "profiles": [],
-}
-
-PRESENCE_MODE_NAMES = {
-    "always": "دائمی",
-    "schedule": "زمان‌بندی",
-    "smart": "هوشمند",
-}
-
-PRESENCE_TYPING_MODE_NAMES = {
-    "continuous": "پیوسته",
-    "bursts": "بازه‌ای",
-}
-
-PRESENCE_RUNTIME_LIMITS = {
-    "typing_duration_seconds": {10, 20, 30, 60},
-    "typing_break_seconds": {20, 40, 60, 120},
-    "typing_refresh_seconds": {4, 5, 6, 10},
-    "online_refresh_seconds": {30, 45, 60, 120},
-}
-
-def presence_default_config():
-    return json.loads(json.dumps(PRESENCE_DEFAULTS))
-
-def _presence_json(value, fallback):
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            decoded = json.loads(value)
-            return decoded if isinstance(decoded, dict) else fallback
-        except Exception:
-            return fallback
-    return fallback
-
-async def init_presence_settings_table():
-    if db_pool is None:
-        return
-    await db_pool.execute(
-        """
-        create table if not exists salf1_presence_settings (
-            customer_id bigint primary key,
-            config jsonb not null default '{}'::jsonb,
-            stats jsonb not null default '{}'::jsonb,
-            created_at timestamptz not null default now(),
-            updated_at timestamptz not null default now()
-        )
-        """
-    )
-
-async def presence_record(user_id: int):
-    if db_pool is None:
-        return None
-    return await db_pool.fetchrow(
-        """
-        select customer_id, config, stats, created_at, updated_at
-        from salf1_presence_settings
-        where customer_id = $1
-        """,
-        int(user_id),
-    )
-
-async def presence_get_settings(user_id: int):
-    defaults = presence_default_config()
-    row = await presence_record(user_id)
-    if not row:
-        if db_pool is not None:
-            await db_pool.execute(
-                """
-                insert into salf1_presence_settings (customer_id, config)
-                values ($1, $2::jsonb)
-                on conflict (customer_id) do nothing
-                """,
-                int(user_id),
-                json.dumps(defaults, ensure_ascii=False),
-            )
-        return defaults
-    stored = _presence_json(row["config"], {})
-    defaults.update(stored)
-    if "timezone" not in stored:
-        clock_config = await clock_get_settings(user_id)
-        defaults["timezone"] = str(clock_config.get("timezone") or "UTC")
-    if not isinstance(defaults.get("targets"), list):
-        defaults["targets"] = []
-    if not isinstance(defaults.get("schedule_days"), list):
-        defaults["schedule_days"] = list(range(7))
-    return defaults
-
-async def presence_save_settings(user_id: int, config: dict):
-    if db_pool is None:
-        return
-    clean = presence_default_config()
-    clean.update(config or {})
-    clean["targets"] = list(clean.get("targets") or [])[:20]
-    clean["schedule_days"] = sorted({
-        int(day) for day in (clean.get("schedule_days") or list(range(7)))
-        if str(day).isdigit() and int(day) in range(7)
-    })
-    await db_pool.execute(
-        """
-        insert into salf1_presence_settings (customer_id, config)
-        values ($1, $2::jsonb)
-        on conflict (customer_id) do update set
-            config = excluded.config,
-            updated_at = now()
-        """,
-        int(user_id),
-        json.dumps(clean, ensure_ascii=False),
-    )
-
-async def presence_stats_update(user_id: int, key: str, amount: int = 1):
-    if db_pool is None:
-        return
-    await db_pool.execute(
-        """
-        insert into salf1_presence_settings (customer_id, config, stats)
-        values ($1, $2::jsonb, $3::jsonb)
-        on conflict (customer_id) do update set
-            stats = jsonb_set(
-                coalesce(salf1_presence_settings.stats, '{}'::jsonb),
-                ARRAY[$4],
-                to_jsonb(coalesce((salf1_presence_settings.stats->>$4)::bigint, 0) + $5),
-                true
-            ),
-            updated_at = now()
-        """,
-        int(user_id),
-        json.dumps(presence_default_config(), ensure_ascii=False),
-        json.dumps({key: int(amount)}, ensure_ascii=False),
-        str(key),
-        int(amount),
-    )
-
-def presence_schedule_active(config: dict, now_local: datetime) -> bool:
-    if str(config.get("mode") or "always") != "schedule":
-        return True
-    if not bool(config.get("schedule_enabled")):
-        return True
-
-    days = {
-        int(x) for x in (config.get("schedule_days") or list(range(7)))
-        if str(x).isdigit() and int(x) in range(7)
-    }
-    if now_local.weekday() not in days:
-        return False
-
-    start_raw = str(config.get("schedule_start") or "00:00")
-    end_raw = str(config.get("schedule_end") or "23:59")
-    try:
-        start = datetime.strptime(start_raw, "%H:%M").time()
-        end = datetime.strptime(end_raw, "%H:%M").time()
-    except ValueError:
-        return True
-
-    if start <= end:
-        return start <= now_local.time() <= end
-    return now_local.time() >= start or now_local.time() <= end
-
-def presence_runtime(user_id: int):
-    return presence_runtime_stats.setdefault(
-        str(user_id),
-        {
-            "online_success": 0,
-            "online_failed": 0,
-            "typing_success": 0,
-            "typing_failed": 0,
-            "last_error": "",
-            "last_activity": 0.0,
-            "typing_next": 0.0,
-        },
-    )
-
-async def presence_mark_offline(user_id: int):
-    client = clients.get(str(user_id))
-    if client is None or not client.is_connected():
-        return
-    try:
-        if await client.is_user_authorized():
-            await client(functions.account.UpdateStatusRequest(offline=True))
-            presence_last_online_state[str(user_id)] = False
-            await presence_stats_update(user_id, "online_offline", 1)
-    except Exception as exc:
-        runtime = presence_runtime(user_id)
-        runtime["last_error"] = type(exc).__name__
-
-async def presence_cancel_typing(user_id: int):
-    client = clients.get(str(user_id))
-    if client is None or not client.is_connected():
-        return
-    config = await presence_get_settings(user_id)
-    targets = list(config.get("targets") or [])
-    limit = max(1, min(20, int(config.get("max_targets_per_cycle") or 8)))
-    for target in targets[:limit]:
-        ref = str((target or {}).get("peer") or "").strip()
-        if not ref:
-            continue
-        try:
-            entity = await client.get_input_entity(ref)
-            await client(
-                functions.messages.SetTypingRequest(
-                    peer=entity,
-                    action=SendMessageCancelAction(),
-                )
-            )
-        except Exception:
-            continue
-
-async def presence_apply_now(user_id: int, force: bool = False):
-    config = await presence_get_settings(user_id)
-    client = clients.get(str(user_id))
-    if client is None or not client.is_connected():
-        return {"ok": False, "reason": "client_offline"}
-
-    try:
-        if not await client.is_user_authorized():
-            return {"ok": False, "reason": "unauthorized"}
-
-        now_utc = datetime.now(timezone.utc)
-        local = now_utc.astimezone(
-            _clock_safe_timezone(str(config.get("timezone") or "UTC"))
-        )
-        active_window = presence_schedule_active(config, local)
-        now_mono = time.monotonic()
-        runtime = presence_runtime(user_id)
-
-        online_wanted = bool(config.get("online_enabled")) and active_window
-        if not online_wanted:
-            if presence_last_online_state.get(str(user_id)):
-                await presence_mark_offline(user_id)
-        else:
-            online_due = force or now_mono >= presence_next_online.get(str(user_id), 0.0)
-            if online_due:
-                try:
-                    await client(functions.account.UpdateStatusRequest(offline=False))
-                    presence_next_online[str(user_id)] = now_mono + max(
-                        30, int(config.get("online_refresh_seconds") or 45)
-                    )
-                    presence_last_online_state[str(user_id)] = True
-                    runtime["online_success"] += 1
-                    runtime["last_activity"] = now_mono
-                    await presence_stats_update(user_id, "online_success", 1)
-                except FloodWaitError as exc:
-                    presence_next_online[str(user_id)] = now_mono + max(1, int(exc.seconds))
-                    runtime["online_failed"] += 1
-                    runtime["last_error"] = f"FLOOD_WAIT_{int(exc.seconds)}"
-                    await presence_stats_update(user_id, "online_flood_wait", 1)
-                except Exception as exc:
-                    runtime["online_failed"] += 1
-                    runtime["last_error"] = type(exc).__name__
-                    await presence_stats_update(user_id, "online_failed", 1)
-
-        typing_active = (
-            bool(config.get("typing_enabled"))
-            and bool(config.get("targets"))
-            and active_window
-        )
-        typing_bursts = (
-            str(config.get("typing_mode") or "continuous") == "bursts"
-            or str(config.get("mode") or "always") == "smart"
-        )
-        if typing_active and typing_bursts:
-            if now_mono < presence_typing_until.get(str(user_id), 0.0):
-                typing_active = True
-            elif now_mono >= presence_next_burst.get(str(user_id), 0.0):
-                duration = max(5, int(config.get("typing_duration_seconds") or 20))
-                break_seconds = max(10, int(config.get("typing_break_seconds") or 40))
-                presence_typing_until[str(user_id)] = now_mono + duration
-                presence_next_burst[str(user_id)] = now_mono + duration + break_seconds
-                typing_active = True
-            else:
-                typing_active = False
-
-        if typing_active:
-            typing_next = float(runtime.get("typing_next", 0.0) or 0.0)
-            if force or now_mono >= typing_next:
-                targets = list(config.get("targets") or [])
-                limit = max(1, min(20, int(config.get("max_targets_per_cycle") or 8)))
-                refresh = max(4, int(config.get("typing_refresh_seconds") or 5))
-                for target in targets[:limit]:
-                    ref = str((target or {}).get("peer") or "").strip()
-                    if not ref:
-                        continue
-                    try:
-                        entity = await client.get_input_entity(ref)
-                        await client(
-                            functions.messages.SetTypingRequest(
-                                peer=entity,
-                                action=SendMessageTypingAction(),
-                            )
-                        )
-                        runtime["typing_success"] += 1
-                        runtime["last_activity"] = now_mono
-                        await presence_stats_update(user_id, "typing_success", 1)
-                    except FloodWaitError as exc:
-                        runtime["typing_failed"] += 1
-                        runtime["last_error"] = f"FLOOD_WAIT_{int(exc.seconds)}"
-                        await presence_stats_update(user_id, "typing_flood_wait", 1)
-                        break
-                    except Exception as exc:
-                        runtime["typing_failed"] += 1
-                        runtime["last_error"] = type(exc).__name__
-                        await presence_stats_update(user_id, "typing_failed", 1)
-                runtime["typing_next"] = now_mono + refresh
-        else:
-            if config.get("typing_enabled") and (
-                not active_window
-                or not config.get("targets")
-                or typing_bursts
-            ):
-                await presence_cancel_typing(user_id)
-
-        return {"ok": True, "online": online_wanted, "typing": typing_active}
-    except Exception as exc:
-        runtime = presence_runtime(user_id)
-        runtime["last_error"] = type(exc).__name__
-        await presence_stats_update(user_id, "errors", 1)
-        if config.get("logging"):
-            print(f"Presence engine error for {user_id}: {type(exc).__name__}: {exc}")
-        return {"ok": False, "reason": "engine_error"}
-
-async def presence_loop():
-    while True:
-        try:
-            if db_pool is not None:
-                rows = await db_pool.fetch(
-                    """
-                    select p.customer_id
-                    from salf1_presence_settings p
-                    join salf1_bot_users u
-                      on u.telegram_user_id = p.customer_id
-                    where (
-                        coalesce((p.config->>'online_enabled')::boolean, false) = true
-                        or coalesce((p.config->>'typing_enabled')::boolean, false) = true
-                    )
-                    and u.account_connected = true
-                    and u.salf_enabled = true
-                    """
-                )
-                for row in rows:
-                    await presence_apply_now(int(row["customer_id"]))
-        except Exception as exc:
-            print(f"Presence loop error: {type(exc).__name__}: {exc}")
-        await asyncio.sleep(4)
-
-def rich_button(text_value: str, callback_data: str, style: str) -> str:
-    safe_text = html.escape(str(text_value), quote=False)
-    safe_data = html.escape(str(callback_data), quote=True)
-    safe_style = html.escape(str(style), quote=True)
-    return f'<tg-button type="callback_data" style="{safe_style}" data="{safe_data}">{safe_text}</tg-button>'
-
-def rich_button_row(*buttons: str, align: str = "center") -> str:
-    return f'<tg-button-row align="{align}">{"".join(buttons)}</tg-button-row>'
-
-
-# ---------------------------------------------------------------------------
 # SALF1 Presence Status v2
-# This overlay intentionally leaves legacy presence code in place for rollback
-# compatibility while the new callbacks/runtime use these definitions.
 # ---------------------------------------------------------------------------
 
 PRESENCE_V2_ACTIONS = {
@@ -5261,13 +4884,27 @@ async def _presence_v2_stop_task(user_id,key):
     presence_current_actions.pop(key,None)
     presence_destination_locks.pop(key,None)
 
+async def presence_mark_offline(user_id: int):
+    client = clients.get(str(user_id))
+    if not client or not client.is_connected():
+        return
+    try:
+        if await client.is_user_authorized():
+            await client(functions.account.UpdateStatusRequest(offline=True))
+        presence_last_online_state[str(user_id)] = False
+        r = presence_runtime_stats.setdefault(str(user_id), {})
+        r.update({"online_state": "offline", "last_update_at": datetime.now(timezone.utc)})
+        await _presence_v2_runtime_save(user_id)
+    except Exception as exc:
+        r = presence_runtime_stats.setdefault(str(user_id), {})
+        r["last_error_code"] = _presence_v2_error_code(exc)
+        await _presence_v2_runtime_save(user_id)
+
+
 async def presence_stop_all(user_id, mark_offline=True):
     prefix=f"{int(user_id)}:"
     for key in [k for k in list(presence_activity_tasks) if k.startswith(prefix)]:
         await _presence_v2_stop_task(user_id,key)
-    client=clients.get(str(user_id))
-    if client and client.is_connected():
-        await presence_cancel_typing(user_id)
     r=presence_runtime_stats.setdefault(str(user_id),{})
     r.update({"activity_state":"idle","active_action":"","destination_peer":"","heartbeat_at":None,"online_state":"offline","last_update_at":datetime.now(timezone.utc)})
     if mark_offline and client and client.is_connected():
@@ -8656,12 +8293,9 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         return
 
     if data == "disconnect":
-        await presence_cancel_typing(user_id)
-        await presence_mark_offline(user_id)
+        await presence_stop_all(user_id, mark_offline=True)
         presence_next_online.pop(str(user_id), None)
         presence_last_online_state.pop(str(user_id), None)
-        presence_typing_until.pop(str(user_id), None)
-        presence_next_burst.pop(str(user_id), None)
         presence_runtime_stats.pop(str(user_id), None)
         client = await restore_client(str(user_id))
         if client:
