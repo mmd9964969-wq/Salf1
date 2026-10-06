@@ -2919,6 +2919,9 @@ async def handle_self_command(event, customer_id: str, text: str):
     if not is_self_author:
         return False
 
+    if await handle_presence_input_state(user_id, int(chat["id"]), text):
+        return True
+
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
@@ -3190,6 +3193,10 @@ async def handle_self_command(event, customer_id: str, text: str):
                 clock_page_markup("schedule", config),
             )
             return
+
+    if normalized in {"وضعیت حضور", "حضور", "presence"}:
+        await bot_send(chat["id"], await presence_page(user_id))
+        return True
 
     normalized = normalize_text(text)
     if normalized not in {
@@ -6135,15 +6142,18 @@ def salf_settings_markup():
 def self_features_markup():
     return {"inline_keyboard": [
         [custom_emoji_button("› ساعت", "clock", "automation")],
+        [custom_emoji_button("› وضعیت حضور", "presence", "self")],
         [custom_emoji_button("‹ بازگشت", "panel_self", "self")],
     ]}
 
 async def self_features_text(user_id: int):
     clock_config = await clock_get_settings(user_id)
-
+    presence_config = await presence_get_settings(user_id)
     clock_enabled = bool(clock_config.get("enabled"))
-    active_count = int(clock_enabled)
-
+    presence_enabled = bool(
+        presence_config.get("online_enabled") or presence_config.get("activity_enabled")
+    )
+    active_count = int(clock_enabled) + int(presence_enabled)
     return f"""<b>Sᴀʟғ1 · قابلیت‌های سلف</b>
 
 {RICH_DIVIDER}
@@ -6151,6 +6161,7 @@ async def self_features_text(user_id: int):
 ◈ وضعیت قابلیت‌ها
 
 ساعت : {"【 فعال 】" if clock_enabled else "【 خاموش 】"}
+وضعیت حضور : {"【 فعال 】" if presence_enabled else "【 خاموش 】"}
 قابلیت‌های فعال : 【 {active_count} 】
 
 {RICH_DIVIDER}
@@ -6164,12 +6175,18 @@ async def self_features_text(user_id: int):
 
 {RICH_DIVIDER}
 
-◈ راهنما
+◈ ماژول وضعیت حضور
 
-ساعت برای مدیریت زمان و پروفایل استفاده می‌شود. تنظیمات، زمان‌بندی و موتور آن مستقل است.
+آنلاین بودن : {"● فعال" if presence_config.get("online_enabled") else "○ خاموش"}
+فعالیت داخل چت : {"● فعال" if presence_config.get("activity_enabled") else "○ خاموش"}
+مقصدهای فعال : {sum(1 for target in (presence_config.get("targets") or []) if target.get("enabled", True))}
+منطقه زمانی : {html.escape(str(presence_config.get("timezone") or "UTC"))}
 
 {RICH_DIVIDER}
 
+ساعت و وضعیت حضور مستقل از یکدیگر اجرا می‌شوند.
+
+{RICH_DIVIDER}
 """
 
 async def clock_settings_text(user_id: int):
@@ -6929,6 +6946,9 @@ async def process_bot_message(message: dict):
                 )
             return
 
+    if await handle_presence_input_state(user_id, int(chat["id"]), text):
+        return
+
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
@@ -7157,6 +7177,11 @@ async def process_callback(callback_query: dict):
     await bot_answer_callback(callback_id)
     await panel_session_touch_callback(user_id, chat_id, message_id, data)
 
+    if data == "presence" or data.startswith("prs_") or data.startswith("presence_"):
+        row = await db_user(str(user_id))
+        if not row or int(row["telegram_user_id"]) != user_id:
+            return
+
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
         if not await is_admin_user(user_id, from_user.get("username")):
             await bot_edit(chat_id, message_id, "⛂ دسترسی این بخش برای شما فعال نیست.")
@@ -7269,255 +7294,293 @@ async def process_callback(callback_query: dict):
         await bot_edit(chat_id, message_id, await presence_page(user_id))
         return
 
-    if data == "presence_toggle_online":
+    if data in {"presence_toggle_online"}:
+        data = "prs_online_toggle"
+    elif data in {"presence_force_sync"}:
+        data = "prs_refresh"
+    elif data in {"presence_targets"}:
+        data = "prs_destinations"
+    elif data in {"presence_schedule"}:
+        data = "prs_schedule"
+    elif data in {"presence_behavior"}:
+        data = "prs_activity"
+    elif data in {"presence_stats"}:
+        data = "prs_stats"
+    elif data in {"presence_advanced"}:
+        data = "prs_advanced"
+    elif data in {"presence_profiles"}:
+        data = "prs_profiles"
+
+    if data == "prs_refresh":
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data == "prs_online":
+        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
+        return
+    if data == "prs_online_refresh":
+        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
+        return
+    if data == "prs_online_toggle":
         row = await db_user(str(user_id))
-        config = await presence_get_settings(user_id)
         if not row or not row["account_connected"] or not row["salf_enabled"]:
-            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            await bot_edit(chat_id, message_id, await presence_online_page(user_id))
             return
-        config["online_enabled"] = not bool(config.get("online_enabled"))
-        await presence_save_settings(user_id, config)
-        if config["online_enabled"]:
-            presence_next_online[str(user_id)] = 0.0
-            await presence_apply_now(user_id, force=True)
-        else:
-            await presence_mark_offline(user_id)
-        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        cfg = await presence_get_settings(user_id)
+        cfg["online_enabled"] = not bool(cfg.get("online_enabled"))
+        await presence_save_settings(user_id, cfg)
+        presence_next_online[str(user_id)] = 0.0
+        await presence_apply_now(user_id, True)
+        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
         return
 
-    if data == "presence_toggle_typing":
+    if data in {"prs_online_always","prs_online_schedule","prs_online_manual"}:
+        cfg = await presence_get_settings(user_id)
+        cfg["online_mode"] = {
+            "prs_online_always":"always",
+            "prs_online_schedule":"schedule",
+            "prs_online_manual":"manual",
+        }[data]
+        if data == "prs_online_schedule":
+            cfg["online_schedule_enabled"] = True
+        await presence_save_settings(user_id, cfg)
+        await presence_apply_now(user_id, True)
+        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
+        return
+
+    if data == "prs_activity":
+        await bot_edit(chat_id, message_id, await presence_activity_page(user_id))
+        return
+    if data == "prs_activity_refresh":
+        await bot_edit(chat_id, message_id, await presence_activity_page(user_id))
+        return
+    if data == "prs_activity_toggle":
         row = await db_user(str(user_id))
-        config = await presence_get_settings(user_id)
-        if not row or not row["account_connected"] or not row["salf_enabled"] or not config.get("targets"):
-            await bot_edit(chat_id, message_id, await presence_page(user_id))
+        if not row or not row["account_connected"] or not row["salf_enabled"]:
+            await bot_edit(chat_id, message_id, await presence_activity_page(user_id))
             return
-        config["typing_enabled"] = not bool(config.get("typing_enabled"))
-        await presence_save_settings(user_id, config)
-        if config["typing_enabled"]:
-            now_mono = time.monotonic()
-            presence_typing_until[str(user_id)] = now_mono + max(5, int(config.get("typing_duration_seconds") or 20))
-            presence_next_burst[str(user_id)] = now_mono
-            await presence_apply_now(user_id, force=True)
-        else:
-            await presence_cancel_typing(user_id)
-        await bot_edit(chat_id, message_id, await presence_page(user_id))
-        return
+        cfg = await presence_get_settings(user_id)
+        if not cfg.get("activity_enabled") and not cfg.get("targets"):
+            bot_states[user_id] = {"state":"presence_target_add"}
+            await bot_edit(chat_id,message_id,"""<b>Sᴀʟғ1 · افزودن مقصد</b>
 
-    if data == "presence_mode":
-        await bot_edit(chat_id, message_id, await presence_mode_page(user_id))
-        return
-
-    if data.startswith("presence_mode_"):
-        mode = data.removeprefix("presence_mode_")
-        if mode in PRESENCE_MODE_NAMES:
-            config = await presence_get_settings(user_id)
-            config["mode"] = mode
-            if mode == "schedule":
-                config["schedule_enabled"] = True
-            await presence_save_settings(user_id, config)
-            presence_next_burst[str(user_id)] = 0.0
-            await presence_apply_now(user_id, force=True)
-            await bot_edit(chat_id, message_id, await presence_mode_page(user_id))
-        return
-
-    if data == "presence_targets":
-        await bot_edit(chat_id, message_id, await presence_targets_page(user_id))
-        return
-
-    if data == "presence_target_add":
-        bot_states[user_id] = {"state":"presence_target_add"}
-        await bot_edit(
-            chat_id,
-            message_id,
-            """<b>Sᴀʟғ1 · افزودن مقصد حضور</b>
-
-مقصد PV یا گروه را در پیام بعدی ارسال کنید.
+برای فعال‌سازی فعالیت داخل چت، ابتدا یک PV یا گروه ارسال کنید.
 
 نمونه
 <code>@username</code>
 <code>-1001234567890</code>
 
-برای لغو، «لغو» را ارسال کنید.
-
-<tg-button-row align="center"><tg-button type="callback_data" style="primary" data="presence_targets">‹ بازگشت</tg-button></tg-button-row>""",
-        )
+برای لغو، «لغو» را ارسال کنید.""")
+            return
+        cfg["activity_enabled"] = not bool(cfg.get("activity_enabled"))
+        cfg["typing_enabled"] = bool(cfg["activity_enabled"])
+        await presence_save_settings(user_id,cfg)
+        await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_activity_page(user_id))
         return
 
-    if data.startswith("presence_target_remove_"):
-        index = int(data.removeprefix("presence_target_remove_"))
-        config = await presence_get_settings(user_id)
-        targets = list(config.get("targets") or [])
-        if 0 <= index < len(targets):
-            targets.pop(index)
-            config["targets"] = targets
-            if not targets:
-                config["typing_enabled"] = False
-            await presence_save_settings(user_id, config)
-            if not targets:
-                await presence_cancel_typing(user_id)
-        await bot_edit(chat_id, message_id, await presence_targets_page(user_id))
+    if data in {"prs_activity_dynamic","prs_activity_scenario"}:
+        cfg=await presence_get_settings(user_id)
+        cfg["activity_mode"]="dynamic" if data=="prs_activity_dynamic" else "scenario"
+        await presence_save_settings(user_id,cfg)
+        await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_activity_page(user_id))
         return
 
-    if data == "presence_target_clear_confirm":
-        await bot_edit(
-            chat_id,
-            message_id,
-            f"""<b>Sᴀʟғ1 · پاک‌سازی مقصدها</b>
-
-{RICH_DIVIDER}
-
-تمام مقصدهای ذخیره‌شده برای موتور تایپینگ حذف می‌شوند.
-
-{rich_button_row(rich_button("تأیید حذف", "presence_target_clear", "danger"))}
-{rich_button_row(rich_button("لغو", "presence_targets", "primary"))}""",
-        )
+    if data == "prs_timezone":
+        await bot_edit(chat_id,message_id,await presence_timezone_page(user_id))
         return
+    if data == "prs_tz_custom":
+        bot_states[user_id]={"state":"presence_timezone_custom"}
+        await bot_edit(chat_id,message_id,"""<b>Sᴀʟғ1 · منطقه زمانی</b>
 
-    if data == "presence_target_clear":
-        config = await presence_get_settings(user_id)
-        config["targets"] = []
-        config["typing_enabled"] = False
-        await presence_save_settings(user_id, config)
-        await presence_cancel_typing(user_id)
-        await bot_edit(chat_id, message_id, await presence_targets_page(user_id))
-        return
-
-    if data == "presence_schedule":
-        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id))
-        return
-
-    if data == "presence_schedule_toggle":
-        config = await presence_get_settings(user_id)
-        config["schedule_enabled"] = not bool(config.get("schedule_enabled"))
-        if config["schedule_enabled"]:
-            config["mode"] = "schedule"
-        elif config.get("mode") == "schedule":
-            config["mode"] = "always"
-        await presence_save_settings(user_id, config)
-        await presence_apply_now(user_id, force=True)
-        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id))
-        return
-
-    if data in {"presence_schedule_start", "presence_schedule_end"}:
-        bot_states[user_id] = {"state": data}
-        await bot_edit(
-            chat_id,
-            message_id,
-            """<b>Sᴀʟғ1 · زمان‌بندی حضور</b>
-
-زمان را با فرمت <code>HH:MM</code> ارسال کنید.
+نام منطقه IANA را ارسال کنید.
 
 نمونه
-<code>08:00</code>
-<code>23:30</code>
-
-<tg-button-row align="center"><tg-button type="callback_data" style="primary" data="presence_schedule">‹ بازگشت</tg-button></tg-button-row>""",
-        )
+<code>Asia/Baku</code>
+<code>Asia/Tehran</code>
+<code>Europe/Berlin</code>""")
+        return
+    if data.startswith("prs_tz_"):
+        key=data.removeprefix("prs_tz_")
+        tz={x.replace("/","_"):x for x in ("Asia/Tehran","Asia/Baku","Europe/Berlin","UTC")}.get(key)
+        if tz:
+            await presence_set_timezone(user_id,tz)
+            await bot_edit(chat_id,message_id,await presence_timezone_page(user_id))
         return
 
-    if data.startswith("presence_day_"):
-        day = int(data.removeprefix("presence_day_"))
-        config = await presence_get_settings(user_id)
-        days = {
-            int(x) for x in (config.get("schedule_days") or list(range(7)))
-            if str(x).isdigit() and int(x) in range(7)
-        }
-        if day in days:
-            days.remove(day)
-        else:
-            days.add(day)
-        config["schedule_days"] = sorted(days)
-        config["schedule_enabled"] = True
-        config["mode"] = "schedule"
-        await presence_save_settings(user_id, config)
-        await presence_apply_now(user_id, force=True)
-        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id))
+    if data == "prs_schedule":
+        await bot_edit(chat_id,message_id,await presence_schedule_page(user_id,"online"))
+        return
+    if data in {"prs_schedule_online","prs_schedule_activity"}:
+        engine="online" if data.endswith("online") else "activity"
+        await bot_edit(chat_id,message_id,await presence_schedule_page(user_id,engine))
+        return
+    if data in {"prs_schedule_toggle_online","prs_schedule_toggle_activity"}:
+        engine="online" if data.endswith("online") else "activity"
+        cfg=await presence_get_settings(user_id)
+        key=f"{engine}_schedule_enabled"
+        cfg[key]=not bool(cfg.get(key))
+        if engine=="online" and cfg[key]:
+            cfg["online_mode"]="schedule"
+        await presence_save_settings(user_id,cfg)
+        await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_schedule_page(user_id,engine))
+        return
+    if data in {"prs_schedule_add_online","prs_schedule_add_activity"}:
+        engine="online" if data.endswith("online") else "activity"
+        bot_states[user_id]={"state":f"presence_schedule_add_{engine}"}
+        await bot_edit(chat_id,message_id,"""<b>Sᴀʟғ1 · افزودن بازه</b>
+
+فرمت:
+<code>شنبه 08:00-12:00</code>
+<code>شنبه 15:00-23:30</code>
+<code>همه 10:00-22:00</code>""")
+        return
+    if data in {"prs_schedule_clear_online","prs_schedule_clear_activity"}:
+        engine="online" if data.endswith("online") else "activity"
+        await presence_clear_schedule(user_id,engine)
+        await bot_edit(chat_id,message_id,await presence_schedule_page(user_id,engine))
+        return
+    if data in {"prs_schedule_refresh_online","prs_schedule_refresh_activity"}:
+        engine="online" if data.endswith("online") else "activity"
+        await bot_edit(chat_id,message_id,await presence_schedule_page(user_id,engine))
         return
 
-    if data == "presence_behavior":
-        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
+    if data == "prs_exceptions":
+        await bot_edit(chat_id,message_id,await presence_exceptions_page(user_id))
+        return
+    if data == "prs_exception_add":
+        bot_states[user_id]={"state":"presence_exception_add"}
+        await bot_edit(chat_id,message_id,"""<b>Sᴀʟғ1 · افزودن استثناء</b>
+
+فرمت:
+<code>2026-10-06 off</code>
+<code>2026-10-07 18:00-23:00</code>
+
+برای موتور خاص:
+<code>2026-10-07 18:00-23:00 activity</code>""")
+        return
+    if data == "prs_exception_clear":
+        cfg=await presence_get_settings(user_id); cfg["exceptions"]=[]
+        await presence_save_settings(user_id,cfg); await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_exceptions_page(user_id))
+        return
+    if data == "prs_exception_refresh":
+        await bot_edit(chat_id,message_id,await presence_exceptions_page(user_id))
         return
 
-    if data.startswith("presence_typing_"):
-        mode = data.removeprefix("presence_typing_")
-        if mode in PRESENCE_TYPING_MODE_NAMES:
-            config = await presence_get_settings(user_id)
-            config["typing_mode"] = mode
-            await presence_save_settings(user_id, config)
-            presence_typing_until.pop(str(user_id), None)
-            presence_next_burst[str(user_id)] = 0.0
-        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
+    if data == "prs_destinations":
+        await bot_edit(chat_id,message_id,await presence_targets_page(user_id))
         return
-
-    if data.startswith("presence_duration_"):
-        value = int(data.removeprefix("presence_duration_"))
-        if value in PRESENCE_RUNTIME_LIMITS["typing_duration_seconds"]:
-            config = await presence_get_settings(user_id)
-            config["typing_duration_seconds"] = value
-            await presence_save_settings(user_id, config)
-        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
+    if data == "prs_destinations_refresh":
+        await bot_edit(chat_id,message_id,await presence_targets_page(user_id))
         return
+    if data == "prs_destination_add":
+        bot_states[user_id]={"state":"presence_target_add"}
+        await bot_edit(chat_id,message_id,"""<b>Sᴀʟғ1 · افزودن مقصد</b>
 
-    if data.startswith("presence_break_"):
-        value = int(data.removeprefix("presence_break_"))
-        if value in PRESENCE_RUNTIME_LIMITS["typing_break_seconds"]:
-            config = await presence_get_settings(user_id)
-            config["typing_break_seconds"] = value
-            await presence_save_settings(user_id, config)
-        await bot_edit(chat_id, message_id, await presence_behavior_page(user_id))
-        return
-
-    if data == "presence_stats":
-        await bot_edit(chat_id, message_id, await presence_stats_page(user_id))
-        return
-
-    if data == "presence_force_sync":
-        await presence_apply_now(user_id, force=True)
-        await bot_edit(chat_id, message_id, await presence_page(user_id))
-        return
-
-    if data == "presence_advanced":
-        await bot_edit(chat_id, message_id, await presence_advanced_page(user_id))
-        return
-
-    if data in {"presence_rate_guard", "presence_retry", "presence_logging"}:
-        key = {
-            "presence_rate_guard": "rate_limit_guard",
-            "presence_retry": "retry",
-            "presence_logging": "logging",
-        }[data]
-        config = await presence_get_settings(user_id)
-        config[key] = not bool(config.get(key))
-        await presence_save_settings(user_id, config)
-        await bot_edit(chat_id, message_id, await presence_advanced_page(user_id))
-        return
-
-    if data == "presence_profiles":
-        await bot_edit(chat_id, message_id, await presence_profiles_page(user_id))
-        return
-
-    if data == "presence_profile_save":
-        bot_states[user_id] = {"state":"presence_profile_save"}
-        await bot_edit(
-            chat_id,
-            message_id,
-            """<b>Sᴀʟғ1 · ذخیره پروفایل حضور</b>
-
-نام پروفایل را در پیام بعدی ارسال کنید.
+PV یا گروه را در پیام بعدی ارسال کنید.
 
 نمونه
-<code>شب</code>
-<code>روز کاری</code>
-
-<tg-button-row align="center"><tg-button type="callback_data" style="primary" data="presence_profiles">‹ بازگشت</tg-button></tg-button-row>""",
-        )
+<code>@username</code>
+<code>-1001234567890</code>""")
+        return
+    if data.startswith("prs_destination_toggle_"):
+        i=int(data.removeprefix("prs_destination_toggle_"))
+        cfg=await presence_get_settings(user_id); targets=list(cfg.get("targets") or [])
+        if 0<=i<len(targets):
+            targets[i]["enabled"]=not bool(targets[i].get("enabled",True)); cfg["targets"]=targets
+            await presence_save_settings(user_id,cfg); await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_targets_page(user_id))
+        return
+    if data.startswith("prs_destination_remove_"):
+        i=int(data.removeprefix("prs_destination_remove_"))
+        cfg=await presence_get_settings(user_id); targets=list(cfg.get("targets") or [])
+        if 0<=i<len(targets):
+            targets.pop(i); cfg["targets"]=targets
+            if not targets: cfg["activity_enabled"]=False; cfg["typing_enabled"]=False
+            await presence_save_settings(user_id,cfg); await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_targets_page(user_id))
         return
 
-    if data == "presence_profile_clear":
-        config = await presence_get_settings(user_id)
-        config["profiles"] = []
-        await presence_save_settings(user_id, config)
-        await bot_edit(chat_id, message_id, await presence_profiles_page(user_id))
+    if data == "prs_scenarios":
+        await bot_edit(chat_id,message_id,await presence_scenarios_page(user_id))
+        return
+    if data == "prs_scenarios_refresh":
+        await bot_edit(chat_id,message_id,await presence_scenarios_page(user_id))
+        return
+    if data.startswith("prs_scenario_apply_"):
+        i=int(data.removeprefix("prs_scenario_apply_"))
+        cfg=await presence_get_settings(user_id); scenarios=list(cfg.get("scenarios") or [])
+        if 0<=i<len(scenarios):
+            sid=str(scenarios[i].get("id") or "")
+            if sid:
+                cfg["active_scenario"]=sid
+                for t in cfg.get("targets") or []: t["scenario"]=sid
+                await presence_save_settings(user_id,cfg); await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_scenarios_page(user_id))
+        return
+    if data.startswith("prs_scenario_delete_"):
+        i=int(data.removeprefix("prs_scenario_delete_"))
+        cfg=await presence_get_settings(user_id); scenarios=list(cfg.get("scenarios") or [])
+        if 0<=i<len(scenarios):
+            sid=str(scenarios[i].get("id") or "")
+            if sid.startswith("custom_"):
+                scenarios.pop(i); cfg["scenarios"]=scenarios
+                if cfg.get("active_scenario")==sid: cfg["active_scenario"]="preset_normal"
+                for t in cfg.get("targets") or []:
+                    if t.get("scenario")==sid: t["scenario"]=cfg["active_scenario"]
+                await presence_save_settings(user_id,cfg); await presence_apply_now(user_id,True)
+        await bot_edit(chat_id,message_id,await presence_scenarios_page(user_id))
+        return
+    if data == "prs_scenario_new":
+        bot_states[user_id]={"state":"presence_scenario_name"}
+        await bot_edit(chat_id,message_id,"""<b>Sᴀʟғ1 · ساخت سناریو</b>
+
+نام سناریو را در پیام بعدی ارسال کنید.""")
+        return
+
+    if data == "prs_profiles":
+        await bot_edit(chat_id,message_id,await presence_profiles_page(user_id))
+        return
+    if data == "prs_profiles_refresh":
+        await bot_edit(chat_id,message_id,await presence_profiles_page(user_id))
+        return
+    if data == "prs_profile_save":
+        bot_states[user_id]={"state":"presence_profile_save"}
+        await bot_edit(chat_id,message_id,"""<b>Sᴀʟғ1 · ذخیره پروفایل حضور</b>
+
+نام پروفایل را ارسال کنید.""")
+        return
+    if data.startswith("prs_profile_apply_"):
+        await presence_apply_profile(user_id,int(data.removeprefix("prs_profile_apply_")))
+        await bot_edit(chat_id,message_id,await presence_profiles_page(user_id))
+        return
+    if data.startswith("prs_profile_delete_"):
+        await presence_profile_delete(user_id,int(data.removeprefix("prs_profile_delete_")))
+        await bot_edit(chat_id,message_id,await presence_profiles_page(user_id))
+        return
+    if data == "prs_profile_clear":
+        await presence_profile_clear(user_id)
+        await bot_edit(chat_id,message_id,await presence_profiles_page(user_id))
+        return
+
+    if data == "prs_advanced":
+        await bot_edit(chat_id,message_id,await presence_advanced_page(user_id))
+        return
+    if data in {"prs_adv_rate","prs_adv_retry","prs_adv_log","prs_adv_watchdog"}:
+        cfg=await presence_get_settings(user_id)
+        key={"prs_adv_rate":"rate_limit_guard","prs_adv_retry":"retry","prs_adv_log":"logging","prs_adv_watchdog":"watchdog"}[data]
+        cfg[key]=not bool(cfg.get(key,True))
+        await presence_save_settings(user_id,cfg)
+        await bot_edit(chat_id,message_id,await presence_advanced_page(user_id))
+        return
+    if data == "prs_advanced_refresh":
+        await bot_edit(chat_id,message_id,await presence_advanced_page(user_id))
+        return
+    if data in {"prs_stats","prs_stats_refresh"}:
+        await bot_edit(chat_id,message_id,await presence_stats_page(user_id))
         return
 
     if data == "clock":
