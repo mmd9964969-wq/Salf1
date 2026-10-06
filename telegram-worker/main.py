@@ -1546,7 +1546,7 @@ async def account_health_snapshot(customer_id: str, force: bool = False) -> dict
         return health
 
 
-async def account_status(customer_id: str):
+async def account_status(customer_id: str, force: bool = True):
     if not configured():
         return {
             "connected": False,
@@ -1556,7 +1556,7 @@ async def account_status(customer_id: str):
             "state": "telegram_api_not_configured",
         }
 
-    health = await account_health_snapshot(customer_id, force=True)
+    health = await account_health_snapshot(customer_id, force=force)
     row = await db_user(customer_id)
 
     unlimited = await is_owner_account(
@@ -3068,6 +3068,12 @@ def rich_message_html(text: str) -> str:
             parts.append("<hr/>")
             continue
 
+        if line.startswith("<blockquote>") and line.endswith("</blockquote>"):
+            flush_table()
+            flush_list()
+            parts.append(line)
+            continue
+
         # Native Telegram Rich Message button rows must not be converted into
         # ordinary paragraphs; preserve their callback/style attributes.
         if line.startswith("<tg-button-row") or line.startswith("<tg-button "):
@@ -3791,21 +3797,21 @@ async def transactions_text(user_id: int):
 def manage_menu_markup(connected: bool = False, enabled: bool = False):
     keyboard = [
         [
-            {"text": "› اتصال اکانت", "callback_data": "login"},
-            {"text": "› وضعیت اکانت", "callback_data": "account_status"},
+            {"text": "اتصال اکانت ›", "callback_data": "login"},
+            {"text": "وضعیت اکانت ›", "callback_data": "account_status"},
         ],
     ]
 
     if connected:
-        keyboard.append([
-            {
-                "text": "› خاموش کردن سلف" if enabled else "› روشن کردن سلف",
-                "callback_data": "disable" if enabled else "enable",
-            },
-            {"text": "› وضعیت سلف", "callback_data": "status"},
+        keyboard.extend([
+            [
+                {"text": "خاموش کردن سلف ›" if enabled else "روشن کردن سلف ›",
+                 "callback_data": "disable" if enabled else "enable"},
+                {"text": "وضعیت سلف ›", "callback_data": "status"},
+            ],
         ])
         keyboard.append([
-            {"text": "› خروج اکانت", "callback_data": "disconnect"},
+            {"text": "خروج اکانت ›", "callback_data": "disconnect"},
         ])
 
     keyboard.append([{"text": "‹ بازگشت", "callback_data": "home"}])
@@ -3943,20 +3949,17 @@ async def mini_manage_text(user_id: int):
     unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(str(user_id), health.get("username"))
     balance = int(row["tron_balance"]) if row else 0
     return f"""
-<b>Sᴀʟғ1 · مـدیـریـت اکـانـت</b>
+<b>Sᴀʟғ1 · مدیریت اکانت</b>
 
 اکانت : {"متصل" if connected else "متصل نیست"}
 بات : {"حاضر" if health.get("bot_presence") == "present" else "در حال بررسی" if health.get("bot_presence") == "unknown" else "حاضر نیست"}
 سلف : {"فعال" if enabled else "خاموش"}
-پلن : {"∞ نامحدود" if unlimited else "رایگان"}
+پلن : {"نامحدود" if unlimited else "رایگان"}
 موجودی : {"∞" if unlimited else f"{balance:,} جم ترون"}
-مصرف فعال : {"∞ / بدون کسر" if unlimited else "1 جم ترون در دقیقه"}
 
 [[RICH_DIVIDER]]
 
-◈ وضـعیـت سـرویـس
-
-اتصال اکانت، حضور بات و اعتبار مصرفی سه وضعیت مستقل هستند.
+<blockquote>اتصال اکانت، حضور بات و وضعیت سلف مستقل هستند.</blockquote>
 """
 
 
@@ -7056,142 +7059,331 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         )
         return
 
-    if data == "account_status":
-        result = await account_status(str(user_id))
+    if data in {
+        "account_status",
+        "account_refresh",
+        "account_details",
+        "account_presence",
+        "account_salf",
+        "account_health",
+        "account_check",
+    }:
+        force_check = data in {"account_check"}
+        result = await account_status(str(user_id), force=force_check)
         row = await db_user(str(user_id))
-
-        account_state = "● متصل" if result.get("connected") else "○ متصل نیست"
-        session_state = "● معتبر" if result.get("authorized") else "○ نیازمند ورود"
+        connected = bool(result.get("connected"))
         bot_state = result.get("bot_presence_state", "unknown")
-        bot_text = (
-            "● حاضر"
-            if bot_state == "present"
-            else "○ حاضر نیست"
-            if bot_state == "absent"
-            else "■ در حال بررسی"
-        )
+        enabled = bool(result.get("salf_enabled"))
         unlimited = bool(result.get("unlimited"))
-        salf_enabled = bool(result.get("salf_enabled"))
+        user = result.get("user") or {}
 
-        if result.get("authorized") and result.get("user"):
-            account = result["user"]
-            account_name = html.escape(
-                " ".join(
-                    part for part in [account.get("first_name"), account.get("last_name")]
-                    if part
+        if data in {"account_status", "account_refresh"}:
+            if connected:
+                account_presence = (
+                    "حاضر" if bot_state == "present"
+                    else "حاضر نیست" if bot_state == "absent"
+                    else "در حال بررسی"
                 )
-                or str(row["first_name"] if row else "بدون نام")
-            )
-            username = account.get("username")
-            username_text = f"@{html.escape(username)}" if username else "بدون نام کاربری"
-            balance_text = "∞" if unlimited else f"{int(row['tron_balance']) if row else 0:,} جم"
-            service_text = "● فعال" if salf_enabled else "○ خاموش"
-            reason_text = (
-                "مالک نامحدود"
-                if unlimited
-                else "اعتبار مصرفی تمام شده"
-                if not salf_enabled
-                else "فعال"
-            )
-            account_text = f"""<b>◈ وضعیت اکانت</b>
+                summary = (
+                    "اکانت متصل است و وضعیت حضور بات قابل بررسی است."
+                    if bot_state == "unknown"
+                    else "اکانت متصل است و وضعیت حضور بات تأیید شده است."
+                    if bot_state == "present"
+                    else "اکانت متصل است و حضور بات در حساب تأیید نشده است."
+                )
+            else:
+                account_presence = "قابل بررسی نیست"
+                summary = (
+                    "اکانت تلگرام شما هنوز متصل نشده است. برای استفاده از سلف، ابتدا اکانت خود را متصل کنید. پس از اتصال، وضعیت اکانت و حضور بات به‌صورت خودکار بررسی می‌شود."
+                )
+            text = f"""<b>Sᴀʟғ1 · وضعیت اکانت</b>
 
-⛂ - اتصال اکانت : {account_state}
-⛂ - وضعیت Session : {session_state}
-⛂ - حضور @Pers3anSelfBot : {bot_text}
-⛂ - وضعیت سلف : {service_text}
-⛂ - دلیل وضعیت سلف : {reason_text}
-⛂ - پلن : {"∞ نامحدود" if unlimited else "رایگان"}
-⛂ - موجودی : {balance_text}
+<b>وضعیت فعلی</b>
 
-⛂ - نام : {account_name}
-⛂ - نام کاربری : {username_text}
-⛂ - شناسه : <code>{int(account["id"])}</code>
+اتصال اکانت : {"متصل" if connected else "متصل نیست"}
+حضور بات در حساب : {account_presence}
+وضعیت سلف : {"فعال" if enabled else "خاموش"}
+پلن : {"نامحدود" if unlimited else "رایگان"}
 
 [[RICH_DIVIDER]]
 
-{"● اتصال اکانت و دسترسی بات تأیید شد." if result.get("connected") and result.get("bot_present") else "■ اکانت متصل است؛ حضور بات هنوز در حال بررسی است." if result.get("connected") else "○ اکانت نیازمند اتصال مجدد است."}"""
-        else:
-            account_text = """<b>◈ وضعیت اکانت</b>
+<b>نتیجه</b>
 
-⛂ - اتصال اکانت : ○ متصل نیست
-⛂ - حضور @Pers3anSelfBot : ○ قابل تأیید نیست
-⛂ - وضعیت سلف : ○ خاموش
+<blockquote>{summary}</blockquote>"""
+            markup = {
+                "inline_keyboard": [
+                    [
+                        {"text": "مشخصات اکانت ›", "callback_data": "account_details"},
+                        {"text": "وضعیت حضور بات ›", "callback_data": "account_presence"},
+                    ],
+                    [
+                        {"text": "وضعیت سلف ›", "callback_data": "account_salf"},
+                        {"text": "سلامت سیستم ›", "callback_data": "account_health"},
+                    ],
+                    [
+                        {"text": "بررسی وضعیت ›", "callback_data": "account_check"},
+                    ],
+                    [
+                        {"text": "بروزرسانی ›", "callback_data": "account_refresh"},
+                        {"text": "‹ بازگشت", "callback_data": "manage"},
+                    ],
+                ]
+            }
+            await bot_edit(chat_id, message_id, text, markup)
+            return
 
-★ - برای استفاده از SALF1 ابتدا اکانت تلگرام را متصل کنید."""
+        if data == "account_details":
+            if not connected:
+                text = """<b>Sᴀʟғ1 · مشخصات اکانت</b>
+
+<blockquote>اکانت تلگرام شما هنوز متصل نشده است. برای نمایش مشخصات اکانت، ابتدا اتصال اکانت را انجام دهید.</blockquote>"""
+            else:
+                name = " ".join(
+                    part for part in [
+                        user.get("first_name"),
+                        user.get("last_name"),
+                    ] if part
+                ) or (str(row["first_name"]) if row else "ثبت نشده")
+                username = f"@{user.get('username')}" if user.get("username") else "ثبت نشده"
+                text = f"""<b>Sᴀʟғ1 · مشخصات اکانت</b>
+
+نام : {html.escape(name)}
+نام کاربری : {html.escape(username)}
+شناسه : <code>{int(user.get("id") or user_id)}</code>
+اتصال اکانت : متصل"""
+            await bot_edit(
+                chat_id,
+                message_id,
+                text,
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_status"}]]},
+            )
+            return
+
+        if data == "account_presence":
+            state_text = (
+                "حاضر" if bot_state == "present"
+                else "حاضر نیست" if bot_state == "absent"
+                else "قابل بررسی نیست"
+            )
+            access_text = (
+                "قابل استفاده" if bot_state == "present"
+                else "در دسترس نیست" if bot_state == "absent"
+                else "قابل بررسی نیست"
+            )
+            checked_at = result.get("bot_presence_checked_at") or "ثبت نشده"
+            error_text = result.get("bot_presence_error") or "ندارد"
+            if not connected:
+                state_text = "قابل بررسی نیست"
+                access_text = "قابل بررسی نیست"
+                error_text = "اکانت متصل نیست"
+            text = f"""<b>Sᴀʟғ1 · وضعیت حضور بات</b>
+
+بات : @Pers3anSelfBot
+حضور در حساب : {state_text}
+دسترسی بات : {access_text}
+آخرین بررسی : {html.escape(str(checked_at))}
+علت خطا : {html.escape(str(error_text))}"""
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "بررسی دوباره ›", "callback_data": "account_check"}],
+                    [{"text": "اخراج بات ›", "callback_data": "account_kick"}],
+                    [{"text": "‹ بازگشت", "callback_data": "account_status"}],
+                ]
+            }
+            await bot_edit(chat_id, message_id, text, markup)
+            return
+
+        if data == "account_salf":
+            balance = int(row["tron_balance"]) if row else 0
+            trial_active = bool(
+                row
+                and row["trial_expires_at"] is not None
+                and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
+            )
+            if unlimited:
+                test_text = "نامحدود"
+                balance_text = "∞"
+                run_text = "در حال اجرا" if enabled else "متوقف"
+                reason_text = "مالک نامحدود" if enabled else "خاموش‌شده"
+            elif not connected:
+                test_text = "قابل بررسی نیست"
+                balance_text = f"{balance:,} جم"
+                run_text = "متوقف"
+                reason_text = "اکانت متصل نیست"
+            else:
+                test_text = "فعال" if trial_active else "پایان‌یافته"
+                balance_text = f"{balance:,} جم"
+                run_text = "در حال اجرا" if enabled else "متوقف"
+                reason_text = (
+                    "فعال"
+                    if enabled
+                    else "اعتبار مصرفی تمام شده"
+                    if balance <= 0 and not trial_active
+                    else "توسط کاربر خاموش شده"
+                )
+            text = f"""<b>Sᴀʟғ1 · وضعیت سلف</b>
+
+وضعیت سلف : {"فعال" if enabled else "خاموش"}
+پلن : {"نامحدود" if unlimited else "رایگان"}
+موجودی : {balance_text}
+تست : {test_text}
+وضعیت اجرا : {run_text}
+دلیل خاموش بودن : {reason_text}"""
+            controls = []
+            if connected:
+                if enabled:
+                    controls.append({"text": "خاموش کردن سلف ›", "callback_data": "disable"})
+                else:
+                    controls.append({"text": "روشن کردن سلف ›", "callback_data": "enable"})
+            controls.append({"text": "‹ بازگشت", "callback_data": "account_status"})
+            await bot_edit(
+                chat_id,
+                message_id,
+                text,
+                {"inline_keyboard": [controls]},
+            )
+            return
+
+        if data == "account_health":
+            health_result = await account_status(str(user_id), force=False)
+            h_connected = bool(health_result.get("connected"))
+            h_bot = health_result.get("bot_presence_state", "unknown")
+            h_enabled = bool(health_result.get("salf_enabled"))
+            health_ok = h_connected and h_bot == "present"
+            text = f"""<b>Sᴀʟғ1 · سلامت سیستم</b>
+
+اتصال اکانت : {"سالم" if h_connected else "برقرار نیست"}
+حضور بات : {"تأیید شد" if h_bot == "present" else "تأیید نشد" if h_bot == "absent" else "قابل بررسی نیست"}
+وضعیت سلف : {"فعال" if h_enabled else "خاموش"}
+نتیجه نهایی : {"سالم و آماده استفاده" if health_ok else "نیازمند بررسی"}"""
+            await bot_edit(
+                chat_id,
+                message_id,
+                text,
+                {"inline_keyboard": [
+                    [{"text": "بررسی دوباره ›", "callback_data": "account_check"}],
+                    [{"text": "‹ بازگشت", "callback_data": "account_status"}],
+                ]},
+            )
+            return
+
+        if data == "account_check":
+            checked = await account_status(str(user_id), force=True)
+            c_connected = bool(checked.get("connected"))
+            c_bot = checked.get("bot_presence_state", "unknown")
+            c_enabled = bool(checked.get("salf_enabled"))
+            check_ok = c_connected and c_bot == "present"
+            check_summary = (
+                "اکانت متصل است و حضور بات تأیید شد."
+                if check_ok
+                else "اکانت متصل است اما حضور بات تأیید نشد."
+                if c_connected and c_bot == "absent"
+                else "اکانت متصل است اما وضعیت حضور بات هنوز قابل تأیید نیست."
+                if c_connected
+                else "اکانت تلگرام شما هنوز متصل نشده است. برای استفاده از سلف، ابتدا اکانت خود را متصل کنید. پس از اتصال، وضعیت اکانت و حضور بات به‌صورت خودکار بررسی می‌شود."
+            )
+            text = f"""<b>Sᴀʟғ1 · بررسی وضعیت</b>
+
+اتصال اکانت : {"متصل" if c_connected else "متصل نیست"}
+حضور بات : {"حاضر" if c_bot == "present" else "حاضر نیست" if c_bot == "absent" else "قابل بررسی نیست"}
+وضعیت سلف : {"فعال" if c_enabled else "خاموش"}
+
+[[RICH_DIVIDER]]
+
+<blockquote>{check_summary}</blockquote>"""
+            await bot_edit(
+                chat_id,
+                message_id,
+                text,
+                {"inline_keyboard": [
+                    [{"text": "بررسی دوباره ›", "callback_data": "account_check"}],
+                    [{"text": "‹ بازگشت", "callback_data": "account_status"}],
+                ]},
+            )
+            return
+
+    if data == "account_kick":
         await bot_edit(
             chat_id,
             message_id,
-            account_text,
-            await user_manage_markup(user_id),
+            """<b>Sᴀʟғ1 · اخراج بات</b>
+
+<blockquote>با انجام این عملیات، دسترسی سلف به @Pers3anSelfBot از این اکانت قطع می‌شود. این عملیات اتصال اکانت را قطع نمی‌کند.</blockquote>""",
+            {"inline_keyboard": [
+                [{"text": "تأیید اخراج ›", "callback_data": "account_kick_confirm"}],
+                [{"text": "‹ انصراف", "callback_data": "account_presence"}],
+            ]},
         )
         return
 
-    if data == "status":
-        result = await account_status(str(user_id))
-        row = await db_user(str(user_id))
-        balance = int(row["tron_balance"]) if row else 0
-        trial_active = bool(
-            row
-            and row["trial_expires_at"] is not None
-            and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
-        )
-        unlimited = bool(result.get("unlimited"))
-        enabled = True if unlimited else bool(row["salf_enabled"]) if row else False
-        bot_state = result.get("bot_presence_state", "unknown")
-        bot_text = "● حاضر" if bot_state == "present" else "○ حاضر نیست" if bot_state == "absent" else "■ در حال بررسی"
-        await bot_edit(
-            chat_id,
-            message_id,
-            f"""<b>◈ وضعیت SALF1</b>
+    if data == "account_kick_confirm":
+        if not (await account_status(str(user_id), force=True)).get("connected"):
+            await bot_edit(
+                chat_id,
+                message_id,
+                "<b>Sᴀʟғ1 · اخراج بات</b>\n\nاکانت متصل نیست و عملیات انجام نشد.",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_presence"}]]},
+            )
+            return
+        client = clients.get(str(user_id))
+        if client is None:
+            try:
+                client = await restore_client(str(user_id))
+            except Exception:
+                client = None
+        try:
+            if client is None:
+                raise RuntimeError("client_unavailable")
+            if not client.is_connected():
+                await client.connect()
+            bot_entity = await client.get_entity("@Pers3anSelfBot")
+            await client(functions.contacts.BlockRequest(id=bot_entity))
+            await save_bot_presence(user_id, "absent", error="bot_blocked_by_user")
+            await set_salf_enabled(str(user_id), False)
+            bot_presence_cache.pop(str(user_id), None)
+            await bot_edit(
+                chat_id,
+                message_id,
+                """<b>Sᴀʟғ1 · اخراج بات</b>
 
-⛂ اکانت : {"● متصل" if result.get("connected") else "○ متصل نیست"}
-⛂ حضور بات : {bot_text}
-⛂ سرویس : {"● روشن" if enabled else "○ خاموش"}
-⛂ تست 24 ساعته : {"∞" if unlimited else ("● فعال" if trial_active else "○ پایان‌یافته")}
-⛂ موجودی : <b>{"∞" if unlimited else f"{balance:,}"}{" جم ترون" if not unlimited else ""}</b>
-⛂ پلن : {"∞ مالک" if unlimited else "رایگان"}
-""",
-            await user_manage_markup(user_id),
-        )
+<blockquote>بات از این اکانت اخراج شد. اکانت تلگرام همچنان متصل است و سلف خاموش شد.</blockquote>""",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_status"}]]},
+            )
+        except Exception as exc:
+            print(f"Bot kick failed for {customer_key(str(user_id))}: {type(exc).__name__}: {exc}")
+            await bot_edit(
+                chat_id,
+                message_id,
+                """<b>Sᴀʟғ1 · اخراج بات</b>
+
+<blockquote>اخراج بات انجام نشد. اتصال اکانت و وضعیت سلف تغییر نکرد.</blockquote>""",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_presence"}]]},
+            )
         return
 
-    if data in {"enable", "disable"}:
-        result = await account_status(str(user_id))
+    if data == "enable":
+        result = await account_status(str(user_id), force=False)
         if not result.get("authorized"):
             await bot_edit(
                 chat_id,
                 message_id,
-                "⛂ ابتدا اکانت خود را وارد کنید.",
-                await user_manage_markup(user_id),
-            )
-            return
-
-        if data == "disable":
-            if result.get("unlimited"):
-                await bot_edit(
-                    chat_id,
-                    message_id,
-                    "∞ <b>حساب مالک نامحدود است.</b>\\n\\nسلف مالک قابل توقف با کنترل اعتبار نیست.",
-                    await user_manage_markup(user_id),
-                )
-                return
-            await set_salf_enabled(str(user_id), False)
-            await bot_edit(
-                chat_id,
-                message_id,
-                "○ <b>SALF1 خاموش شد.</b>\\n\\nتمام اجرای خودکار سرویس برای این اکانت متوقف شد.",
-                await user_manage_markup(user_id),
+                "<b>Sᴀʟғ1 · وضعیت سلف</b>\n\nابتدا اکانت خود را متصل کنید.",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_status"}]]},
             )
             return
 
         row = await db_user(str(user_id))
         if not row:
-            await bot_edit(chat_id, message_id, "⛂ اطلاعات حساب پیدا نشد.", manage_menu_markup())
+            await bot_edit(
+                chat_id, message_id,
+                "<b>Sᴀʟғ1 · وضعیت سلف</b>\n\nاطلاعات حساب پیدا نشد.",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_status"}]]},
+            )
             return
 
         trial_active = bool(
             row["trial_expires_at"] is not None
-            and row["trial_expires_at"] > __import__("datetime").datetime.now(row["trial_expires_at"].tzinfo)
+            and row["trial_expires_at"] > datetime.now(row["trial_expires_at"].tzinfo)
         )
         balance = int(row["tron_balance"])
         unlimited = bool(result.get("unlimited"))
@@ -7199,8 +7391,8 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
             await bot_edit(
                 chat_id,
                 message_id,
-                "⛂ اعتبار کافی نیست.\\n\\nالماس رایگان را باز کنید و از رفرال‌ها جم ترون بگیرید.",
-                await user_manage_markup(user_id),
+                "<b>Sᴀʟғ1 · وضعیت سلف</b>\n\nاعتبار کافی نیست.",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_salf"}]]},
             )
             return
 
@@ -7208,8 +7400,41 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         await bot_edit(
             chat_id,
             message_id,
-            "● <b>SALF1 روشن شد.</b>\\n\\nسرویس فعال است و مصرف از اعتبار/تست اعمال می‌شود.",
-            await user_manage_markup(user_id),
+            "<b>Sᴀʟғ1 · وضعیت سلف</b>\n\nسلف روشن شد و اجرای سرویس ادامه پیدا می‌کند.",
+            {"inline_keyboard": [
+                [{"text": "وضعیت سلف ›", "callback_data": "account_salf"}],
+                [{"text": "‹ بازگشت", "callback_data": "account_status"}],
+            ]},
+        )
+        return
+
+    if data == "disable":
+        result = await account_status(str(user_id), force=False)
+        if not result.get("authorized"):
+            await bot_edit(
+                chat_id,
+                message_id,
+                "<b>Sᴀʟғ1 · وضعیت سلف</b>\n\nاکانت متصل نیست.",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_status"}]]},
+            )
+            return
+        if result.get("unlimited"):
+            await bot_edit(
+                chat_id,
+                message_id,
+                "<b>Sᴀʟғ1 · وضعیت سلف</b>\n\nسلف مالک نامحدود است و خاموش‌کردن آن از این بخش فعال نیست.",
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "account_salf"}]]},
+            )
+            return
+        await set_salf_enabled(str(user_id), False)
+        await bot_edit(
+            chat_id,
+            message_id,
+            "<b>Sᴀʟғ1 · وضعیت سلف</b>\n\nسلف خاموش شد. اتصال اکانت و حضور بات مستقل باقی می‌ماند.",
+            {"inline_keyboard": [
+                [{"text": "روشن کردن سلف ›", "callback_data": "enable"}],
+                [{"text": "‹ بازگشت", "callback_data": "account_status"}],
+            ]},
         )
         return
 
