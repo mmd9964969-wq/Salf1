@@ -833,6 +833,12 @@ async def set_salf_enabled(customer_id: str, enabled: bool):
             print(f"State update error: {type(exc).__name__}: {exc}")
             return
     enabled_cache[customer_id] = enabled
+    if not enabled and "presence_stop_all" in globals():
+        try:
+            await presence_stop_all(int(customer_id), mark_offline=True)
+        except Exception as exc:
+            print(f"Presence cleanup after SALF disable failed: {type(exc).__name__}")
+
 
 
 async def reset_customer_session(customer_id: str):
@@ -2238,6 +2244,11 @@ async def disconnect(request):
     if not customer_id:
         return customer_error()
 
+    try:
+        await presence_stop_all(int(customer_id), mark_offline=False)
+    except Exception:
+        pass
+
     client = clients.get(customer_id)
     if client:
         await client.disconnect()
@@ -2461,6 +2472,14 @@ PANEL_CALLBACKS = {
     "self_features",
     "self_status_center",
     "presence",
+    "prs_online",
+    "prs_activity",
+    "prs_profiles",
+    "prs_schedule",
+    "prs_exceptions",
+    "prs_advanced",
+    "prs_destinations",
+    "prs_scenarios",
 }
 PANEL_DEDUP_TTL_SECONDS = 120.0
 
@@ -2922,6 +2941,9 @@ async def handle_self_command(event, customer_id: str, text: str):
     if await handle_presence_input_state(user_id, int(chat["id"]), text):
         return True
 
+    if await handle_presence_input_state(user_id, int(chat["id"]), text):
+        return True
+
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
@@ -3193,6 +3215,10 @@ async def handle_self_command(event, customer_id: str, text: str):
                 clock_page_markup("schedule", config),
             )
             return
+
+    if normalized in {"وضعیت حضور", "حضور", "presence"}:
+        await bot_send(chat["id"], await presence_page(user_id))
+        return True
 
     if normalized in {"وضعیت حضور", "حضور", "presence"}:
         await bot_send(chat["id"], await presence_page(user_id))
@@ -6945,6 +6971,9 @@ async def process_bot_message(message: dict):
                     message_id=message_id,
                 )
             return
+
+    if await handle_presence_input_state(user_id, int(chat["id"]), text):
+        return
 
     if await handle_presence_input_state(user_id, int(chat["id"]), text):
         return
