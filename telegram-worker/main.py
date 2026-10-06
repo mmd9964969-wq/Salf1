@@ -71,9 +71,166 @@ def _emoji_id(value: str) -> str:
     value = str(value or "").strip()
     return value if value.isdigit() else ""
 
+# Internal marker only. It is converted to Telegram's native Rich Message
+# divider (<hr/>) and is never exposed as a decorative Unicode separator.
+RICH_DIVIDER = "[[RICH_DIVIDER]]"
+# Native Rich Message width pad. It is intentionally invisible HTML space, not
+# a decorative Unicode rail. It gives SALF1 pages a consistent minimum bubble
+# width while keeping the only visible separator as Telegram's native <hr/>.
+RICH_NATIVE_WIDTH_PAD = "&nbsp;" * 64
+
+
+def _clean_rich_inline(value: str) -> str:
+    source = str(value or "").strip()
+    source = source.replace("● ", "").replace("○ ", "")
+    source = source.replace("●", "").replace("○", "")
+    source = __import__("re").sub(r"^\s*[-•]\s*", "", source)
+    source = __import__("re").sub(r"\s+-\s+", " ", source)
+    return source.strip()
+
+
+def _clean_rich_heading(value: str) -> str:
+    source = str(value or "").strip()
+    if source.startswith("<b>") and source.endswith("</b>"):
+        source = source[3:-4].strip()
+    source = __import__("re").sub(r"^\s*◈\s*", "", source)
+    return _clean_rich_inline(source)
+
+
+def _clean_rich_data_line(value: str):
+    source = str(value or "").strip()
+    source = __import__("re").sub(r"^\s*◈\s*", "", source)
+    source = __import__("re").sub(r"^\s*⛂\s*", "", source)
+    source = __import__("re").sub(r"^\s*★\s*", "", source)
+    source = source.replace(" - ", " ", 1)
+    if " : " not in source:
+        return None
+    label, data = source.split(" : ", 1)
+    label = _clean_rich_inline(label)
+    data = _clean_rich_inline(data)
+    if not label or not data:
+        return None
+    return label, data
+
+
 def rich_message_html(text: str) -> str:
-    """Backward-compatible Rich Message HTML passthrough for Telethon paths."""
-    return str(text)
+    """
+    Build Telegram's native Rich Message HTML structure.
+    Legacy decorative symbols are converted into native headings,
+    paragraphs, lists, tables and dividers instead of being displayed.
+    """
+    import re
+
+    source = str(text or "").strip()
+    if not source:
+        source = "<b>SALF1</b>"
+
+    lines = source.splitlines()
+    # Make the top-level SALF1 page heading establish a consistent minimum
+    # intrinsic width. No visible separator/rail is added.
+    if lines and RICH_NATIVE_WIDTH_PAD not in lines[0] and lines[0].lstrip().startswith("<b>Sᴀʟғ1"):
+        lines[0] = lines[0].replace("</b>", f"{RICH_NATIVE_WIDTH_PAD}</b>", 1)
+
+    parts: list[str] = []
+    data_rows: list[tuple[str, str]] = []
+    list_items: list[str] = []
+
+    def flush_table():
+        nonlocal data_rows
+        if not data_rows:
+            return
+        rows = [
+            '<tr><th align="right">عنوان</th><th align="right">مقدار</th></tr>'
+        ]
+        rows.extend(
+            f'<tr><td align="right">{label}</td><td align="right">{value}</td></tr>'
+            for label, value in data_rows
+        )
+        parts.append(
+            "<table bordered compact>"
+            + "".join(rows)
+            + "</table>"
+        )
+        data_rows = []
+
+    def flush_list():
+        nonlocal list_items
+        if not list_items:
+            return
+        parts.append("<ul>" + "".join(f"<li>{item}</li>" for item in list_items) + "</ul>")
+        list_items = []
+
+    for raw_line in lines:
+        line = raw_line.strip()
+
+        if not line:
+            flush_table()
+            flush_list()
+            continue
+
+        if line in {RICH_DIVIDER, "<hr/>"}:
+            flush_table()
+            flush_list()
+            parts.append("<hr/>")
+            continue
+
+        if line.startswith("<blockquote>") and line.endswith("</blockquote>"):
+            flush_table()
+            flush_list()
+            parts.append(line)
+            continue
+
+        # Native Telegram Rich Message button rows must not be converted into
+        # ordinary paragraphs; preserve their callback/style attributes.
+        if line.startswith("<tg-button-row") or line.startswith("<tg-button "):
+            flush_table()
+            flush_list()
+            parts.append(line)
+            continue
+
+        if line.startswith("<b>") and line.endswith("</b>"):
+            inner = _clean_rich_heading(line)
+            if inner:
+                flush_table()
+                flush_list()
+                parts.append(f"<h2>{inner}</h2>")
+            continue
+
+        if line.startswith("◈"):
+            cleaned = _clean_rich_heading(line)
+            if cleaned:
+                flush_table()
+                flush_list()
+                parts.append(f"<h2>{cleaned}</h2>")
+            continue
+
+        data = _clean_rich_data_line(line)
+        if data:
+            flush_list()
+            data_rows.append(data)
+            continue
+
+        bullet = re.sub(r"^\s*★\s*-\s*", "", line)
+        if bullet != line:
+            flush_table()
+            list_items.append(_clean_rich_inline(bullet))
+            continue
+
+        # Legacy separators/symbol-only prefixes become normal rich text.
+        cleaned = re.sub(r"^\s*[⛂★]\s*", "", line)
+        cleaned = _clean_rich_inline(cleaned)
+        if cleaned:
+            flush_table()
+            flush_list()
+            parts.append(f"<p>{cleaned}</p>")
+
+    flush_table()
+    flush_list()
+
+    return "\n".join(parts)
+
+
+
 
 
 def render_custom_emoji(text: str) -> str:
@@ -7206,11 +7363,6 @@ async def process_callback(callback_query: dict):
     message_id = int(message.get("message_id", 0))
     await bot_answer_callback(callback_id)
     await panel_session_touch_callback(user_id, chat_id, message_id, data)
-
-    if data == "presence" or data.startswith("prs_") or data.startswith("presence_"):
-        row = await db_user(str(user_id))
-        if not row or int(row["telegram_user_id"]) != user_id:
-            return
 
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
         if not await is_admin_user(user_id, from_user.get("username")):
