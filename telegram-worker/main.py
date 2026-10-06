@@ -2976,6 +2976,11 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             return False
 
     chat_type = _panel_chat_type(event, owner_id)
+    # In the private chat with @Pers3anSelfBot, Telegram represents the
+    # destination from the self account's perspective as the bot's user ID.
+    # Bot API cannot send to another bot, so route the panel to the owner ID;
+    # that is the actual user recipient of this bot conversation.
+    delivery_chat_id = owner_id if chat_type == "bot_private" else destination_id
     lock = command_locks.setdefault(
         f"self:{customer_id}:{destination_id}",
         asyncio.Lock(),
@@ -2990,7 +2995,7 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
         if chat_type != "saved_messages" and BOT_TOKEN and http_session is not None:
             try:
                 direct_result = await bot_send(
-                    destination_id,
+                    delivery_chat_id,
                     panel_text,
                     panel_markup,
                 )
@@ -2999,7 +3004,7 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
                     direct_message_id = sent.get("message_id")
                     await panel_session_upsert(
                         customer_id,
-                        destination_id,
+                        delivery_chat_id,
                         int(direct_message_id) if direct_message_id else None,
                         section="main",
                         delivery="bot_api_direct",
@@ -4443,6 +4448,18 @@ PRESENCE_V2_PRESETS = {
         ],
     ),
 }
+
+def _presence_json(value, fallback):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else fallback
+        except Exception:
+            return fallback
+    return fallback
+
 
 def _presence_v2_default_scenarios():
     return [
