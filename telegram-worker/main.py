@@ -1651,20 +1651,53 @@ async def start_customer_login(customer_id: str, phone: str, force_resend: bool 
             pending_code_delivery.pop(customer_id, None)
             pending_2fa.discard(customer_id)
 
-        client = await restore_client(customer_id)
-        await client.connect()
+        # Login must use a fresh Telegram authorization key. Reusing the
+        # persisted StringSession here can trigger AUTH_KEY_DUPLICATED when the
+        # same saved session is still active from another worker/IP.
+        existing = clients.get(customer_id)
+        if existing is not None:
+            try:
+                if not existing.is_connected():
+                    await existing.connect()
+                if await existing.is_user_authorized():
+                    me = await existing.get_me()
+                    me_cache[customer_id] = int(me.id)
+                    await update_account_state(customer_id, True)
+                    return {"status": "already_connected", "user": {
+                        "id": me.id,
+                        "username": me.username,
+                        "first_name": me.first_name,
+                        "last_name": me.last_name,
+                    }}
+            except Exception as exc:
+                if session_conflict_error(exc):
+                    print(
+                        f"Existing login session conflict for {customer_key(customer_id)}; "
+                        "starting a fresh authorization session"
+                    )
+            finally:
+                try:
+                    if existing.is_connected() and not await existing.is_user_authorized():
+                        await existing.disconnect()
+                except Exception:
+                    pass
+                if not existing.is_connected() or not await existing.is_user_authorized():
+                    clients.pop(customer_id, None)
 
-        # Opening a login flow must never replace an already-authorized session.
-        if await client.is_user_authorized():
-            me = await client.get_me()
-            me_cache[customer_id] = int(me.id)
-            await update_account_state(customer_id, True)
-            return {"status": "already_connected", "user": {
-                "id": me.id,
-                "username": me.username,
-                "first_name": me.first_name,
-                "last_name": me.last_name,
-            }}
+        # A stale vault must not be reused for a new authorization flow when
+        # the database says this account is currently disconnected.
+        row = await db_user(customer_id)
+        if not row or not bool(row["account_connected"]):
+            try:
+                await delete_session_vault(customer_id)
+            except Exception as exc:
+                print(
+                    f"Stale login session cleanup failed for {customer_key(customer_id)}: "
+                    f"{type(exc).__name__}"
+                )
+
+        client = client_for(customer_id, "")
+        await client.connect()
 
         try:
             sent = await client.send_code_request(phone)
