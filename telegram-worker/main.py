@@ -5176,20 +5176,14 @@ def salf_settings_markup():
 def self_features_markup():
     return {"inline_keyboard": [
         [custom_emoji_button("› ساعت", "clock", "automation")],
-        [custom_emoji_button("› مرکز حضور", "presence", "self")],
         [custom_emoji_button("‹ بازگشت", "panel_self", "self")],
     ]}
 
 async def self_features_text(user_id: int):
     clock_config = await clock_get_settings(user_id)
-    presence_config = await presence_get_settings(user_id)
 
     clock_enabled = bool(clock_config.get("enabled"))
-    presence_online = bool(presence_config.get("online_enabled"))
-    presence_typing = bool(presence_config.get("typing_enabled"))
-    presence_enabled = bool(presence_online or presence_typing)
-    target_count = len(presence_config.get("targets") or [])
-    active_count = int(clock_enabled) + int(presence_enabled)
+    active_count = int(clock_enabled)
 
     return f"""<b>Sᴀʟғ1 · قابلیت‌های سلف</b>
 
@@ -5198,10 +5192,6 @@ async def self_features_text(user_id: int):
 ◈ وضعیت قابلیت‌ها
 
 ساعت : {"【 فعال 】" if clock_enabled else "【 خاموش 】"}
-مرکز حضور : {"【 فعال 】" if presence_enabled else "【 خاموش 】"}
-آنلاین : {"【 فعال 】" if presence_online else "【 خاموش 】"}
-در حال نوشتن : {"【 فعال 】" if presence_typing else "【 خاموش 】"}
-مقصدهای حضور : 【 {target_count} 】
 قابلیت‌های فعال : 【 {active_count} 】
 
 {RICH_DIVIDER}
@@ -5215,19 +5205,9 @@ async def self_features_text(user_id: int):
 
 {RICH_DIVIDER}
 
-◈ ماژول مرکز حضور
-
-وضعیت : {"● آماده" if presence_enabled else "○ خاموش"}
-حالت : {html.escape(PRESENCE_MODE_NAMES.get(str(presence_config.get("mode")), "دائمی"))}
-نوع تایپینگ : {html.escape(PRESENCE_TYPING_MODE_NAMES.get(str(presence_config.get("typing_mode")), "پیوسته"))}
-منطقه زمانی : {html.escape(str(presence_config.get("timezone") or clock_config.get("timezone") or "UTC"))}
-مقصدها : 【 {target_count} 】
-
-{RICH_DIVIDER}
-
 ◈ راهنما
 
-ساعت برای مدیریت زمان و پروفایل است. مرکز حضور برای وضعیت آنلاین و نمایش «در حال نوشتن» در PV یا گروه‌های انتخاب‌شده است. هر ماژول تنظیمات، زمان‌بندی و موتور مستقل خود را دارد.
+ساعت برای مدیریت زمان و پروفایل استفاده می‌شود. تنظیمات، زمان‌بندی و موتور آن مستقل است.
 
 {RICH_DIVIDER}
 
