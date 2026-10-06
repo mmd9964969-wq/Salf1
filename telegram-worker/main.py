@@ -2417,12 +2417,12 @@ PANEL_COMMAND_NAME = "panel"
 PANEL_POLICY = {
     "name": PANEL_COMMAND_NAME,
     "aliases": tuple(sorted(PANEL_COMMAND_ALIASES)),
-    "self_scope": "ANYWHERE",
+    "self_scope": "SUPPORTED_DESTINATIONS",
     "bot_scope": "BOT_PRIVATE_ONLY",
     "permission": "ACCOUNT_OWNER_OR_SELF_AUTHOR",
     "source": "USER",
-    "forward": "FALLBACK_ONLY",
-    "staging": "FALLBACK_ONLY",
+    "forward": "NONE",
+    "staging": "NONE",
     "auto_delete": False,
     "deduplicate": True,
 }
@@ -2845,317 +2845,22 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             )
             return False
 
-        # Fallback source in the owner's bot PV. Never delete it automatically.
-        try:
-            source_result = await bot_send(
-                owner_id,
-                panel_text,
-                panel_markup,
-            )
-        except Exception as exc:
-            await command_audit(
-                customer_id,
-                PANEL_COMMAND_NAME,
-                "error",
-                reason=f"staging_send:{type(exc).__name__}",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                chat_type=chat_type,
-                message_id=message_id,
-                delivery="staging_failed",
-            )
-            return False
-
-        if not isinstance(source_result, dict) or not source_result.get("ok"):
-            await command_audit(
-                customer_id,
-                PANEL_COMMAND_NAME,
-                "error",
-                reason="staging_rejected",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                chat_type=chat_type,
-                message_id=message_id,
-                delivery="staging_failed",
-            )
-            return False
-
-        source_message = source_result.get("result") or {}
-        source_message_id = source_message.get("message_id")
-        if not source_message_id:
-            await command_audit(
-                customer_id,
-                PANEL_COMMAND_NAME,
-                "error",
-                reason="staging_missing_message_id",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                chat_type=chat_type,
-                message_id=message_id,
-                delivery="staging_retained",
-            )
-            return False
-
-        bot_target = "@" + (bot_username or "Pers3anSelfBot").lstrip("@")
-
-        try:
-            bot_input = await client.get_input_entity(bot_target)
-            if chat_type == "saved_messages":
-                destination_input = await client.get_input_entity("me")
-            else:
-                destination_input = getattr(event, "input_chat", None)
-                if destination_input is None:
-                    destination_input = await client.get_input_entity(destination_id)
-        except Exception as exc:
-            await command_audit(
-                customer_id,
-                PANEL_COMMAND_NAME,
-                "error",
-                reason=f"peer_resolution:{type(exc).__name__}",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                chat_type=chat_type,
-                message_id=message_id,
-                delivery="staging_retained",
-            )
-            return False
-
-        try:
-            forwarded = await client(
-                functions.messages.ForwardMessagesRequest(
-                    from_peer=bot_input,
-                    id=[int(source_message_id)],
-                    random_id=[secrets.randbits(63)],
-                    to_peer=destination_input,
-                    drop_author=False,
-                    with_my_score=False,
-                    silent=False,
-                    background=False,
-                    top_msg_id=None,
-                    schedule_date=None,
-                )
-            )
-
-            if not getattr(forwarded, "updates", None):
-                raise RuntimeError("Telegram returned no forwarded update")
-
-            forwarded_message_id = _forwarded_message_id(forwarded)
-            await panel_session_upsert(
-                customer_id,
-                destination_id,
-                forwarded_message_id,
-                source_message_id=int(source_message_id),
-                section="main",
-                delivery="mtproto_forward",
-            )
-            await command_audit(
-                customer_id,
-                PANEL_COMMAND_NAME,
-                "executed",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                chat_type=chat_type,
-                message_id=message_id,
-                delivery="mtproto_forward",
-            )
-            print({
-                "type": "panel.delivered",
-                "customer_id": customer_id,
-                "destination_chat_id": destination_id,
-                "destination_type": chat_type,
-                "source_bot": bot_target,
-                "source_message_id": int(source_message_id),
-                "forwarded_message_id": forwarded_message_id,
-                "source_deleted": False,
-            })
-            return True
-
-        except Exception as exc:
-            await command_audit(
-                customer_id,
-                PANEL_COMMAND_NAME,
-                "error",
-                reason=f"forward:{type(exc).__name__}",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                chat_type=chat_type,
-                message_id=message_id,
-                delivery="staging_retained",
-            )
-            print(
-                f"Panel MTProto forward failed for {customer_key(customer_id)} "
-                f"destination={destination_id} source={bot_target} "
-                f"source_message_id={source_message_id}: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            # No deletion on failure.
-            return False
-
-
-# Internal marker only. It is converted to Telegram's native Rich Message
-# divider (<hr/>) and is never exposed as a decorative Unicode separator.
-RICH_DIVIDER = "[[RICH_DIVIDER]]"
-# Native Rich Message width pad. It is intentionally invisible HTML space, not
-# a decorative Unicode rail. It gives SALF1 pages a consistent minimum bubble
-# width while keeping the only visible separator as Telegram's native <hr/>.
-RICH_NATIVE_WIDTH_PAD = "&nbsp;" * 64
-
-
-def _clean_rich_inline(value: str) -> str:
-    source = str(value or "").strip()
-    source = source.replace("● ", "").replace("○ ", "")
-    source = source.replace("●", "").replace("○", "")
-    source = __import__("re").sub(r"^\s*[-•]\s*", "", source)
-    source = __import__("re").sub(r"\s+-\s+", " ", source)
-    return source.strip()
-
-
-def _clean_rich_heading(value: str) -> str:
-    source = str(value or "").strip()
-    if source.startswith("<b>") and source.endswith("</b>"):
-        source = source[3:-4].strip()
-    source = __import__("re").sub(r"^\s*◈\s*", "", source)
-    return _clean_rich_inline(source)
-
-
-def _clean_rich_data_line(value: str):
-    source = str(value or "").strip()
-    source = __import__("re").sub(r"^\s*◈\s*", "", source)
-    source = __import__("re").sub(r"^\s*⛂\s*", "", source)
-    source = __import__("re").sub(r"^\s*★\s*", "", source)
-    source = source.replace(" - ", " ", 1)
-    if " : " not in source:
-        return None
-    label, data = source.split(" : ", 1)
-    label = _clean_rich_inline(label)
-    data = _clean_rich_inline(data)
-    if not label or not data:
-        return None
-    return label, data
-
-
-def rich_message_html(text: str) -> str:
-    """
-    Build Telegram's native Rich Message HTML structure.
-    Legacy decorative symbols are converted into native headings,
-    paragraphs, lists, tables and dividers instead of being displayed.
-    """
-    import re
-
-    source = str(text or "").strip()
-    if not source:
-        source = "<b>SALF1</b>"
-
-    lines = source.splitlines()
-    # Make the top-level SALF1 page heading establish a consistent minimum
-    # intrinsic width. No visible separator/rail is added.
-    if lines and RICH_NATIVE_WIDTH_PAD not in lines[0] and lines[0].lstrip().startswith("<b>Sᴀʟғ1"):
-        lines[0] = lines[0].replace("</b>", f"{RICH_NATIVE_WIDTH_PAD}</b>", 1)
-
-    parts: list[str] = []
-    data_rows: list[tuple[str, str]] = []
-    list_items: list[str] = []
-
-    def flush_table():
-        nonlocal data_rows
-        if not data_rows:
-            return
-        rows = [
-            '<tr><th align="right">عنوان</th><th align="right">مقدار</th></tr>'
-        ]
-        rows.extend(
-            f'<tr><td align="right">{label}</td><td align="right">{value}</td></tr>'
-            for label, value in data_rows
+        # No cross-chat fallback: if the bot cannot send the panel to the
+        # original destination, that destination is unsupported for this
+        # command. Never open or stage the panel in the main bot chat.
+        await command_audit(
+            customer_id,
+            PANEL_COMMAND_NAME,
+            "ignored",
+            reason="destination_not_supported_or_bot_no_access",
+            source="self",
+            scope="SUPPORTED_DESTINATIONS",
+            chat_id=destination_id,
+            chat_type=chat_type,
+            message_id=message_id,
+            delivery="not_delivered",
         )
-        parts.append(
-            "<table bordered compact>"
-            + "".join(rows)
-            + "</table>"
-        )
-        data_rows = []
-
-    def flush_list():
-        nonlocal list_items
-        if not list_items:
-            return
-        parts.append("<ul>" + "".join(f"<li>{item}</li>" for item in list_items) + "</ul>")
-        list_items = []
-
-    for raw_line in lines:
-        line = raw_line.strip()
-
-        if not line:
-            flush_table()
-            flush_list()
-            continue
-
-        if line in {RICH_DIVIDER, "<hr/>"}:
-            flush_table()
-            flush_list()
-            parts.append("<hr/>")
-            continue
-
-        if line.startswith("<blockquote>") and line.endswith("</blockquote>"):
-            flush_table()
-            flush_list()
-            parts.append(line)
-            continue
-
-        # Native Telegram Rich Message button rows must not be converted into
-        # ordinary paragraphs; preserve their callback/style attributes.
-        if line.startswith("<tg-button-row") or line.startswith("<tg-button "):
-            flush_table()
-            flush_list()
-            parts.append(line)
-            continue
-
-        if line.startswith("<b>") and line.endswith("</b>"):
-            inner = _clean_rich_heading(line)
-            if inner:
-                flush_table()
-                flush_list()
-                parts.append(f"<h2>{inner}</h2>")
-            continue
-
-        if line.startswith("◈"):
-            cleaned = _clean_rich_heading(line)
-            if cleaned:
-                flush_table()
-                flush_list()
-                parts.append(f"<h2>{cleaned}</h2>")
-            continue
-
-        data = _clean_rich_data_line(line)
-        if data:
-            flush_list()
-            data_rows.append(data)
-            continue
-
-        bullet = re.sub(r"^\s*★\s*-\s*", "", line)
-        if bullet != line:
-            flush_table()
-            list_items.append(_clean_rich_inline(bullet))
-            continue
-
-        # Legacy separators/symbol-only prefixes become normal rich text.
-        cleaned = re.sub(r"^\s*[⛂★]\s*", "", line)
-        cleaned = _clean_rich_inline(cleaned)
-        if cleaned:
-            flush_table()
-            flush_list()
-            parts.append(f"<p>{cleaned}</p>")
-
-    flush_table()
-    flush_list()
-
-    return "\n".join(parts)
-
+        return False
 
 async def self_respond(event, text: str, **kwargs):
     return await event.respond(rich_message_html(text), **kwargs)
@@ -3179,6 +2884,17 @@ async def handle_self_command(event, customer_id: str, text: str):
         bot_states.pop(user_id, None)
         await send_owner_panel(event, customer_id, True)
         return True
+
+    # Hard owner gate: no self command or interactive state may be
+    # processed for messages authored by anyone except the connected account.
+    # Returning silently is intentional: unauthorized users must not receive
+    # permission/error responses from the self-bot.
+    sender_id = getattr(event, "sender_id", None)
+    is_self_author = bool(getattr(event, "out", False))
+    if sender_id is not None:
+        is_self_author = is_self_author or int(sender_id) == int(customer_id)
+    if not is_self_author:
+        return False
 
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
