@@ -6,7 +6,8 @@ export PORT="${PORT:-4173}"
 export SALF1_PORT="${SALF1_PORT:-8080}"
 export PYTHONUNBUFFERED=1
 
-/opt/salf1-venv/bin/python /app/telegram-worker/main.py &
+# The Node panel and Python Telegram service need different PORT values.
+PORT="$SALF1_PORT" /opt/salf1-venv/bin/python /app/telegram-worker/main.py &
 BOT_PID=$!
 
 node /app/server.js &
@@ -20,8 +21,6 @@ cleanup() {
 
 trap cleanup INT TERM
 
-# A failed web or bot process must fail the whole runtime so Cloudflare can
-# restart the container instead of silently leaving half the application up.
 while kill -0 "$BOT_PID" 2>/dev/null && kill -0 "$WEB_PID" 2>/dev/null; do
   sleep 2
 done
