@@ -92,6 +92,9 @@ export class Salf1Container extends Container {
       SALF1_PORT: "8080",
       SALF1_ROLE: String(this.runtimeEnv.SALF1_ROLE || "all"),
       SALF1_WORKER_URL: "http://127.0.0.1:8080",
+      SALF1_EVENT_BRIDGE_URL: String(
+        this.runtimeEnv.SALF1_EVENT_BRIDGE_URL || "http://127.0.0.1:8080",
+      ),
       SALF1_LOGIN_BASE_URL: publicOrigin,
       PUBLIC_ORIGIN: publicOrigin,
       RP_ID: String(this.runtimeEnv.RP_ID || publicHost),
@@ -117,6 +120,9 @@ export class Salf1Container extends Container {
     vars.SALF1_PORT = "8080";
     vars.SALF1_ROLE = String(this.runtimeEnv.SALF1_ROLE || "all");
     vars.SALF1_WORKER_URL = "http://127.0.0.1:8080";
+    vars.SALF1_EVENT_BRIDGE_URL = String(
+      this.runtimeEnv.SALF1_EVENT_BRIDGE_URL || "http://127.0.0.1:8080",
+    );
     vars.SALF1_LOGIN_BASE_URL = publicOrigin;
     vars.PUBLIC_ORIGIN = publicOrigin;
     vars.RP_ID = String(this.runtimeEnv.RP_ID || publicHost);
