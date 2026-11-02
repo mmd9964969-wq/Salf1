@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "salf1-panel",
+  "name": "salf1",
   "main": "cloudflare/worker.js",
   "compatibility_date": "2026-11-02",
   "compatibility_flags": ["nodejs_compat"],
