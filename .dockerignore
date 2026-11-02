@@ -1,0 +1,11 @@
+node_modules
+dist
+.wrangler
+.git
+.gitignore
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+*.log
+.DS_Store
