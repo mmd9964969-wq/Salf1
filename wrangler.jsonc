@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "salf1-panel",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-11-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "Salf1Container",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "observability": {
+        "enabled": true
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SALF1_CONTAINER",
+        "class_name": "Salf1Container"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Salf1Container"]
+    }
+  ]
+}
