@@ -7,7 +7,7 @@ Salf1 contains two coordinated applications:
 
 ## Cloudflare deployment
 
-The repository is configured for one Cloudflare Worker backed by one Cloudflare Container. The container runs both Node.js and Python processes; the Worker exposes the panel over HTTPS. The Python service is internal to the container and is reached by the Node.js server through `http://127.0.0.1:8080`.
+The repository is configured for one Cloudflare Worker named `salf1`, backed by one Cloudflare Container. The container runs both Node.js and Python processes; the Worker exposes the panel over HTTPS. The Python service is internal to the container and is reached by the Node.js server through `http://127.0.0.1:8080`.
 
 The Durable Object refreshes the container's inactivity timer every five minutes so the Telegram runtime can continue handling updates between web requests. Cloudflare may still restart an instance during platform maintenance or deployment; the runtime is expected to restart from the container image.
 
@@ -28,7 +28,7 @@ Cloudflare Workers Builds should use:
 
 ## Required Worker secrets
 
-Add these in **Workers & Pages → salf1-panel → Settings → Variables and Secrets**:
+Add these in **Workers & Pages → salf1 → Settings → Variables and Secrets**:
 
 | Name | Purpose |
 | --- | --- |
@@ -47,7 +47,9 @@ Optional Worker variables include `SALF1_OWNER_USER_IDS`, `SALF1_ADMIN_IDS`, `PU
 
 ## Cost and runtime notes
 
-Cloudflare Containers require the Workers Paid plan. Container memory and disk are billed while an instance is running, including idle time. The keepalive alarm is intentional because this application includes long-running Telegram tasks; monitor container usage and billing after deployment.
+Cloudflare Containers require the Workers Paid plan. Container resources are billed based on active runtime and provisioned memory/disk. The keepalive alarm is intentional because this application includes long-running Telegram tasks; monitor container usage and billing after deployment.
+
+The existing Python and Node.js application expects PostgreSQL. Cloudflare D1 uses SQLite SQL semantics and is not a drop-in replacement. Connect a persistent PostgreSQL database through `DATABASE_URL`; do not store PostgreSQL data on the container's ephemeral disk.
 
 ## Local checks
 
