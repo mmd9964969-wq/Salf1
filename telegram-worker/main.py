@@ -180,6 +180,15 @@ def rich_message_html(text: str) -> str:
             parts.append(line)
             continue
 
+        # Telegram renders <aside> as a centered pull-quote block. Preserve it
+        # as a block so the /start brand heading is centered without whitespace
+        # padding or unsupported alignment attributes.
+        if line.startswith("<aside>") and line.endswith("</aside>"):
+            flush_table()
+            flush_list()
+            parts.append(line)
+            continue
+
         # Native Telegram Rich Message button rows must not be converted into
         # ordinary paragraphs; preserve their callback/style attributes.
         if line.startswith("<tg-button-row") or line.startswith("<tg-button "):
@@ -3977,7 +3986,7 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
     unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(str(user_id), health.get("username"))
     balance = int(row["tron_balance"]) if row else 0
     return f"""
-<b>Fᴀʀᴠᴀʜʀ Sᴇʟғ · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
+<aside><b>Fᴀʀᴠᴀʜʀ Sᴇʟғ · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b></aside>
 
 خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
