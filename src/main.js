@@ -5,7 +5,7 @@ const app = document.querySelector("#app");
 
 const LANGS = ["fa","en","ar","zh","es","fr","de"];
 const state = {
-  lang: localStorage.getItem("salf1_lang") || "fa",
+  lang: localStorage.getItem("farvahr_self_lang") || "fa",
   stage: "entry",
   entryOpen: false,
   recovery: false,
@@ -202,7 +202,7 @@ function pageHtml() {
     const gatewayCopy = state.lang === "fa"
       ? {
           title: "درگاه ورود امن",
-          subtitle: "اتصال اکانت از طریق کانال امن SALF1 انجام می‌شود.",
+          subtitle: "اتصال اکانت از طریق کانال امن Farvahr Self انجام می‌شود.",
           channel: "کانال امنیتی",
           channelValue: "آماده",
           session: "نشست",
@@ -210,7 +210,7 @@ function pageHtml() {
           integrity: "اعتبار درگاه",
           integrityValue: "تأیید شده",
           system: "سامانه",
-          systemValue: "SALF1 WEB",
+          systemValue: "FARVAHR SELF WEB",
           open: "باز کردن پنل ورود امن",
           existing: "ورود به اکانت",
           existingHint: "برای اکانت ساخته‌شده",
@@ -220,7 +220,7 @@ function pageHtml() {
         }
       : {
           title: "SECURE ACCESS GATE",
-          subtitle: "Account access is handled through the secure SALF1 channel.",
+          subtitle: "Account access is handled through the secure Farvahr Self channel.",
           channel: "SECURE CHANNEL",
           channelValue: "READY",
           session: "SESSION",
@@ -228,7 +228,7 @@ function pageHtml() {
           integrity: "GATE INTEGRITY",
           integrityValue: "VERIFIED",
           system: "SYSTEM",
-          systemValue: "SALF1 WEB",
+          systemValue: "FARVAHR SELF WEB",
           open: "OPEN SECURE LOGIN",
           existing: "ACCOUNT LOGIN",
           existingHint: "FOR AN EXISTING ACCOUNT",
@@ -250,7 +250,7 @@ function pageHtml() {
         '<p class="stage-subtitle">' + gatewayCopy.subtitle + '</p>' +
         '<div class="secure-gateway">' +
           '<div class="gateway-head">' +
-            '<div><span class="gateway-eyebrow">SALF1 · PRIVATE GATE</span><strong id="gatewayLive">' + gatewayCopy.live + '</strong></div>' +
+            '<div><span class="gateway-eyebrow">FARVAHR SELF · PRIVATE GATE</span><strong id="gatewayLive">' + gatewayCopy.live + '</strong></div>' +
             '<span class="gateway-led" id="gatewayLed"></span>' +
           '</div>' +
           '<div class="gateway-grid">' +
@@ -526,7 +526,7 @@ function bindCommon() {
       const next=btn.dataset.lang;
       if(!next||next===state.lang)return;
       state.lang=next;
-      localStorage.setItem("salf1_lang",state.lang);
+      localStorage.setItem("farvahr_self_lang",state.lang);
       render();
     });
   });
