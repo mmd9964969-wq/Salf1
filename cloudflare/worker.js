@@ -91,6 +91,12 @@ export class Salf1Container extends Container {
     ).replace(/\/+$/, "");
     const publicHost = new URL(publicOrigin).hostname;
 
+    const [sessionSecret, workerApiToken, webhookSecret] = await Promise.all([
+      getOrCreateSecret(this.ctx.storage, "secret:session"),
+      getOrCreateSecret(this.ctx.storage, "secret:worker-api"),
+      getOrCreateSecret(this.ctx.storage, "secret:webhook"),
+    ]);
+
     const vars = {
       NODE_ENV: "production",
       PORT: "4173",
@@ -104,15 +110,9 @@ export class Salf1Container extends Container {
         this.runtimeEnv.TELEGRAM_OIDC_REDIRECT_URI ||
           publicOrigin + "/auth/telegram/callback",
       ),
-      SESSION_SECRET:
-        String(this.runtimeEnv.SESSION_SECRET || "") ||
-        (await getOrCreateSecret(this.ctx.storage, "secret:session")),
-      WORKER_API_TOKEN:
-        String(this.runtimeEnv.WORKER_API_TOKEN || "") ||
-        (await getOrCreateSecret(this.ctx.storage, "secret:worker-api")),
-      SALF1_WEBHOOK_SECRET:
-        String(this.runtimeEnv.SALF1_WEBHOOK_SECRET || "") ||
-        (await getOrCreateSecret(this.ctx.storage, "secret:webhook")),
+      SESSION_SECRET: String(this.runtimeEnv.SESSION_SECRET || "") || sessionSecret,
+      WORKER_API_TOKEN: String(this.runtimeEnv.WORKER_API_TOKEN || "") || workerApiToken,
+      SALF1_WEBHOOK_SECRET: String(this.runtimeEnv.SALF1_WEBHOOK_SECRET || "") || webhookSecret,
     };
 
     copyConfiguredEnv(this.runtimeEnv, vars);
@@ -129,18 +129,6 @@ export class Salf1Container extends Container {
       this.runtimeEnv.TELEGRAM_OIDC_REDIRECT_URI ||
         publicOrigin + "/auth/telegram/callback",
     );
-
-    // These are generated once and stored in Durable Object storage so
-    // restarts do not invalidate panel cookies or internal worker requests.
-    vars.SESSION_SECRET =
-      String(this.runtimeEnv.SESSION_SECRET || "") ||
-      (await getOrCreateSecret(this.ctx.storage, "secret:session"));
-    vars.WORKER_API_TOKEN =
-      String(this.runtimeEnv.WORKER_API_TOKEN || "") ||
-      (await getOrCreateSecret(this.ctx.storage, "secret:worker-api"));
-    vars.SALF1_WEBHOOK_SECRET =
-      String(this.runtimeEnv.SALF1_WEBHOOK_SECRET || "") ||
-      (await getOrCreateSecret(this.ctx.storage, "secret:webhook"));
 
     this.envVars = vars;
     })();
