@@ -7,7 +7,7 @@ export SALF1_PORT="${SALF1_PORT:-8080}"
 export PYTHONUNBUFFERED=1
 
 # The Node panel and Python Telegram service need different PORT values.
-PORT="$SALF1_PORT" /opt/salf1-venv/bin/python /app/telegram-worker/main.py &
+PORT="$SALF1_PORT" /opt/farvahr-self-venv/bin/python /app/telegram-worker/main.py &
 BOT_PID=$!
 
 node /app/server.js &
@@ -25,6 +25,6 @@ while kill -0 "$BOT_PID" 2>/dev/null && kill -0 "$WEB_PID" 2>/dev/null; do
   sleep 2
 done
 
-echo "SALF1 child process exited; stopping the remaining process."
+echo "Farvahr Self child process exited; stopping the remaining process."
 cleanup
 exit 1
