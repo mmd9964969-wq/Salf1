@@ -40,7 +40,7 @@ CREATOR_USERNAME = os.getenv("SALF1_CREATOR_USERNAME", "Jowati").strip().lstrip(
 OWNER_USER_IDS = {value.strip() for value in os.getenv("SALF1_OWNER_USER_IDS", "").split(",") if value.strip().isdigit()}
 UNLIMITED_TRON_DISPLAY = "∞"
 ADMIN_USER_IDS = {value.strip() for value in os.getenv("SALF1_ADMIN_IDS", "").split(",") if value.strip().isdigit()}
-CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "Pers3anSelf").strip().lstrip("@")
+CHANNEL_USERNAME = os.getenv("SALF1_CHANNEL_USERNAME", "").strip().lstrip("@")
 EVENT_BRIDGE_URL = os.getenv("SALF1_EVENT_BRIDGE_URL", "").strip()
 KEYWORD_ACK_URL = os.getenv("SALF1_KEYWORD_ACK_URL", "").strip()
 ROLE = os.getenv("SALF1_ROLE", "all").strip().lower()
@@ -123,12 +123,12 @@ def rich_message_html(text: str) -> str:
 
     source = str(text or "").strip()
     if not source:
-        source = "<b>SALF1</b>"
+        source = "<b>Fᴀʀᴠᴀʜʀ Sᴇʟғ</b>"
 
     lines = source.splitlines()
     # Make the top-level SALF1 page heading establish a consistent minimum
     # intrinsic width. No visible separator/rail is added.
-    if lines and RICH_NATIVE_WIDTH_PAD not in lines[0] and lines[0].lstrip().startswith("<b>Sᴀʟғ1"):
+    if lines and RICH_NATIVE_WIDTH_PAD not in lines[0] and lines[0].lstrip().startswith("<b>Fᴀʀᴠᴀʜʀ"):
         lines[0] = lines[0].replace("</b>", f"{RICH_NATIVE_WIDTH_PAD}</b>", 1)
 
     parts: list[str] = []
@@ -2244,7 +2244,7 @@ async def billing_loop():
 async def health(request):
     return web.json_response({
         "ok": True,
-        "service": "salf1-telegram-worker",
+        "service": "farvahr-self-telegram-worker",
         "role": ROLE,
         "telegram_configured": configured(),
         "mini_bot_configured": bot_configured(),
@@ -8345,7 +8345,7 @@ async def main():
                 max_size=DB_POOL_MAX,
                 command_timeout=15,
             )
-            print("Salf1 worker database connected.")
+            print("Farvahr Self worker database connected.")
             await init_web_login_tokens_table()
             await init_session_vault_table()
             await init_command_runtime_tables()
@@ -8354,7 +8354,7 @@ async def main():
             await init_clock_settings_table()
             await init_presence_settings_table()
             await ensure_admin_ledger_table()
-            print("Salf1 web login token store ready.")
+            print("Farvahr Self web login token store ready.")
         except Exception as exc:
             print(f"WARNING: database connection failed: {exc}")
             db_pool = None
@@ -8373,7 +8373,7 @@ async def main():
     if not BOT_TOKEN:
         print("WARNING: SALF1_BOT_TOKEN is not configured; the bot API is disabled.")
 
-    print(f"Salf1 worker role: {ROLE}; DB pool={DB_POOL_MIN}-{DB_POOL_MAX}")
+    print(f"Farvahr Self worker role: {ROLE}; DB pool={DB_POOL_MIN}-{DB_POOL_MAX}")
 
     http_session = ClientSession()
     try:
@@ -8383,7 +8383,7 @@ async def main():
         await runner.setup()
         site = web.TCPSite(runner, HOST, PORT)
         await site.start()
-        print(f"Salf1 Telegram Worker listening on {HOST}:{PORT}")
+        print(f"Farvahr Self Telegram Worker listening on {HOST}:{PORT}")
 
         tasks = []
         if ROLE in {"bot", "all"}:
@@ -8409,7 +8409,7 @@ LOGIN_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Persian Self — Secure Login</title>
+<title>Farvahr Self — Secure Login</title>
 <style>
 body{margin:0;background:#0b0c0f;color:#f4f4f5;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
 .card{width:min(92vw,420px);background:#15171c;border:1px solid #2a2d34;border-radius:22px;padding:28px;box-sizing:border-box;box-shadow:0 18px 60px rgba(0,0,0,.45)}
@@ -8424,7 +8424,7 @@ button{width:100%;margin-top:16px;border:0;border-radius:12px;padding:13px;font-
 </head>
 <body>
 <div class="card">
-<h1>◈ Persian Self — ورود امن</h1>
+<h1>◈ Farvahr Self — ورود امن</h1>
 <div class="sub">ورود اکانت از این پنل انجام می‌شود. کد ورود و رمز دو مرحله‌ای را داخل چت تلگرام ارسال نکنید.</div>
 
 <section id="phoneStep">
