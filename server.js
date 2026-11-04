@@ -521,7 +521,7 @@ function authSession(req,res) {
 }
 
 async function proxyAuth(req, res, pathName) {
-  const workerBase = String(process.env.SALF1_EVENT_BRIDGE_URL || "http://salf1-telegram-worker:8080").replace(/\/$/, "");
+  const workerBase = String(process.env.SALF1_EVENT_BRIDGE_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
   const token = String(process.env.WORKER_API_TOKEN || "");
   if (!token) {
     sendJson(res, req, 503, {ok:false, error:"WORKER_API_NOT_CONFIGURED"});
@@ -573,7 +573,7 @@ async function proxySiteEvent(req, res) {
     return;
   }
 
-  const workerBase = String(process.env.SALF1_EVENT_BRIDGE_URL || "http://salf1-telegram-worker:8080").replace(/\/$/, "");
+  const workerBase = String(process.env.SALF1_EVENT_BRIDGE_URL || "http://127.0.0.1:8080").replace(/\/$/, "");
   const token = String(process.env.WORKER_API_TOKEN || "");
   let body = {};
   try {
@@ -639,7 +639,7 @@ async function directBody(req) {
 
 
 function workerUrl() {
-  return String(process.env.SALF1_WORKER_URL || "http://salf1-telegram-worker:8080").replace(/\/+$/,"");
+  return String(process.env.SALF1_WORKER_URL || "http://127.0.0.1:8080").replace(/\/+$/,"");
 }
 
 async function callWorker(req,route,payload) {
@@ -1453,7 +1453,7 @@ const server = createServer(async (req,res) => {
     }
 
     if (url.pathname === "/health" && req.method === "GET") {
-      sendJson(res,req,200,{ok:true,service:"salf1-web",status:"ready"});
+      sendJson(res,req,200,{ok:true,service:"farvahr-self-web",status:"ready"});
       return;
     }
 
@@ -1485,17 +1485,17 @@ const server = createServer(async (req,res) => {
       res.end(fallback);
     }
   } catch (error) {
-    console.error("SALF1 server error:",error);
+    console.error("Farvahr Self server error:",error);
     res.writeHead(500,{...securityHeaders(req),"Content-Type":"text/plain; charset=utf-8","Cache-Control":"no-store"});
-    res.end("SALF1 server error");
+    res.end("Farvahr Self server error");
   }
 });
 
 initPasskeyDb().then(()=>{
   server.listen(port,"0.0.0.0",()=> {
-    console.log(`SALF1 web listening on 0.0.0.0:${port}`);
+    console.log(`Farvahr Self web listening on 0.0.0.0:${port}`);
   });
 }).catch((error)=>{
-  console.error("SALF1 passkey database initialization failed:",error?.message || error);
+  console.error("Farvahr Self passkey database initialization failed:",error?.message || error);
   process.exit(1);
 });
