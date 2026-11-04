@@ -153,7 +153,7 @@ const copy = {
     access:"ACCESO AUTORIZADO",ready:"PUERTA DE AUTENTICACIÓN LISTA",success:"ACCESO CONCEDIDO",
     invalid:"Los datos de autenticación no son válidos.",mismatch:"Las contraseñas no coinciden.",
     masterRule:"12+ caracteres · mayúscula · minúscula · número · símbolo",scene:"CAMPO CÓSMICO /",
-    footer1:"Creador : Jawati",footer2:"Equipo : FARVAHR TEAM",footer3:"Marque : FARVAHR SELF",
+    footer1:"Creador : Jawati",footer2:"Equipo : FARVAHR TEAM",footer3:"Marca : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   fr:{
@@ -168,7 +168,7 @@ const copy = {
     shield:"BOUCLIER DE SÉCURITÉ ACTIF",access:"ACCÈS AUTORISÉ",ready:"PASSERELLE D'AUTHENTIFICATION PRÊTE",
     success:"ACCÈS ACCORDÉ",invalid:"Les informations d'authentification sont invalides.",
     mismatch:"Les mots de passe ne correspondent pas.",masterRule:"12+ caractères · majuscule · minuscule · nombre · symbole",
-    scene:"CHAMP COSMIQUE /",footer1:"Créateur : Jawati",footer2:"Équipe : FARVAHR TEAM",footer3:"Marca : FARVAHR SELF",
+    scene:"CHAMP COSMIQUE /",footer1:"Créateur : Jawati",footer2:"Équipe : FARVAHR TEAM",footer3:"Marque : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   de:{
