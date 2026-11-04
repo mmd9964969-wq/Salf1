@@ -10,6 +10,7 @@ import random
 import secrets
 from datetime import datetime, timedelta, timezone, time as dt_time
 from zoneinfo import ZoneInfo
+from collections import deque
 import time
 
 import asyncpg
@@ -391,6 +392,23 @@ account_health_cache: dict[str, dict] = {}
 session_runtime_lock_connections: dict[str, object] = {}
 bot_update_wakeup = asyncio.Event()
 BOT_UPDATE_MAX_ATTEMPTS = 8
+
+# Bounded, process-local latency samples. These are diagnostic only and never
+# participate in queue correctness or billing decisions.
+webhook_enqueue_samples = deque(maxlen=120)
+bot_update_timing_samples = deque(maxlen=120)
+
+
+def percentile_value(values, fraction: float):
+    clean = sorted(float(value) for value in values if isinstance(value, (int, float)))
+    if not clean:
+        return None
+    index = min(len(clean) - 1, max(0, int((len(clean) - 1) * fraction)))
+    return clean[index]
+
+
+def format_latency_ms(value):
+    return f"{float(value):.1f} ms" if value is not None else "در دسترس نیست"
 
 
 def configured():
@@ -3907,6 +3925,126 @@ async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
     return await bot_api("sendRichMessage", payload)
 
 
+async def send_ping_report(chat_id: int):
+    """Run a lightweight, explicitly separated latency and health probe."""
+    check_started = time.perf_counter()
+    queue_pool = webhook_db_pool or db_pool
+    database_ms = None
+    pending_updates = None
+    processing_updates = None
+    database_ok = False
+
+    if queue_pool is not None:
+        database_started = time.perf_counter()
+        try:
+            async with queue_pool.acquire(timeout=1.5) as conn:
+                row = await asyncio.wait_for(
+                    conn.fetchrow(
+                        """
+                        select
+                            (select count(*)::int from salf1_bot_update_queue where status='pending') as pending,
+                            (select count(*)::int from salf1_bot_update_queue where status='processing') as processing
+                        """
+                    ),
+                    timeout=2.0,
+                )
+            database_ms = (time.perf_counter() - database_started) * 1000
+            pending_updates = int(row["pending"] or 0)
+            processing_updates = int(row["processing"] or 0)
+            database_ok = True
+        except Exception as exc:
+            database_ms = (time.perf_counter() - database_started) * 1000
+            print(f"Ping database probe failed: {type(exc).__name__}")
+
+    telegram_api_ms = None
+    telegram_api_ok = False
+    if BOT_TOKEN and http_session is not None:
+        telegram_started = time.perf_counter()
+        try:
+            api_result = await bot_api(
+                "sendChatAction",
+                {"chat_id": chat_id, "action": "typing"},
+                timeout=5,
+            )
+            telegram_api_ms = (time.perf_counter() - telegram_started) * 1000
+            telegram_api_ok = bool(isinstance(api_result, dict) and api_result.get("ok"))
+        except Exception as exc:
+            telegram_api_ms = (time.perf_counter() - telegram_started) * 1000
+            print(f"Ping Telegram API probe failed: {type(exc).__name__}")
+
+    cloudflare_ms = None
+    cloudflare_ok = False
+    if http_session is not None:
+        cloudflare_started = time.perf_counter()
+        try:
+            async with http_session.get(
+                "https://www.cloudflare.com/cdn-cgi/trace",
+                timeout=ClientTimeout(total=4),
+            ) as response:
+                await response.read()
+                cloudflare_ms = (time.perf_counter() - cloudflare_started) * 1000
+                cloudflare_ok = response.status < 400
+        except Exception as exc:
+            cloudflare_ms = (time.perf_counter() - cloudflare_started) * 1000
+            print(f"Ping Cloudflare HTTPS probe failed: {type(exc).__name__}")
+
+    total_check_ms = (time.perf_counter() - check_started) * 1000
+    measured_external_ms = sum(
+        value for value in (database_ms, telegram_api_ms, cloudflare_ms)
+        if value is not None
+    )
+    internal_processing_ms = max(0.0, total_check_ms - measured_external_ms)
+
+    webhook_values = list(webhook_enqueue_samples)
+    queue_wait_values = [sample["queue_wait_ms"] for sample in bot_update_timing_samples]
+    update_process_values = [sample["process_ms"] for sample in bot_update_timing_samples]
+
+    webhook_p50 = percentile_value(webhook_values, 0.50)
+    webhook_p95 = percentile_value(webhook_values, 0.95)
+    queue_wait_p50 = percentile_value(queue_wait_values, 0.50)
+    queue_wait_p95 = percentile_value(queue_wait_values, 0.95)
+    process_p50 = percentile_value(update_process_values, 0.50)
+    process_p95 = percentile_value(update_process_values, 0.95)
+
+    if database_ok and telegram_api_ok:
+        result_text = "پاسخ‌گو"
+    elif database_ok or telegram_api_ok:
+        result_text = "پاسخ‌گویی ناقص"
+    else:
+        result_text = "نیازمند بررسی"
+
+    stability = "متغیر" if (
+        (pending_updates is not None and pending_updates > 25)
+        or (queue_wait_p95 is not None and queue_wait_p95 > 1000)
+        or (process_p95 is not None and process_p95 > 2000)
+    ) else ("قابل قبول" if database_ok and telegram_api_ok else "نامشخص")
+
+    checked_at = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d %H:%M:%S")
+    report = (
+        "<b>« پینگ فروهر سلف »</b>\n"
+        "گزارش زندهٔ پاسخ‌گویی و سنجش تفکیک‌شدهٔ سرویس.\n\n"
+        "<b>مشخصات</b>\n"
+        f"زمان پردازش داخلی بررسی: {internal_processing_ms:.1f} ms\n"
+        f"زمان بررسی دیتابیس و صف: {format_latency_ms(database_ms)}\n"
+        f"تأیید درخواست خروجی در API تلگرام: {format_latency_ms(telegram_api_ms)}\n"
+        f"پاسخ HTTPS به Cloudflare: {format_latency_ms(cloudflare_ms)}\n\n"
+        "<b>عملکرد صف تلگرام</b>\n"
+        f"دریافت وب‌هوک P50 / P95: {format_latency_ms(webhook_p50)} / {format_latency_ms(webhook_p95)}\n"
+        f"انتظار در صف P50 / P95: {format_latency_ms(queue_wait_p50)} / {format_latency_ms(queue_wait_p95)}\n"
+        f"پردازش آپدیت P50 / P95: {format_latency_ms(process_p50)} / {format_latency_ms(process_p95)}\n"
+        f"آپدیت‌های در انتظار: {pending_updates if pending_updates is not None else 'نامشخص'}\n"
+        f"آپدیت‌های در حال پردازش: {processing_updates if processing_updates is not None else 'نامشخص'}\n"
+        f"نمونه‌های ثبت‌شدهٔ صف: {len(bot_update_timing_samples)}\n\n"
+        "<b>نتیجهٔ آزمایش</b>\n"
+        f"وضعیت: {result_text}\n"
+        f"پایداری پاسخ‌گویی: {stability}\n"
+        f"آخرین بررسی: {checked_at} · Asia/Tehran\n\n"
+        "این سنجش از محیط اجرای SALF1 انجام می‌شود؛ زمان Cloudflare پینگ اینترنت دستگاه کاربر یا ICMP نیست. "
+        "P50/P95 فقط از نمونه‌های واقعی ثبت‌شده در همین اجرای سرویس محاسبه می‌شوند."
+    )
+    await bot_send(chat_id, report)
+
+
 async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: int = 60):
     """Delete a Telegram message after a short delay without blocking updates."""
     if not message_id:
@@ -6500,6 +6638,11 @@ async def process_bot_message(message: dict):
     # A live self worker has priority so a self-authored پنل is not executed
     # twice by the webhook. The shared message claim also closes the race.
     normalized = normalize_text(text)
+    command_token = normalized.split(maxsplit=1)[0].split("@", 1)[0] if normalized else ""
+    if command_token in {"پینگ", "ping", "/ping"} and str(chat.get("type") or "").lower() == "private":
+        await send_ping_report(int(chat["id"]))
+        return
+
     if normalized in PANEL_COMMAND_ALIASES:
         message_id = int(message.get("message_id") or 0) or None
         self_client = clients.get(str(user_id))
@@ -8936,10 +9079,11 @@ async def init_bot_update_queue_table():
 
 
 async def claim_bot_update():
-    if db_pool is None:
+    queue_pool = webhook_db_pool or db_pool
+    if queue_pool is None:
         return None
 
-    async with db_pool.acquire() as conn:
+    async with queue_pool.acquire() as conn:
         return await conn.fetchrow(
             """
             with candidate as (
@@ -8960,7 +9104,7 @@ async def claim_bot_update():
                 last_error = null
             from candidate
             where queued.update_id = candidate.update_id
-            returning queued.update_id, queued.payload::text as payload_json, queued.attempts
+            returning queued.update_id, queued.payload::text as payload_json, queued.attempts, queued.created_at
             """
         )
 
@@ -8971,7 +9115,8 @@ async def bot_update_queue_loop():
     next_cleanup = time.monotonic() + 3600
 
     while True:
-        if db_pool is None:
+        queue_pool = webhook_db_pool or db_pool
+        if queue_pool is None:
             await asyncio.sleep(1)
             continue
 
@@ -8988,7 +9133,7 @@ async def bot_update_queue_loop():
         if queued is None:
             if time.monotonic() >= next_cleanup:
                 try:
-                    await db_pool.execute(
+                    await queue_pool.execute(
                         """
                         delete from salf1_bot_update_queue
                         where status in ('done', 'failed')
@@ -9008,6 +9153,13 @@ async def bot_update_queue_loop():
         update_id = int(queued["update_id"])
         attempts = int(queued["attempts"])
         started_at = time.monotonic()
+        queued_at = queued["created_at"]
+        if queued_at.tzinfo is None:
+            queued_at = queued_at.replace(tzinfo=timezone.utc)
+        queue_wait_ms = max(
+            0.0,
+            (datetime.now(timezone.utc) - queued_at.astimezone(timezone.utc)).total_seconds() * 1000,
+        )
 
         try:
             update = json.loads(queued["payload_json"])
@@ -9019,7 +9171,7 @@ async def bot_update_queue_loop():
             elif update.get("message"):
                 await process_bot_message(update["message"])
 
-            await db_pool.execute(
+            await queue_pool.execute(
                 """
                 update salf1_bot_update_queue
                 set status = 'done',
@@ -9031,9 +9183,13 @@ async def bot_update_queue_loop():
                 update_id,
             )
 
-            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            elapsed_ms = (time.monotonic() - started_at) * 1000
+            bot_update_timing_samples.append({
+                "queue_wait_ms": round(queue_wait_ms, 1),
+                "process_ms": round(elapsed_ms, 1),
+            })
             if elapsed_ms >= 1000:
-                print(f"Telegram update processed: id={update_id} elapsed_ms={elapsed_ms}")
+                print(f"Telegram update processed: id={update_id} elapsed_ms={int(elapsed_ms)} queue_wait_ms={int(queue_wait_ms)}")
 
         except asyncio.CancelledError:
             raise
@@ -9043,7 +9199,7 @@ async def bot_update_queue_loop():
             retry_delay = min(60, 2 ** max(0, attempts - 1))
 
             try:
-                await db_pool.execute(
+                await queue_pool.execute(
                     """
                     update salf1_bot_update_queue
                     set status = $2,
@@ -9111,9 +9267,10 @@ async def bot_webhook(request: web.Request):
                 update_id,
                 payload_json,
             )
-        elapsed_ms = int((time.monotonic() - request_start) * 1000)
+        elapsed_ms = (time.monotonic() - request_start) * 1000
+        webhook_enqueue_samples.append(round(elapsed_ms, 1))
         if elapsed_ms >= 250:
-            print(f"Telegram webhook enqueue slow: id={update_id} elapsed_ms={elapsed_ms}")
+            print(f"Telegram webhook enqueue slow: id={update_id} elapsed_ms={int(elapsed_ms)}")
         bot_update_wakeup.set()
         return web.json_response({"ok": True})
 
