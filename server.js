@@ -13,10 +13,16 @@ const port = Number(process.env.PORT || 4173);
 
 const authDb = process.env.DATABASE_URL ? new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 5,
+  max: 8,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 8000
+  connectionTimeoutMillis: 5000,
+  allowExitOnIdle: false
 }) : null;
+
+let masterSchemaPromise = null;
+let gemSchemaPromise = null;
+
+const TELEGRAM_MINI_APP_MAX_AGE_SECONDS = 24 * 60 * 60;
 
 const mime = {
   ".html":"text/html; charset=utf-8",
@@ -496,7 +502,7 @@ function authSession(req,res) {
   const cookies = parseCookies(req.headers.cookie || "");
   const session = unpackSigned(cookies.salf_session);
 
-  if (!session || !session.expireAt && false) {
+  if (!session) {
     sendJson(res, req, 401, { ok:false });
     return;
   }
@@ -758,22 +764,135 @@ function authUser(account) {
 }
 
 
+function verifyTelegramMiniAppInitData(rawInitData) {
+  const initData = String(rawInitData || "");
+  if (!initData || initData.length > 16384) throw new Error("MINI_APP_DATA_INVALID");
+
+  const botToken = String(process.env.SALF1_BOT_TOKEN || "").trim();
+  if (!botToken) throw new Error("MINI_APP_AUTH_NOT_CONFIGURED");
+
+  const params = new URLSearchParams(initData);
+  const suppliedHash = String(params.get("hash") || "");
+  if (!/^[a-f0-9]{64}$/i.test(suppliedHash)) throw new Error("MINI_APP_HASH_INVALID");
+
+  const dataCheckString = [...params.entries()]
+    .filter(([key]) => key !== "hash")
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, value]) => key + "=" + value)
+    .join("\n");
+
+  const secretKey = createHmac("sha256", "WebAppData").update(botToken).digest();
+  const calculatedHash = createHmac("sha256", secretKey).update(dataCheckString).digest();
+  const receivedHash = Buffer.from(suppliedHash, "hex");
+
+  if (receivedHash.length !== calculatedHash.length || !timingSafeEqual(receivedHash, calculatedHash)) {
+    throw new Error("MINI_APP_SIGNATURE_INVALID");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const authDate = Number(params.get("auth_date"));
+  if (!Number.isSafeInteger(authDate) || authDate > now + 60 || now - authDate > TELEGRAM_MINI_APP_MAX_AGE_SECONDS) {
+    throw new Error("MINI_APP_DATA_EXPIRED");
+  }
+
+  let user;
+  try {
+    user = JSON.parse(params.get("user") || "null");
+  } catch {
+    throw new Error("MINI_APP_USER_INVALID");
+  }
+
+  const userId = String(user?.id ?? "");
+  if (!/^\d{1,20}$/.test(userId)) throw new Error("MINI_APP_USER_INVALID");
+
+  return {
+    id: userId,
+    username: String(user.username || ""),
+    first_name: String(user.first_name || ""),
+    last_name: String(user.last_name || ""),
+    photo_url: String(user.photo_url || "")
+  };
+}
+
+async function miniAppLogin(req, res) {
+  if (!directOrigin(req)) {
+    sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
+    return;
+  }
+  if (!authDb) {
+    sendJson(res,req,503,{ok:false,error:"DATABASE_UNAVAILABLE"});
+    return;
+  }
+  if (directLimited(req,"miniapp_login",30,5*60*1000)) {
+    sendJson(res,req,429,{ok:false,error:"RATE_LIMITED"});
+    return;
+  }
+
+  const body = await directBody(req);
+  let telegramUser;
+  try {
+    telegramUser = verifyTelegramMiniAppInitData(body.init_data);
+  } catch (error) {
+    const missingConfig = error?.message === "MINI_APP_AUTH_NOT_CONFIGURED";
+    sendJson(res,req,missingConfig ? 503 : 401,{ok:false,error:error?.message || "MINI_APP_AUTH_FAILED"});
+    return;
+  }
+
+  await ensureMasterTable();
+  const result = await authDb.query(
+    "SELECT telegram_user_id,username,site_username,name FROM salf_master_credentials WHERE telegram_user_id=$1 LIMIT 1",
+    [telegramUser.id]
+  );
+
+  if (!result.rowCount) {
+    sendJson(res,req,200,{ok:true,authenticated:false,needs_setup:true});
+    return;
+  }
+
+  const row = result.rows[0];
+  const account = {
+    id: row.telegram_user_id,
+    telegram_user_id: row.telegram_user_id,
+    username: row.site_username || row.username || telegramUser.username,
+    telegram_username: row.username || telegramUser.username,
+    name: row.name || [telegramUser.first_name,telegramUser.last_name].filter(Boolean).join(" ")
+  };
+  const session = authUser(account);
+
+  res.writeHead(200,{
+    ...securityHeaders(req),
+    "Content-Type":"application/json; charset=utf-8",
+    "Cache-Control":"no-store",
+    "Set-Cookie":cookie("salf_session",packSigned(session),{maxAge:7*24*60*60})
+  });
+  res.end(JSON.stringify({ok:true,authenticated:true,account}));
+}
+
+
 async function ensureMasterTable() {
   if (!authDb) throw new Error("DATABASE_UNAVAILABLE");
-  await authDb.query(
-    "CREATE TABLE IF NOT EXISTS salf_master_credentials (" +
-    "telegram_user_id TEXT PRIMARY KEY," +
-    "username TEXT," +
-    "site_username TEXT," +
-    "name TEXT," +
-    "password_hash TEXT NOT NULL," +
-    "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()," +
-    "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()" +
-    ")"
-  );
-  await authDb.query("ALTER TABLE salf_master_credentials ADD COLUMN IF NOT EXISTS site_username TEXT");
-  await authDb.query("CREATE UNIQUE INDEX IF NOT EXISTS salf_master_site_username_idx ON salf_master_credentials (lower(site_username)) WHERE site_username IS NOT NULL");
-  await authDb.query("CREATE INDEX IF NOT EXISTS salf_master_username_idx ON salf_master_credentials (lower(username))");
+  if (!masterSchemaPromise) {
+    masterSchemaPromise = (async () => {
+      await authDb.query(
+        "CREATE TABLE IF NOT EXISTS salf_master_credentials (" +
+        "telegram_user_id TEXT PRIMARY KEY," +
+        "username TEXT," +
+        "site_username TEXT," +
+        "name TEXT," +
+        "password_hash TEXT NOT NULL," +
+        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()," +
+        "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()" +
+        ")"
+      );
+      await authDb.query("ALTER TABLE salf_master_credentials ADD COLUMN IF NOT EXISTS site_username TEXT");
+      await authDb.query("CREATE UNIQUE INDEX IF NOT EXISTS salf_master_site_username_idx ON salf_master_credentials (lower(site_username)) WHERE site_username IS NOT NULL");
+      await authDb.query("CREATE INDEX IF NOT EXISTS salf_master_username_idx ON salf_master_credentials (lower(username))");
+    })().catch(error => {
+      masterSchemaPromise = null;
+      throw error;
+    });
+  }
+  return masterSchemaPromise;
 }
 
 async function hashMasterPassword(password) {
@@ -830,26 +949,27 @@ async function masterSetup(req,res) {
     if(!siteUsername) return sendJson(res,req,400,{ok:false,error:"SITE_USERNAME_INVALID"});
   }
 
-  const taken=await authDb.query(
-    "SELECT telegram_user_id FROM salf_master_credentials WHERE lower(site_username)=lower($1) AND telegram_user_id<>$2 LIMIT 1",
-    [siteUsername,telegramId]
-  );
-  if(taken.rowCount) return sendJson(res,req,409,{ok:false,error:"SITE_USERNAME_TAKEN"});
-
   const account={telegram_user_id:telegramId,username:siteUsername,name:pending.name||""};
   const hash=await hashMasterPassword(password);
 
-  if(recovery){
-    await authDb.query(
-      "UPDATE salf_master_credentials SET password_hash=$1,name=$2,updated_at=NOW() WHERE telegram_user_id=$3",
-      [hash,account.name,telegramId]
-    );
-  } else {
-    await authDb.query(
-      "INSERT INTO salf_master_credentials (telegram_user_id,username,site_username,name,password_hash) VALUES ($1,$2,$3,$4,$5) " +
-      "ON CONFLICT (telegram_user_id) DO UPDATE SET username=EXCLUDED.username,site_username=EXCLUDED.site_username,name=EXCLUDED.name,password_hash=EXCLUDED.password_hash,updated_at=NOW()",
-      [account.telegram_user_id,account.username,siteUsername,account.name,hash]
-    );
+  try {
+    if(recovery){
+      await authDb.query(
+        "UPDATE salf_master_credentials SET password_hash=$1,name=$2,updated_at=NOW() WHERE telegram_user_id=$3",
+        [hash,account.name,telegramId]
+      );
+    } else {
+      await authDb.query(
+        "INSERT INTO salf_master_credentials (telegram_user_id,username,site_username,name,password_hash) VALUES ($1,$2,$3,$4,$5) " +
+        "ON CONFLICT (telegram_user_id) DO UPDATE SET username=EXCLUDED.username,site_username=EXCLUDED.site_username,name=EXCLUDED.name,password_hash=EXCLUDED.password_hash,updated_at=NOW()",
+        [account.telegram_user_id,account.username,siteUsername,account.name,hash]
+      );
+    }
+  } catch (error) {
+    if (error?.code === "23505") {
+      return sendJson(res,req,409,{ok:false,error:"SITE_USERNAME_TAKEN",code:"SITE_USERNAME_TAKEN"});
+    }
+    throw error;
   }
   const session=authUser(account);
   res.writeHead(200,{...securityHeaders(req),"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Set-Cookie":[cookie("salf_session",packSigned(session),{maxAge:7*24*60*60}),clearCookie("salf_pending_auth")]});
@@ -911,20 +1031,26 @@ async function listGemPackages(req,res) {
 
 async function ensureGemTables() {
   if(!authDb) throw new Error("DATABASE_UNAVAILABLE");
-  await authDb.query(
-    "CREATE TABLE IF NOT EXISTS salf_gem_orders ("+
-    "id BIGSERIAL PRIMARY KEY,"+
-    "receipt_code TEXT UNIQUE NOT NULL,"+
-    "telegram_user_id TEXT NOT NULL,"+
-    "package_code TEXT NOT NULL,"+
-    "package_name TEXT NOT NULL,"+
-    "gem_amount INTEGER NOT NULL,"+
-    "price TEXT NOT NULL,"+
-    "payment_method TEXT,"+
-    "status TEXT NOT NULL DEFAULT 'awaiting_payment',"+
-    "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"+
-    ")"
-  );
+  if (!gemSchemaPromise) {
+    gemSchemaPromise = authDb.query(
+      "CREATE TABLE IF NOT EXISTS salf_gem_orders ("+
+      "id BIGSERIAL PRIMARY KEY,"+
+      "receipt_code TEXT UNIQUE NOT NULL,"+
+      "telegram_user_id TEXT NOT NULL,"+
+      "package_code TEXT NOT NULL,"+
+      "package_name TEXT NOT NULL,"+
+      "gem_amount INTEGER NOT NULL,"+
+      "price TEXT NOT NULL,"+
+      "payment_method TEXT,"+
+      "status TEXT NOT NULL DEFAULT 'awaiting_payment',"+
+      "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"+
+      ")"
+    ).catch(error => {
+      gemSchemaPromise = null;
+      throw error;
+    });
+  }
+  return gemSchemaPromise;
 }
 
 async function createGemReceipt(req,res) {
@@ -1387,6 +1513,11 @@ const server = createServer(async (req,res) => {
       return;
     }
 
+    if (url.pathname === "/api/auth/miniapp" && req.method === "POST") {
+      await miniAppLogin(req,res);
+      return;
+    }
+
     if (url.pathname === "/api/auth/start" && req.method === "POST") {
       await directAuth(req,res,"/auth/start");
       return;
@@ -1491,11 +1622,16 @@ const server = createServer(async (req,res) => {
   }
 });
 
-initPasskeyDb().then(()=>{
+const startupTasks = [initPasskeyDb()];
+if (authDb) {
+  startupTasks.push(ensureMasterTable(),ensureGemTables());
+}
+
+Promise.all(startupTasks).then(()=>{
   server.listen(port,"0.0.0.0",()=> {
-    console.log(`SALF1 web listening on 0.0.0.0:${port}`);
+    console.log("SALF1 web listening on 0.0.0.0:" + port);
   });
 }).catch((error)=>{
-  console.error("SALF1 passkey database initialization failed:",error?.message || error);
+  console.error("SALF1 database initialization failed:",error?.message || error);
   process.exit(1);
 });
