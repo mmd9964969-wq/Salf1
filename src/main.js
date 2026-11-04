@@ -32,7 +32,7 @@ const state = {
 
 const copy = {
   fa:{
-    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",
+    brand:"FARVAHR SELF",
     management:"مدیریت اکانت",
     login:"ورود",
     identifier:"شماره تلفن یا نام کاربری تلگرام",
@@ -68,12 +68,12 @@ const copy = {
     masterRule:"حداقل ۱۲ کاراکتر · حرف بزرگ · حرف کوچک · عدد · نماد",
     scene:"میدان کیهانی /",
     footer1:"سازنده : Jawati",
-    footer2:"تیم : Persian team",
-    footer3:"کانال ما : @Pers3anSelf",
+    footer2:"تیم : FARVAHR TEAM",
+    footer3:"برند : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   en:{
-    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",
+    brand:"FARVAHR SELF",
     management:"مدیریت اکانت",
     login:"ENTER",
     identifier:"Telegram phone number or username",
@@ -109,12 +109,12 @@ const copy = {
     masterRule:"12+ chars · upper · lower · number · symbol",
     scene:"COSMIC FIELD /",
     footer1:"Creator : Jawati",
-    footer2:"Team : Persian team",
-    footer3:"Channel : @Pers3anSelf",
+    footer2:"Team : FARVAHR TEAM",
+    footer3:"Brand : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   ar:{
-    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"إدارة الحساب",login:"دخول",
+    brand:"FARVAHR SELF",management:"إدارة الحساب",login:"دخول",
     identifier:"رقم هاتف أو اسم مستخدم تيليجرام",identifierHint:"استخدم رقمًا دوليًا عند الاتصال الأول.",
     continue:"متابعة",codeTitle:"رمز التحقق",codeText:"أدخل الرمز الذي أرسله تيليجرام.",code:"رمز من 5 أرقام",
     resend:"إعادة الإرسال",verify:"تأكيد الرمز",twofaTitle:"التحقق بخطوتين",twofaText:"أكمل طبقة الأمان الثانية.",
@@ -124,11 +124,11 @@ const copy = {
     back:"رجوع",security:"التشفير الآمن فعال",verifying:"جارٍ التحقق من الهوية...",shield:"درع الأمان نشط",
     access:"تم السماح بالدخول",ready:"بوابة المصادقة جاهزة",success:"تم منح الوصول",invalid:"بيانات المصادقة غير صحيحة.",
     mismatch:"كلمتا المرور غير متطابقتين.",masterRule:"12 حرفًا+ · كبير · صغير · رقم · رمز",scene:"المجال الكوني /",
-    footer1:"المنشئ : Jawati",footer2:"الفريق : Persian team",footer3:"القناة : @Pers3anSelf",
+    footer1:"المنشئ : Jawati",footer2:"الفريق : FARVAHR TEAM",footer3:"العلامة : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   zh:{
-    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"账户管理",login:"进入",
+    brand:"FARVAHR SELF",management:"账户管理",login:"进入",
     identifier:"Telegram 手机号或用户名",identifierHint:"首次连接请使用国际手机号。",
     continue:"继续",codeTitle:"验证码",codeText:"输入 Telegram 发送的验证码。",code:"5 位验证码",
     resend:"重新发送",verify:"验证代码",twofaTitle:"两步验证",twofaText:"完成第二层安全验证。",
@@ -138,11 +138,11 @@ const copy = {
     verifying:"正在验证身份...",shield:"安全护盾已启用",access:"访问已授权",ready:"身份验证入口已就绪",
     success:"访问已授予",invalid:"身份信息无效。",mismatch:"两次密码不一致。",
     masterRule:"至少12位 · 大写 · 小写 · 数字 · 符号",scene:"宇宙场 /",
-    footer1:"创建者：Jawati",footer2:"团队：Persian team",footer3:"频道：@Pers3anSelf",
+    footer1:"创建者：Jawati",footer2:"团队：FARVAHR TEAM",footer3:"品牌：FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   es:{
-    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"GESTIÓN DE CUENTAS",login:"ENTRAR",
+    brand:"FARVAHR SELF",management:"GESTIÓN DE CUENTAS",login:"ENTRAR",
     identifier:"Teléfono o usuario de Telegram",identifierHint:"Usa un número internacional para la primera conexión.",
     continue:"CONTINUAR",codeTitle:"CÓDIGO DE VERIFICACIÓN",codeText:"Introduce el código enviado por Telegram.",code:"CÓDIGO DE 5 DÍGITOS",
     resend:"REENVIAR",verify:"VERIFICAR CÓDIGO",twofaTitle:"VERIFICACIÓN EN DOS PASOS",twofaText:"Completa la segunda capa de seguridad.",
@@ -153,11 +153,11 @@ const copy = {
     access:"ACCESO AUTORIZADO",ready:"PUERTA DE AUTENTICACIÓN LISTA",success:"ACCESO CONCEDIDO",
     invalid:"Los datos de autenticación no son válidos.",mismatch:"Las contraseñas no coinciden.",
     masterRule:"12+ caracteres · mayúscula · minúscula · número · símbolo",scene:"CAMPO CÓSMICO /",
-    footer1:"Creador : Jawati",footer2:"Equipo : Persian team",footer3:"Canal : @Pers3anSelf",
+    footer1:"Creador : Jawati",footer2:"Equipo : FARVAHR TEAM",footer3:"Marca : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   fr:{
-    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"GESTION DE COMPTE",login:"ENTRER",
+    brand:"FARVAHR SELF",management:"GESTION DE COMPTE",login:"ENTRER",
     identifier:"Téléphone ou nom d'utilisateur Telegram",identifierHint:"Utilisez un numéro international pour la première connexion.",
     continue:"CONTINUER",codeTitle:"CODE DE VÉRIFICATION",codeText:"Saisissez le code envoyé par Telegram.",code:"CODE À 5 CHIFFRES",
     resend:"RENVOYER",verify:"VÉRIFIER LE CODE",twofaTitle:"VÉRIFICATION EN DEUX ÉTAPES",twofaText:"Complétez la seconde couche de sécurité.",
@@ -168,11 +168,11 @@ const copy = {
     shield:"BOUCLIER DE SÉCURITÉ ACTIF",access:"ACCÈS AUTORISÉ",ready:"PASSERELLE D'AUTHENTIFICATION PRÊTE",
     success:"ACCÈS ACCORDÉ",invalid:"Les informations d'authentification sont invalides.",
     mismatch:"Les mots de passe ne correspondent pas.",masterRule:"12+ caractères · majuscule · minuscule · nombre · symbole",
-    scene:"CHAMP COSMIQUE /",footer1:"Créateur : Jawati",footer2:"Équipe : Persian team",footer3:"Canal : @Pers3anSelf",
+    scene:"CHAMP COSMIQUE /",footer1:"Créateur : Jawati",footer2:"Équipe : FARVAHR TEAM",footer3:"Marque : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   de:{
-    brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"KONTOVERWALTUNG",login:"EINTRETEN",
+    brand:"FARVAHR SELF",management:"KONTOVERWALTUNG",login:"EINTRETEN",
     identifier:"Telegram-Telefonnummer oder Benutzername",identifierHint:"Für die erste Verbindung internationale Nummer verwenden.",
     continue:"WEITER",codeTitle:"BESTÄTIGUNGSCODE",codeText:"Gib den von Telegram gesendeten Code ein.",code:"5-STELLIGER CODE",
     resend:"ERNEUT SENDEN",verify:"CODE BESTÄTIGEN",twofaTitle:"ZWEI-SCHRITT-VERIFIZIERUNG",twofaText:"Schließe die zweite Sicherheitsebene ab.",
@@ -183,12 +183,20 @@ const copy = {
     verifying:"IDENTITÄT WIRD VERIFIZIERT...",shield:"SICHERHEITSSCHILD AKTIV",access:"ZUGANG AUTORISIERT",
     ready:"AUTHENTIFIZIERUNGS-GATE BEREIT",success:"ZUGANG GEWÄHRT",invalid:"Authentifizierungsdaten sind ungültig.",
     mismatch:"Die Passwörter stimmen nicht überein.",masterRule:"12+ Zeichen · Groß · Klein · Zahl · Symbol",
-    scene:"KOSMISCHES FELD /",footer1:"Ersteller : Jawati",footer2:"Team : Persian team",footer3:"Kanal : @Pers3anSelf",
+    scene:"KOSMISCHES FELD /",footer1:"Ersteller : Jawati",footer2:"Team : FARVAHR TEAM",footer3:"Marke : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   }
 };
 
 const t = key => (copy[state.lang] || copy.fa)[key];
+const visibilityText = visible => {
+  const labels = {
+    fa: ["نمایش","پنهان"], en: ["SHOW","HIDE"], ar: ["عرض","إخفاء"], zh: ["显示","隐藏"],
+    es: ["MOSTRAR","OCULTAR"], fr: ["AFFICHER","MASQUER"], de: ["ANZEIGEN","VERBERGEN"]
+  };
+  return (labels[state.lang] || labels.en)[visible ? 1 : 0];
+};
+
 
 function pageHtml() {
   const langButtons = LANGS.map((lang, index) =>
@@ -202,7 +210,7 @@ function pageHtml() {
     const gatewayCopy = state.lang === "fa"
       ? {
           title: "درگاه ورود امن",
-          subtitle: "اتصال اکانت از طریق کانال امن SALF1 انجام می‌شود.",
+          subtitle: "اتصال اکانت از طریق کانال امن FARVAHR SELF انجام می‌شود.",
           channel: "کانال امنیتی",
           channelValue: "آماده",
           session: "نشست",
@@ -210,7 +218,7 @@ function pageHtml() {
           integrity: "اعتبار درگاه",
           integrityValue: "تأیید شده",
           system: "سامانه",
-          systemValue: "SALF1 WEB",
+          systemValue: "FARVAHR SELF",
           open: "باز کردن پنل ورود امن",
           existing: "ورود به اکانت",
           existingHint: "برای اکانت ساخته‌شده",
@@ -220,7 +228,7 @@ function pageHtml() {
         }
       : {
           title: "SECURE ACCESS GATE",
-          subtitle: "Account access is handled through the secure SALF1 channel.",
+          subtitle: "Account access is handled through the secure FARVAHR SELF channel.",
           channel: "SECURE CHANNEL",
           channelValue: "READY",
           session: "SESSION",
@@ -228,7 +236,7 @@ function pageHtml() {
           integrity: "GATE INTEGRITY",
           integrityValue: "VERIFIED",
           system: "SYSTEM",
-          systemValue: "SALF1 WEB",
+          systemValue: "FARVAHR SELF",
           open: "OPEN SECURE LOGIN",
           existing: "ACCOUNT LOGIN",
           existingHint: "FOR AN EXISTING ACCOUNT",
@@ -250,7 +258,7 @@ function pageHtml() {
         '<p class="stage-subtitle">' + gatewayCopy.subtitle + '</p>' +
         '<div class="secure-gateway">' +
           '<div class="gateway-head">' +
-            '<div><span class="gateway-eyebrow">SALF1 · PRIVATE GATE</span><strong id="gatewayLive">' + gatewayCopy.live + '</strong></div>' +
+            '<div><span class="gateway-eyebrow">FARVAHR SELF · PRIVATE GATE</span><strong id="gatewayLive">' + gatewayCopy.live + '</strong></div>' +
             '<span class="gateway-led" id="gatewayLed"></span>' +
           '</div>' +
           '<div class="gateway-grid">' +
@@ -262,10 +270,10 @@ function pageHtml() {
           '<div class="gateway-track"><span></span></div>' +
         '</div>' +
         '<div class="entry-options ' + (state.entryOpen ? "open" : "") + '">' +
-          '<button class="royal-button gateway-open-button" id="entryLogin" type="button"><span class="button-light"></span><span class="button-label">' + gatewayCopy.open + '</span><span class="button-mark">↗</span></button>' +
+          '<button class="royal-button gateway-open-button" id="entryLogin" type="button"><span class="button-light"></span><span class="button-label">' + gatewayCopy.open + '</span><span class="button-mark">›</span></button>' +
           '<div class="entry-choice-row">' +
-            '<button class="choice-button" id="existingLogin" type="button"><span class="choice-index">01</span><strong>' + gatewayCopy.existing + '</strong><small>' + gatewayCopy.existingHint + '</small><b>↗</b></button>' +
-            '<button class="choice-button" id="newConnection" type="button"><span class="choice-index">02</span><strong>' + gatewayCopy.fresh + '</strong><small>' + gatewayCopy.freshHint + '</small><b>↗</b></button>' +
+            '<button class="choice-button" id="existingLogin" type="button"><span class="choice-index">01</span><strong>' + gatewayCopy.existing + '</strong><small>' + gatewayCopy.existingHint + '</small><b>›</b></button>' +
+            '<button class="choice-button" id="newConnection" type="button"><span class="choice-index">02</span><strong>' + gatewayCopy.fresh + '</strong><small>' + gatewayCopy.freshHint + '</small><b>›</b></button>' +
           '</div>' +
         '</div>' +
         '<div class="gateway-livebar"><span class="gateway-live-dot"></span><span>SECURE CHANNEL</span><i></i><strong id="gatewayProgress">01 / 04</strong></div>' +
@@ -283,13 +291,13 @@ function pageHtml() {
             '<span class="field-line"></span><span class="field-particles"></span>' +
           '</div>' +
           '<p class="field-hint">' + (state.recovery ? (state.lang==="fa" ? "کد بازیابی به حساب تلگرام شما ارسال خواهد شد." : "A recovery code will be sent to your Telegram account.") : t("identifierHint")) + '</p>' +
-          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("continue") + '</span><span class="button-mark">↗</span></button>' +
+          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("continue") + '</span><span class="button-mark">›</span></button>' +
         '</form>' +
       '</div>';
   } else if (state.stage === "code") {
     body =
       '<div class="auth-stage" data-stage="code">' +
-        '<button class="stage-back" id="backButton" type="button">← ' + t("back") + '</button>' +
+        '<button class="stage-back" id="backButton" type="button">‹ ' + t("back") + '</button>' +
         '<div class="stage-mark">02</div>' +
         '<h1>' + t("codeTitle") + '</h1>' +
         '<p class="stage-subtitle">' + (state.deliveryMessage || t("codeText")) + '</p>' +
@@ -297,14 +305,14 @@ function pageHtml() {
           '<div class="otp-label">' + t("code") + '</div>' +
           '<div class="otp-row" dir="ltr">' + [0,1,2,3,4,5].map(i => '<input class="otp-cell" maxlength="1" inputmode="numeric" aria-label="OTP ' + (i + 1) + '">').join("") + '</div>' +
           '<div class="otp-meta"><span id="timerRing" class="timer-ring"><b id="timer">59</b></span><span>' + t("security") + '</span></div>' +
-          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("verify") + '</span><span class="button-mark">↗</span></button>' +
+          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("verify") + '</span><span class="button-mark">›</span></button>' +
           '<button class="ghost-action" id="resendButton" type="button" disabled>' + t("resend") + '</button>' +
         '</form>' +
       '</div>';
   } else if (state.stage === "twofa") {
     body =
       '<div class="auth-stage" data-stage="twofa">' +
-        '<button class="stage-back" id="backButton" type="button">← ' + t("back") + '</button>' +
+        '<button class="stage-back" id="backButton" type="button">‹ ' + t("back") + '</button>' +
         '<div class="stage-mark">03</div>' +
         '<h1>' + t("twofaTitle") + '</h1>' +
         '<p class="stage-subtitle">' + t("twofaText") + '</p>' +
@@ -313,7 +321,7 @@ function pageHtml() {
             '<input id="twofa" type="password" placeholder=" " autocomplete="current-password" required>' +
             '<label for="twofa">' + t("twofa") + '</label><span class="field-line"></span>' +
           '</div>' +
-          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("verify") + '</span><span class="button-mark">♛</span></button>' +
+          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("verify") + '</span><span class="button-mark">›</span></button>' +
         '</form>' +
       '</div>';
   } else if (state.stage === "master_setup") {
@@ -324,10 +332,10 @@ function pageHtml() {
         '<p class="stage-subtitle">' + (state.recovery ? (state.lang==="fa" ? "هویت تلگرام دوباره تأیید شد. رمز جدید را تعیین کن." : "Telegram identity re-verified. Create a new master password.") : t("masterSetupText")) + '</p>' +
         (!state.recovery ? '<div class="minimal-field username-field"><input id="siteUsername" type="text" placeholder=" " autocomplete="username" required><label for="siteUsername">نام کاربری سلف</label><span class="field-line"></span><span id="usernameState" class="username-state">نام آزاد را انتخاب کن</span></div>' : '') +
         '<form id="masterSetupForm" class="auth-form">' +
-          '<div class="minimal-field password-field"><input minlength="12" id="master" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required><label for="master">' + t("master") + '</label><span class="field-line"></span><button class="eye-toggle" id="masterEye" type="button">◌</button></div>' +
-          '<div class="minimal-field password-field"><input minlength="12" id="masterConfirm" type="' + (state.confirmVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required><label for="masterConfirm">' + t("masterConfirm") + '</label><span class="field-line"></span><button class="eye-toggle" id="masterConfirmEye" type="button">◌</button></div>' +
+          '<div class="minimal-field password-field"><input minlength="12" id="master" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required><label for="master">' + t("master") + '</label><span class="field-line"></span><button class="eye-toggle" id="masterEye" type="button">' + visibilityText(state.passwordVisible) + '</button></div>' +
+          '<div class="minimal-field password-field"><input minlength="12" id="masterConfirm" type="' + (state.confirmVisible ? "text" : "password") + '" placeholder=" " autocomplete="new-password" required><label for="masterConfirm">' + t("masterConfirm") + '</label><span class="field-line"></span><button class="eye-toggle" id="masterConfirmEye" type="button">' + visibilityText(state.confirmVisible) + '</button></div>' +
           '<p class="master-rule">' + t("masterRule") + '</p>' +
-          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("save") + '</span><span class="button-mark">♛</span></button>' +
+          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("save") + '</span><span class="button-mark">›</span></button>' +
         '</form>' +
       '</div>';
   } else if (state.stage === "master_login") {
@@ -344,34 +352,34 @@ function pageHtml() {
           '<div class="minimal-field password-field">' +
             '<input id="masterLogin" type="' + (state.passwordVisible ? "text" : "password") + '" placeholder=" " autocomplete="current-password" required>' +
             '<label for="masterLogin">' + t("master") + '</label><span class="field-line"></span>' +
-            '<button class="eye-toggle" id="masterLoginEye" type="button">◌</button>' +
+            '<button class="eye-toggle" id="masterLoginEye" type="button">' + visibilityText(state.passwordVisible) + '</button>' +
           '</div>' +
-          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("enter") + '</span><span class="button-mark">↗</span></button>' +
-          '<button class="ghost-action" id="forgotPassword" type="button">⌁ ' + (state.lang==="fa" ? "بازیابی رمز" : "RECOVER PASSWORD") + '</button>' +
-      '<button class="ghost-action" id="biometricButton" type="button">◈ ' + t("biometric") + '</button>' +
+          '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("enter") + '</span><span class="button-mark">›</span></button>' +
+          '<button class="ghost-action" id="forgotPassword" type="button">' + (state.lang==="fa" ? "بازیابی رمز" : "RECOVER PASSWORD") + '</button>' +
+      '<button class="ghost-action" id="biometricButton" type="button">' + t("biometric") + '</button>' +
         '</form>' +
       '</div>';
   } else if(state.stage === "dashboard") {
     body =
       '<div class="auth-stage dashboard-stage">' +
-        '<div class="stage-mark">SELF PERSIAN MANAGEMENT</div>' +
+        '<div class="stage-mark">FARVAHR SELF MANAGEMENT</div>' +
         '<div class="success-core">♛</div>' +
         '<h1>' + (state.lang==="fa" ? "قلمرو آماده است" : "THE REALM IS READY") + '</h1>' +
         '<p class="stage-subtitle">' + (state.account?.name || state.account?.username || "") + '</p>' +
         '<div class="dashboard-line"><span>TELEGRAM ID</span><strong>' + (state.account?.id ?? state.account?.telegram_user_id ?? "—") + '</strong></div>' +
         '<div class="dashboard-line"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : "—") + '</strong></div>' +
         '<div class="dashboard-line"><span>SECURITY</span><strong>MASTER · SESSION PROTECTED</strong></div>' +
-        '<div class="dashboard-actions"><button class="royal-button compact" id="openGems" type="button"><span class="button-light"></span><span class="button-label">◈ خرید جم</span><span class="button-mark">↗</span></button><button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button><button class="ghost-action" id="logoutButton" type="button">' + (state.lang==="fa" ? "خروج از قلمرو" : "SIGN OUT") + '</button></div>' +
+        '<div class="dashboard-actions"><button class="royal-button compact" id="openGems" type="button"><span class="button-light"></span><span class="button-label">خرید جم</span><span class="button-mark">›</span></button><button class="ghost-action" id="registerBiometric" type="button">' + t("biometric") + '</button><button class="ghost-action" id="logoutButton" type="button">' + (state.lang==="fa" ? "خروج از قلمرو" : "SIGN OUT") + '</button></div>' +
       '</div>';
   } else if(state.stage === "gems") {
     body =
-      '<div class="auth-stage gem-stage"><button class="stage-back" id="backButton" type="button">← بازگشت</button><div class="stage-mark">GEM MARKET / 05</div><h1>بسته‌های جم</h1><p class="stage-subtitle">قلمرو خود را با بسته مصرفی انتخاب کن.</p><div class="gem-grid">' +
-      state.gemPackages.map((p,i)=>'<button class="gem-card" data-gem="'+p.code+'" type="button"><span class="gem-index">0'+(i+1)+'</span><strong>'+p.name+'</strong><b>'+p.gems.toLocaleString("fa-IR")+' جم</b><small>1 جم / دقیقه</small><i>↗</i></button>').join("") +
+      '<div class="auth-stage gem-stage"><button class="stage-back" id="backButton" type="button">‹ بازگشت</button><div class="stage-mark">GEM MARKET / 05</div><h1>بسته‌های جم</h1><p class="stage-subtitle">قلمرو خود را با بسته مصرفی انتخاب کن.</p><div class="gem-grid">' +
+      state.gemPackages.map((p,i)=>'<button class="gem-card" data-gem="'+p.code+'" type="button"><span class="gem-index">0'+(i+1)+'</span><strong>'+p.name+'</strong><b>'+p.gems.toLocaleString("fa-IR")+' جم</b><small>1 جم / دقیقه</small><i>›</i></button>').join("") +
       '</div></div>';
   } else if(state.stage === "gem_detail") {
     const p=state.selectedGem||state.gemPackages[0];
     body =
-      '<div class="auth-stage gem-detail-stage"><button class="stage-back" id="backButton" type="button">← بازگشت</button><div class="stage-mark">GEM PACKAGE</div><h1>◈ Pᴇʀsɪᴀɴ ᴮᵒᵗ Bᴏᴛ · Gᴇᴍ Pᴀᴄᴋᴀɢᴇ</h1><div class="gem-copy"><h3>مـشـخـصـات بـسـتـه</h3><p>⛂ - بسته : '+p.name+'<br>⛂ - مقدار : '+p.gems.toLocaleString("fa-IR")+' جم<br>⛂ - مصرف : 1 جم / دقیقه<br>⛂ - مدت استفاده : '+p.duration+'<br>⛂ - نوع : بسته مصرفی</p><hr><h3>نـحـوه مـصـرف</h3><p>هر 1 دقیقه فعالیت سلف برابر با 1 جم مصرف است.<br><br>⛂ - سلف فعال : مصرف جم<br>⛂ - سلف خاموش : بدون مصرف<br>⛂ - اکانت متصل نباشد : بدون مصرف<br>⛂ - موجودی 0 جم : توقف مصرف و فعالیت</p><hr><h3>مـوجـودی و مـصـرف</h3><p>موجودی حساب شما به‌ صورت خودکار از مقدار جم مصرف‌ شده کسر میشود.<br><br>⛂ - موجودی هیچ‌ وقت منفی نمیشود.<br>⛂ - مصرف فقط هنگام فعالیت سلف انجام میشود.<br>⛂ - با پایان موجودی مصرف متوقف میشود.<br>⛂ - مقدار باقی‌ مانده از طریق بخش «موجودی من» قابل مشاهده است.</p><hr><h3>شـرایـط بـسـتـه</h3><p>⛂ - جم پس از تایید خرید به حساب اضافه میشود.<br>⛂ - قبل از تایید پرداخت موجودی تغییر نمیکند.<br>⛂ - بسته بر اساس مقدار جم تعریف شده است.<br>⛂ - استفاده از جم فقط برای سرویس‌های فعال انجام میشود.<br>⛂ - انتقال یا تبدیل جم به وجه نقد ، در صورت فعال نبودن این قابلیت ، امکان‌ پذیر نیست.</p><hr><h3>هـشـدار مـوجـودی</h3><p>⛂ - موجودی کم : هشدار شارژ حساب<br>⛂ - موجودی 0 : توقف مصرف<br>⛂ - بدون موجودی : ادامه فعالیت نیازمند شارژ حساب است.</p><hr><h3>پـس از خـریـد</h3><p>پس از تأیید پرداخت مقدار جم خریداری‌ شده به موجودی حساب شما اضافه میشود و میتوانید از آن برای فعال نگه‌ داشتن سرویس استفاده کنید.</p><hr><p><strong>نکته :</strong> مدت قابل استفاده به میزان مصرف سلف بستگی دارد؛ فعال بودن مداوم سلف باعث مصرف مداوم جم میشود.</p></div><button class="royal-button" id="payGem" type="button"><span class="button-light"></span><span class="button-label">پرداخت</span><span class="button-mark">↗</span></button></div>';
+      '<div class="auth-stage gem-detail-stage"><button class="stage-back" id="backButton" type="button">‹ بازگشت</button><div class="stage-mark">GEM PACKAGE</div><h1>FARVAHR SELF · GEM PACKAGE</h1><div class="gem-copy"><h3>مـشـخـصـات بـسـتـه</h3><p>⛂ - بسته : '+p.name+'<br>⛂ - مقدار : '+p.gems.toLocaleString("fa-IR")+' جم<br>⛂ - مصرف : 1 جم / دقیقه<br>⛂ - مدت استفاده : '+p.duration+'<br>⛂ - نوع : بسته مصرفی</p><hr><h3>نـحـوه مـصـرف</h3><p>هر 1 دقیقه فعالیت سلف برابر با 1 جم مصرف است.<br><br>⛂ - سلف فعال : مصرف جم<br>⛂ - سلف خاموش : بدون مصرف<br>⛂ - اکانت متصل نباشد : بدون مصرف<br>⛂ - موجودی 0 جم : توقف مصرف و فعالیت</p><hr><h3>مـوجـودی و مـصـرف</h3><p>موجودی حساب شما به‌ صورت خودکار از مقدار جم مصرف‌ شده کسر میشود.<br><br>⛂ - موجودی هیچ‌ وقت منفی نمیشود.<br>⛂ - مصرف فقط هنگام فعالیت سلف انجام میشود.<br>⛂ - با پایان موجودی مصرف متوقف میشود.<br>⛂ - مقدار باقی‌ مانده از طریق بخش «موجودی من» قابل مشاهده است.</p><hr><h3>شـرایـط بـسـتـه</h3><p>⛂ - جم پس از تایید خرید به حساب اضافه میشود.<br>⛂ - قبل از تایید پرداخت موجودی تغییر نمیکند.<br>⛂ - بسته بر اساس مقدار جم تعریف شده است.<br>⛂ - استفاده از جم فقط برای سرویس‌های فعال انجام میشود.<br>⛂ - انتقال یا تبدیل جم به وجه نقد ، در صورت فعال نبودن این قابلیت ، امکان‌ پذیر نیست.</p><hr><h3>هـشـدار مـوجـودی</h3><p>⛂ - موجودی کم : هشدار شارژ حساب<br>⛂ - موجودی 0 : توقف مصرف<br>⛂ - بدون موجودی : ادامه فعالیت نیازمند شارژ حساب است.</p><hr><h3>پـس از خـریـد</h3><p>پس از تأیید پرداخت مقدار جم خریداری‌ شده به موجودی حساب شما اضافه میشود و میتوانید از آن برای فعال نگه‌ داشتن سرویس استفاده کنید.</p><hr><p><strong>نکته :</strong> مدت قابل استفاده به میزان مصرف سلف بستگی دارد؛ فعال بودن مداوم سلف باعث مصرف مداوم جم میشود.</p></div><button class="royal-button" id="payGem" type="button"><span class="button-light"></span><span class="button-label">پرداخت</span><span class="button-mark">›</span></button></div>';
   } else if(state.stage === "receipt") {
     const r=state.receipt||{};
     body='<div class="auth-stage receipt-stage"><div class="stage-mark">RECEIPT / 06</div><h1>رسید خرید جم</h1><div class="receipt-box"><span>کد رسید</span><strong>'+r.code+'</strong><span>بسته</span><strong>'+r.name+'</strong><span>مقدار</span><strong>'+Number(r.gems||0).toLocaleString("fa-IR")+' جم</strong><span>وضعیت</span><strong>در انتظار پرداخت</strong></div><div class="payment-gates"><button class="glass-gate" data-method="online" type="button"><b>درگاه آنلاین</b><small>فعلاً اسکلت درگاه</small></button><button class="glass-gate" data-method="card" type="button"><b>کارت به کارت</b><small>فعلاً اسکلت درگاه</small></button></div><button class="ghost-action" id="backToGems" type="button">بازگشت به بسته‌ها</button></div>';
@@ -382,10 +390,10 @@ function pageHtml() {
         '<div class="stage-mark">ACCESS</div>' +
         '<h1>' + t("success") + '</h1>' +
         '<p class="stage-subtitle">' + (state.account?.name || state.account?.username || "") + '</p>' +
-        '<button class="ghost-action" id="registerBiometric" type="button">◈ ' + t("biometric") + '</button>' +
+        '<button class="ghost-action" id="registerBiometric" type="button">' + t("biometric") + '</button>' +
         '<div class="identity-chip"><span>TELEGRAM ID</span><strong>' + (state.account?.id ?? state.account?.telegram_user_id ?? "—") + '</strong></div>' +
         '<div class="identity-chip"><span>USERNAME</span><strong>' + (state.account?.username ? "@" + state.account.username : (state.lang==="fa" ? "ندارد" : "NONE")) + '</strong></div>' +
-        '<button class="ghost-action" id="enterPanel" type="button">' + (state.lang==="fa" ? "ورود به قلمرو" : "ENTER THE REALM") + ' ↗</button>' +
+        '<button class="ghost-action" id="enterPanel" type="button">' + (state.lang==="fa" ? "ورود به قلمرو" : "ENTER THE REALM") + ' ›</button>' +
       '</div>' +
       '</div>';
   }
@@ -401,7 +409,7 @@ function pageHtml() {
       '<div class="scene-caption"><span>' + t("scene") + '</span><i></i><span id="sceneName">DEEP SPACE / 01</span></div>' +
       '<div class="brand-system" id="brandSystem">' +
         '<div class="brand-energy energy-a"></div><div class="brand-energy energy-b"></div><div class="brand-shield" id="brandShield"></div>' +
-        '<div class="brand-wordmark ' + (state.lang === "fa" ? "fa" : state.lang === "ar" ? "ar" : state.lang === "zh" ? "zh" : "latin") + '" id="brandWordmark">' +
+        '<div class="brand-wordmark ' + "latin" + '" id="brandWordmark">' +
           '<span class="brand-text">' + t("brand") + '</span><span class="brand-glitch glitch-a">' + t("brand") + '</span><span class="brand-glitch glitch-b">' + t("brand") + '</span>' +
           '<span class="logo-particles">' + Array.from({length:18},(_,i)=>'<i style="--i:'+i+'"></i>').join("") + '</span>' +
         '</div>' +
@@ -706,15 +714,17 @@ function bindCommon() {
       });
   });
 
-  const togglePassword=(inputId,key)=>{
+  const togglePassword=(inputId,key,buttonId)=>{
     const input=document.querySelector("#"+inputId);
     if(!input)return;
     state[key]=!state[key];
     input.type=state[key]?"text":"password";
+    const button=document.querySelector("#"+buttonId);
+    if(button) button.textContent=visibilityText(state[key]);
   };
-  document.querySelector("#masterEye")?.addEventListener("click",()=>togglePassword("master","passwordVisible"));
-  document.querySelector("#masterConfirmEye")?.addEventListener("click",()=>togglePassword("masterConfirm","confirmVisible"));
-  document.querySelector("#masterLoginEye")?.addEventListener("click",()=>togglePassword("masterLogin","passwordVisible"));
+  document.querySelector("#masterEye")?.addEventListener("click",()=>togglePassword("master","passwordVisible","masterEye"));
+  document.querySelector("#masterConfirmEye")?.addEventListener("click",()=>togglePassword("masterConfirm","confirmVisible","masterConfirmEye"));
+  document.querySelector("#masterLoginEye")?.addEventListener("click",()=>togglePassword("masterLogin","passwordVisible","masterLoginEye"));
 
   document.querySelector("#biometricButton")?.addEventListener("click", async ()=>{
     try{

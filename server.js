@@ -413,7 +413,7 @@ async function authStart(req, res) {
       "Content-Type":"text/html; charset=utf-8",
       "Cache-Control":"no-store"
     });
-    res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;background:#05050a;color:#eee;font-family:system-ui;display:grid;place-items:center;min-height:100vh}main{max-width:560px;padding:30px;text-align:center}h1{font-size:24px}p{color:#999;line-height:1.9}a{color:#d5d7e3}</style><main><h1>درگاه تلگرام هنوز پیکربندی نشده</h1><p>متغیر امنیتی Telegram OAuth روی سرور کامل نشده است.</p><a href="/">بازگشت</a></main>`);
+    res.end(`<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101010"><title>FARVAHR SELF | Secure Access</title><style>*{box-sizing:border-box}body{margin:0;padding:24px;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 0%,rgba(214,177,92,.12),transparent 42%),#101010;color:#F5F5F5;font-family:system-ui,sans-serif}main{width:min(560px,100%);padding:36px 28px;text-align:center;border:1px solid rgba(214,177,92,.22);border-radius:24px;background:rgba(24,24,24,.88);box-shadow:0 24px 72px rgba(0,0,0,.42)}.brand{margin-bottom:28px;color:#D6B15C;font-size:clamp(18px,4vw,24px);font-weight:800;letter-spacing:.08em}h1{font-size:22px;line-height:1.7}p{color:#A8A8A8;line-height:2}a{display:inline-block;margin-top:18px;padding:10px 18px;border:1px solid rgba(81,145,235,.38);border-radius:12px;color:#8BB8FF;text-decoration:none;background:rgba(47,128,237,.10)}</style></head><body><main><div class="brand">FARVAHR SELF</div><h1>درگاه تلگرام هنوز پیکربندی نشده</h1><p>متغیر امنیتی Telegram OAuth روی سرور کامل نشده است.</p><a href="/">‹ بازگشت</a></main></body></html>`);
     return;
   }
 
@@ -1487,7 +1487,7 @@ const server = createServer(async (req,res) => {
   } catch (error) {
     console.error("SALF1 server error:",error);
     res.writeHead(500,{...securityHeaders(req),"Content-Type":"text/plain; charset=utf-8","Cache-Control":"no-store"});
-    res.end("SALF1 server error");
+    res.end("FARVAHR SELF server error");
   }
 });
 
