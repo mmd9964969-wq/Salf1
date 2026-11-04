@@ -378,6 +378,8 @@ presence_watchdog_last_check: dict[str, float] = {}
 bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
+account_health_cache_at: dict[str, float] = {}
+ACCOUNT_HEALTH_CACHE_TTL_SECONDS = 8.0
 session_runtime_lock_connections: dict[str, object] = {}
 
 
@@ -1590,6 +1592,15 @@ async def release_all_session_runtime_locks():
 
 
 async def account_health_snapshot(customer_id: str, force: bool = False) -> dict:
+    cached = account_health_cache.get(customer_id)
+    cached_at = account_health_cache_at.get(customer_id, 0.0)
+    if (
+        not force
+        and cached is not None
+        and time.monotonic() - cached_at < ACCOUNT_HEALTH_CACHE_TTL_SECONDS
+    ):
+        return dict(cached)
+
     row = await db_user(customer_id)
     existing = clients.get(customer_id)
 
@@ -1683,6 +1694,7 @@ async def account_health_snapshot(customer_id: str, force: bool = False) -> dict
             "username": username,
         }
         account_health_cache[customer_id] = health
+        account_health_cache_at[customer_id] = time.monotonic()
         return health
 
     except Exception as exc:
@@ -1717,6 +1729,7 @@ async def account_health_snapshot(customer_id: str, force: bool = False) -> dict
                 "error": type(exc).__name__,
             }
         account_health_cache[customer_id] = health
+        account_health_cache_at[customer_id] = time.monotonic()
         return health
 
 
@@ -6759,7 +6772,7 @@ async def process_callback(callback_query: dict):
     user_id = int(from_user["id"])
     chat_id = int(chat["id"])
     message_id = int(message.get("message_id", 0))
-    await bot_answer_callback(callback_id)
+    asyncio.create_task(bot_answer_callback(callback_id))
     # Panel navigation metadata is not on the critical path for the button response.
     # Update it asynchronously so a database round-trip cannot delay every tap.
     if data in PANEL_CALLBACKS:
@@ -6856,7 +6869,7 @@ async def process_callback(callback_query: dict):
         return
 
     if data == "self_status_center":
-        result = await account_status(str(user_id))
+        result = await account_status(str(user_id), force=False)
         row = await db_user(str(user_id))
         status_salf = "فعال" if (bool(row["salf_enabled"]) if row else False) else "خاموش"
         await bot_edit(
