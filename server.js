@@ -13,10 +13,9 @@ const port = Number(process.env.PORT || 4173);
 
 const authDb = process.env.DATABASE_URL ? new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 8,
+  max: 5,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-  allowExitOnIdle: false
+  connectionTimeoutMillis: 5000
 }) : null;
 
 let masterSchemaPromise = null;
@@ -948,6 +947,12 @@ async function masterSetup(req,res) {
     siteUsername=String(existing.rows[0].site_username || existing.rows[0].username || "").trim().replace(/^@/,"").toLowerCase();
     if(!siteUsername) return sendJson(res,req,400,{ok:false,error:"SITE_USERNAME_INVALID"});
   }
+
+  const taken=await authDb.query(
+    "SELECT telegram_user_id FROM salf_master_credentials WHERE (lower(site_username)=lower($1) OR lower(username)=lower($1)) AND telegram_user_id<>$2 LIMIT 1",
+    [siteUsername,telegramId]
+  );
+  if(taken.rowCount) return sendJson(res,req,409,{ok:false,error:"SITE_USERNAME_TAKEN",code:"SITE_USERNAME_TAKEN"});
 
   const account={telegram_user_id:telegramId,username:siteUsername,name:pending.name||""};
   const hash=await hashMasterPassword(password);
