@@ -153,7 +153,7 @@ const copy = {
     access:"ACCESO AUTORIZADO",ready:"PUERTA DE AUTENTICACIÓN LISTA",success:"ACCESO CONCEDIDO",
     invalid:"Los datos de autenticación no son válidos.",mismatch:"Las contraseñas no coinciden.",
     masterRule:"12+ caracteres · mayúscula · minúscula · número · símbolo",scene:"CAMPO CÓSMICO /",
-    footer1:"Creador : Jawati",footer2:"Equipo : FARVAHR TEAM",footer3:"Marca : FARVAHR SELF",
+    footer1:"Creador : Jawati",footer2:"Equipo : FARVAHR TEAM",footer3:"Marque : FARVAHR SELF",
     languages:["فارسی","English","العربية","中文","Español","Français","Deutsch"]
   },
   fr:{
