@@ -25,9 +25,9 @@ RUN npm install --omit=dev
 COPY . .
 RUN npm run build
 
-RUN python3 -m venv /opt/salf1-venv \
-    && /opt/salf1-venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/salf1-venv/bin/pip install --no-cache-dir -r telegram-worker/requirements.txt
+RUN python3 -m venv /opt/farvahr-self-venv \
+    && /opt/farvahr-self-venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/farvahr-self-venv/bin/pip install --no-cache-dir -r telegram-worker/requirements.txt
 
 EXPOSE 4173 8080
 
