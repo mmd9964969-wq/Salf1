@@ -1,60 +1,94 @@
-# SALF1 — Telegram Account Panel and Runtime
+# Farvahr Self
 
-Salf1 contains two coordinated applications:
+Telegram account management and automation platform. The repository contains a web panel (Node.js/Vite) and a persistent Telegram runtime (Python/Telethon) in one Railway service, backed by PostgreSQL.
 
-- The Vite/Node.js web panel, served on port `4173`.
-- The Python Telegram runtime, served internally on port `8080`.
+## Runtime architecture
 
-## Cloudflare deployment
+- **Web panel:** Node.js HTTP server on Railway's `PORT` (default `4173`).
+- **Telegram worker:** Python + Telethon + aiohttp on internal port `8080`.
+- **Database:** PostgreSQL. The Node and Python processes use the same `DATABASE_URL`.
+- **Internal transport:** Node calls the Python worker at `http://127.0.0.1:8080`.
+- **Container:** The root `Dockerfile` installs Node/Python dependencies, builds the Vite panel and starts both processes through `start.sh`.
 
-The repository is configured for one Cloudflare Worker named `salf1`, backed by one Cloudflare Container. The container runs both Node.js and Python processes; the Worker exposes the panel over HTTPS. The Python service is internal to the container and is reached by the Node.js server through `http://127.0.0.1:8080`.
+The historic `salf1_*` PostgreSQL table names and `SALF1_*` environment-variable names are intentionally retained in this baseline to preserve compatibility with the existing code and avoid unsafe schema renames. They are internal identifiers, not the public product name.
 
-The Durable Object refreshes the container's inactivity timer every five minutes so the Telegram runtime can continue handling updates between web requests. Cloudflare may still restart an instance during platform maintenance or deployment; the runtime is expected to restart from the container image.
+## Railway deployment
 
-Deploy from the repository root with:
+Create only these two services in the project:
 
-```sh
-npm install
-npm run build
-npx wrangler deploy
+1. `farvahr-self` — this repository, branch `farvahr-self-rebuild`.
+2. `Postgres` — the existing PostgreSQL service and its existing persistent volume.
+
+Connect the repository root. Railway automatically detects the root `Dockerfile`; do not set a Node-only build command or a subdirectory root.
+
+Configure the following service variables before expecting full Telegram functionality:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | Set to `${{Postgres.DATABASE_URL}}` |
+| `SESSION_SECRET` | Yes | Signs web sessions/cookies |
+| `WORKER_API_TOKEN` | Yes | Authenticates Node-to-Python requests |
+| `SALF1_SESSION_ENCRYPTION_KEY` | Yes for account login | Encrypts saved Telegram sessions; keep stable |
+| `SALF1_WEBHOOK_SECRET` | Yes for bot polling/webhook runtime | Telegram webhook secret |
+| `TELEGRAM_API_ID` | Yes for user-account login | Telegram API ID |
+| `TELEGRAM_API_HASH` | Yes for user-account login | Telegram API hash |
+| `SALF1_BOT_TOKEN` | Yes for mini-bot features | Token from @BotFather |
+| `SALF1_WORKER_URL` | Yes | `http://127.0.0.1:8080` |
+| `SALF1_ROLE` | Yes | `all` |
+| `SALF1_DB_POOL_MIN` / `SALF1_DB_POOL_MAX` | Recommended | `1` / `8` |
+
+Generate independent secrets locally; never paste them into GitHub or chat:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Cloudflare Workers Builds should use:
+Generate a separate value for each of `SESSION_SECRET`, `WORKER_API_TOKEN`, `SALF1_WEBHOOK_SECRET`, and `SALF1_SESSION_ENCRYPTION_KEY`.
 
-- Root directory: `/`
-- Build command: `npm run build`
-- Deploy command: `npx wrangler deploy`
-- Production branch: `main`
+After Railway generates the public domain, set:
 
-## Required Worker secrets
+- `PUBLIC_ORIGIN=https://<your-domain>`
+- `SALF1_LOGIN_BASE_URL=https://<your-domain>`
+- `RP_ID=<your-domain-hostname>`
+- `TELEGRAM_OIDC_REDIRECT_URI=https://<your-domain>/auth/telegram/callback`
 
-Add these in **Workers & Pages → salf1 → Settings → Variables and Secrets**:
+For Telegram OIDC, register the exact domain and callback URL in @BotFather and set `TELEGRAM_OIDC_CLIENT_SECRET`. The panel can start without OIDC, but the Telegram OIDC sign-in route remains unavailable until configured.
 
-| Name | Purpose |
-| --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string used by the panel and bot |
-| `SALF1_BOT_TOKEN` | Telegram bot token |
-| `TELEGRAM_API_ID` | Telegram application ID |
-| `TELEGRAM_API_HASH` | Telegram application hash |
-| `SALF1_SESSION_ENCRYPTION_KEY` | Existing encryption key for saved Telethon sessions; at least 32 characters |
-| `TELEGRAM_OIDC_CLIENT_SECRET` | Telegram OIDC client secret for the web login flow |
+Recommended Railway service settings:
+- Health check path: `/health` (Node web process).
+- Restart policy: `ALWAYS`.
+- Keep the service continuously running; it hosts persistent Telegram tasks.
+- Public HTTP domain target port: `4173`.
 
-Optional Worker variables include `SALF1_OWNER_USER_IDS`, `SALF1_ADMIN_IDS`, `PUBLIC_ORIGIN`, `RP_ID`, `TELEGRAM_OIDC_CLIENT_ID`, payment configuration, and custom emoji IDs. The Worker derives the default public origin from the incoming `workers.dev` request.
+## Local development
 
-`SESSION_SECRET`, `WORKER_API_TOKEN`, and `SALF1_WEBHOOK_SECRET` are generated once and persisted in Durable Object storage when they are not supplied as Worker secrets.
+Requirements: Node.js 22+, Python 3.11+, PostgreSQL.
 
-**Important:** Do not change `SALF1_SESSION_ENCRYPTION_KEY` when reusing an existing PostgreSQL database. Previously stored Telegram sessions are encrypted with that key.
-
-## Cost and runtime notes
-
-Cloudflare Containers require the Workers Paid plan. Container resources are billed based on active runtime and provisioned memory/disk. The keepalive alarm is intentional because this application includes long-running Telegram tasks; monitor container usage and billing after deployment.
-
-The existing Python and Node.js application expects PostgreSQL. Cloudflare D1 uses SQLite SQL semantics and is not a drop-in replacement. Connect a persistent PostgreSQL database through `DATABASE_URL`; do not store PostgreSQL data on the container's ephemeral disk.
-
-## Local checks
-
-```sh
+```bash
+cp .env.example .env
 npm install
+python -m venv .venv
+. .venv/bin/activate
+pip install -r telegram-worker/requirements.txt
 npm run build
-python -m compileall telegram-worker/main.py
+python -m compileall -q telegram-worker
 ```
+
+For a complete local run, populate the required variables in `.env`, start the Python worker on port `8080`, then start the web server on port `4173`. The production container performs both steps through `start.sh`.
+
+## Validation
+
+```bash
+npm run build
+python -m compileall -q telegram-worker
+```
+
+A successful build does not prove Telegram authorization is configured. Confirm `/health`, PostgreSQL connectivity, Telegram API credentials and bot token separately.
+
+## Security and data integrity
+
+- Never commit `.env`, bot tokens, Telegram API hashes, session strings or generated secrets.
+- Do not rotate `SALF1_SESSION_ENCRYPTION_KEY` after saving user sessions unless you have a deliberate re-encryption/migration plan.
+- Keep PostgreSQL on its persistent Railway volume.
+- Keep the Python worker's port private; expose only the web port.
+- Do not scale this combined web/worker container horizontally until distributed scheduling and per-account session locks are made replica-safe.
