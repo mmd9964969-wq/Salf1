@@ -497,6 +497,79 @@ def decrypt_session_string(customer_id: str, encoded: str) -> str:
     return plaintext.decode("utf-8")
 
 
+async def init_core_tables():
+    """Create the foundational customer and referral tables before feature migrations."""
+    if db_pool is None:
+        return
+
+    await db_pool.execute(
+        """
+        create table if not exists salf1_bot_users (
+            telegram_user_id bigint primary key,
+            username text,
+            first_name text,
+            referrer_user_id bigint,
+            referral_rewarded boolean not null default false,
+            referral_count bigint not null default 0,
+            tron_balance bigint not null default 0,
+            trial_expires_at timestamptz,
+            account_connected boolean not null default false,
+            salf_enabled boolean not null default false,
+            unlimited boolean not null default false,
+            bot_presence_state text not null default 'unknown',
+            bot_presence_checked_at timestamptz,
+            bot_presence_error text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        )
+        """
+    )
+
+    # Idempotent column migration for databases created by earlier SALF1 builds.
+    await db_pool.execute(
+        """
+        alter table salf1_bot_users
+            add column if not exists username text,
+            add column if not exists first_name text,
+            add column if not exists referrer_user_id bigint,
+            add column if not exists referral_rewarded boolean not null default false,
+            add column if not exists referral_count bigint not null default 0,
+            add column if not exists tron_balance bigint not null default 0,
+            add column if not exists trial_expires_at timestamptz,
+            add column if not exists account_connected boolean not null default false,
+            add column if not exists salf_enabled boolean not null default false,
+            add column if not exists unlimited boolean not null default false,
+            add column if not exists bot_presence_state text not null default 'unknown',
+            add column if not exists bot_presence_checked_at timestamptz,
+            add column if not exists bot_presence_error text,
+            add column if not exists created_at timestamptz not null default now(),
+            add column if not exists updated_at timestamptz not null default now()
+        """
+    )
+
+    await db_pool.execute(
+        """
+        create table if not exists salf1_bot_referral_rewards (
+            referred_user_id bigint primary key,
+            referrer_user_id bigint not null,
+            reward_tron bigint not null default 0,
+            created_at timestamptz not null default now()
+        )
+        """
+    )
+    await db_pool.execute(
+        "create index if not exists idx_salf1_bot_users_username "
+        "on salf1_bot_users (lower(username))"
+    )
+    await db_pool.execute(
+        "create index if not exists idx_salf1_bot_users_referrer "
+        "on salf1_bot_users (referrer_user_id)"
+    )
+    await db_pool.execute(
+        "create index if not exists idx_salf1_referral_rewards_referrer "
+        "on salf1_bot_referral_rewards (referrer_user_id)"
+    )
+
 async def init_session_vault_table():
     if db_pool is None:
         return
@@ -8346,6 +8419,7 @@ async def main():
                 command_timeout=15,
             )
             print("Farvahr Self worker database connected.")
+            await init_core_tables()
             await init_web_login_tokens_table()
             await init_session_vault_table()
             await init_command_runtime_tables()
