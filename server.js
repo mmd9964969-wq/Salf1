@@ -651,7 +651,10 @@ async function callWorker(req,route,payload) {
       ? "/api/telegram/login/verify"
       : route;
   const workerPayload = route==="/auth/start"
-    ? {phone:String(payload.identifier || "").trim()}
+    ? {
+        phone:String(payload.identifier || "").trim(),
+        resend:Boolean(payload.resend)
+      }
     : payload;
   const customerId=String(
     payload?.identifier ||

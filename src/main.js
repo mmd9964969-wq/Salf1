@@ -40,7 +40,7 @@ const copy = {
     continue:"ادامه",
     codeTitle:"کد تأیید",
     codeText:"کد ارسال‌شده توسط تلگرام را وارد کن.",
-    code:"کد ۶ رقمی",
+    code:"کد ۵ یا ۶ رقمی",
     resend:"ارسال مجدد",
     verify:"تأیید کد",
     twofaTitle:"تأیید دو مرحله‌ای",
@@ -81,7 +81,7 @@ const copy = {
     continue:"CONTINUE",
     codeTitle:"VERIFICATION CODE",
     codeText:"Enter the code sent by Telegram.",
-    code:"6-DIGIT CODE",
+    code:"5–6 DIGIT CODE",
     resend:"RESEND",
     verify:"VERIFY CODE",
     twofaTitle:"TWO-STEP VERIFICATION",
@@ -116,7 +116,7 @@ const copy = {
   ar:{
     brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"إدارة الحساب",login:"دخول",
     identifier:"رقم هاتف أو اسم مستخدم تيليجرام",identifierHint:"استخدم رقمًا دوليًا عند الاتصال الأول.",
-    continue:"متابعة",codeTitle:"رمز التحقق",codeText:"أدخل الرمز الذي أرسله تيليجرام.",code:"رمز من 5 أرقام",
+    continue:"متابعة",codeTitle:"رمز التحقق",codeText:"أدخل الرمز الذي أرسله تيليجرام.",code:"رمز من 5 أو 6 أرقام",
     resend:"إعادة الإرسال",verify:"تأكيد الرمز",twofaTitle:"التحقق بخطوتين",twofaText:"أكمل طبقة الأمان الثانية.",
     twofa:"رمز التحقق بخطوتين",masterSetup:"كلمة المرور الرئيسية",masterSetupText:"أنشئ كلمة المرور الدائمة لهذا الحساب.",
     masterLogin:"دخول مباشر",masterLoginText:"أدخل كلمة المرور الرئيسية لفتح الحساب مباشرة.",master:"كلمة المرور الرئيسية",
@@ -130,7 +130,7 @@ const copy = {
   zh:{
     brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"账户管理",login:"进入",
     identifier:"Telegram 手机号或用户名",identifierHint:"首次连接请使用国际手机号。",
-    continue:"继续",codeTitle:"验证码",codeText:"输入 Telegram 发送的验证码。",code:"5 位验证码",
+    continue:"继续",codeTitle:"验证码",codeText:"输入 Telegram 发送的验证码。",code:"5–6 位验证码",
     resend:"重新发送",verify:"验证代码",twofaTitle:"两步验证",twofaText:"完成第二层安全验证。",
     twofa:"两步验证密码",masterSetup:"主密码",masterSetupText:"为此账户创建永久主密码。",
     masterLogin:"直接进入",masterLoginText:"输入主密码直接打开账户。",master:"永久主密码",masterConfirm:"确认主密码",
@@ -144,7 +144,7 @@ const copy = {
   es:{
     brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"GESTIÓN DE CUENTAS",login:"ENTRAR",
     identifier:"Teléfono o usuario de Telegram",identifierHint:"Usa un número internacional para la primera conexión.",
-    continue:"CONTINUAR",codeTitle:"CÓDIGO DE VERIFICACIÓN",codeText:"Introduce el código enviado por Telegram.",code:"CÓDIGO DE 5 DÍGITOS",
+    continue:"CONTINUAR",codeTitle:"CÓDIGO DE VERIFICACIÓN",codeText:"Introduce el código enviado por Telegram.",code:"CÓDIGO DE 5–6 DÍGITOS",
     resend:"REENVIAR",verify:"VERIFICAR CÓDIGO",twofaTitle:"VERIFICACIÓN EN DOS PASOS",twofaText:"Completa la segunda capa de seguridad.",
     twofa:"Contraseña de dos pasos",masterSetup:"CONTRASEÑA MAESTRA",masterSetupText:"Crea la contraseña permanente de esta cuenta.",
     masterLogin:"ACCESO DIRECTO",masterLoginText:"Introduce tu contraseña maestra para entrar directamente.",master:"Contraseña maestra",
@@ -159,7 +159,7 @@ const copy = {
   fr:{
     brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"GESTION DE COMPTE",login:"ENTRER",
     identifier:"Téléphone ou nom d'utilisateur Telegram",identifierHint:"Utilisez un numéro international pour la première connexion.",
-    continue:"CONTINUER",codeTitle:"CODE DE VÉRIFICATION",codeText:"Saisissez le code envoyé par Telegram.",code:"CODE À 5 CHIFFRES",
+    continue:"CONTINUER",codeTitle:"CODE DE VÉRIFICATION",codeText:"Saisissez le code envoyé par Telegram.",code:"CODE À 5–6 CHIFFRES",
     resend:"RENVOYER",verify:"VÉRIFIER LE CODE",twofaTitle:"VÉRIFICATION EN DEUX ÉTAPES",twofaText:"Complétez la seconde couche de sécurité.",
     twofa:"Mot de passe en deux étapes",masterSetup:"MOT DE PASSE MAÎTRE",masterSetupText:"Créez le mot de passe permanent de ce compte.",
     masterLogin:"ACCÈS DIRECT",masterLoginText:"Saisissez votre mot de passe maître pour ouvrir le compte.",master:"Mot de passe maître",
@@ -174,7 +174,7 @@ const copy = {
   de:{
     brand:"Pᴇʀsɪᴀɴ ᴮᵒᵗ",management:"KONTOVERWALTUNG",login:"EINTRETEN",
     identifier:"Telegram-Telefonnummer oder Benutzername",identifierHint:"Für die erste Verbindung internationale Nummer verwenden.",
-    continue:"WEITER",codeTitle:"BESTÄTIGUNGSCODE",codeText:"Gib den von Telegram gesendeten Code ein.",code:"5-STELLIGER CODE",
+    continue:"WEITER",codeTitle:"BESTÄTIGUNGSCODE",codeText:"Gib den von Telegram gesendeten Code ein.",code:"5–6-STELLIGER CODE",
     resend:"ERNEUT SENDEN",verify:"CODE BESTÄTIGEN",twofaTitle:"ZWEI-SCHRITT-VERIFIZIERUNG",twofaText:"Schließe die zweite Sicherheitsebene ab.",
     twofa:"Zwei-Schritt-Passwort",masterSetup:"MASTER-PASSWORT",masterSetupText:"Erstelle das dauerhafte Passwort für dieses Konto.",
     masterLogin:"DIREKTZUGANG",masterLoginText:"Master-Passwort eingeben und Konto direkt öffnen.",master:"Dauerhaftes Master-Passwort",
@@ -294,8 +294,11 @@ function pageHtml() {
         '<h1>' + t("codeTitle") + '</h1>' +
         '<p class="stage-subtitle">' + (state.deliveryMessage || t("codeText")) + '</p>' +
         '<form id="codeForm" class="auth-form">' +
-          '<div class="otp-label">' + t("code") + '</div>' +
-          '<div class="otp-row" dir="ltr">' + [0,1,2,3,4,5].map(i => '<input class="otp-cell" maxlength="1" inputmode="numeric" aria-label="OTP ' + (i + 1) + '">').join("") + '</div>' +
+          '<label class="otp-label" for="otpInput">' + t("code") + '</label>' +
+          '<div class="otp-field-wrap">' +
+            '<input id="otpInput" class="otp-input" type="text" inputmode="numeric" autocomplete="one-time-code" autocorrect="off" spellcheck="false" maxlength="6" pattern="[0-9]*" placeholder="• • • • • •" aria-label="' + t("code") + '" required>' +
+          '</div>' +
+          '<p class="otp-helper">' + (state.lang==="fa" ? "کد ۵ یا ۶ رقمی ارسال‌شده در تلگرام را وارد کنید." : "Enter the 5- or 6-digit code sent by Telegram.") + '</p>' +
           '<div class="otp-meta"><span id="timerRing" class="timer-ring"><b id="timer">59</b></span><span>' + t("security") + '</span></div>' +
           '<button class="royal-button" type="submit"><span class="button-light"></span><span class="button-label">' + t("verify") + '</span><span class="button-mark">↗</span></button>' +
           '<button class="ghost-action" id="resendButton" type="button" disabled>' + t("resend") + '</button>' +
@@ -475,9 +478,16 @@ function resetButton(button) {
   if(!button) return;
   button.disabled=false;
   button.classList.remove("loading");
+  const labelNode=button.querySelector(".button-label");
+  if(labelNode && button.dataset.oldText) labelNode.textContent=button.dataset.oldText;
+  delete button.dataset.oldText;
 }
 
 function render() {
+  const authStages=["identifier","code","twofa","master_setup","master_login"];
+  document.body.classList.toggle("auth-flow-active",authStages.includes(state.stage));
+  document.body.classList.toggle("auth-code-active",state.stage==="code");
+  document.body.dataset.salfStage=state.stage;
   document.documentElement.lang=state.lang;
   document.documentElement.dir=state.lang==="fa"||state.lang==="ar"?"rtl":"ltr";
   app.innerHTML=pageHtml();
@@ -489,7 +499,7 @@ function render() {
   if(state.stage==="code") {
     setupOtp();
     startTimer(state.resendAfter || 60);
-    document.querySelector(".otp-cell")?.focus();
+    document.querySelector("#otpInput")?.focus();
   }
 }
 
@@ -568,8 +578,16 @@ function bindCommon() {
 
   document.querySelector("#codeForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
-    const code=[...document.querySelectorAll(".otp-cell")].map(x=>x.value).join("");
-    if(code.length<5 || code.length>6)return;
+    const otpInput=document.querySelector("#otpInput");
+    const code=normalizeOtpDigits(otpInput?.value || [...document.querySelectorAll(".otp-cell")].map(x=>x.value).join(""));
+    if(code.length<5 || code.length>6){
+      setLive(state.lang==="fa" ? "کد باید ۵ یا ۶ رقم باشد." : "Enter the 5- or 6-digit Telegram code.");
+      otpInput?.setAttribute("aria-invalid","true");
+      otpInput?.focus();
+      return;
+    }
+    if(otpInput) otpInput.value=code;
+    otpInput?.removeAttribute("aria-invalid");
     const button=e.currentTarget.querySelector(".royal-button");
     busy(button,"...");
     setLive(t("verifying"));
@@ -827,24 +845,48 @@ function setupFieldFocus() {
   });
 }
 
+function normalizeOtpDigits(value) {
+  return String(value || "")
+    .replace(/[۰-۹٠-٩]/g, digit => {
+      const point=digit.charCodeAt(0);
+      return String(point>=1776 && point<=1785 ? point-1776 : point-1632);
+    })
+    .replace(/[^0-9]/g,"")
+    .slice(0,6);
+}
+
 function setupOtp() {
+  const input=document.querySelector("#otpInput");
+  if(input) {
+    input.addEventListener("input",()=>{
+      input.value=normalizeOtpDigits(input.value);
+      input.classList.toggle("has-value",Boolean(input.value));
+      input.removeAttribute("aria-invalid");
+    });
+    input.addEventListener("paste",event=>{
+      const pasted=event.clipboardData?.getData("text") || "";
+      if(!pasted)return;
+      event.preventDefault();
+      input.value=normalizeOtpDigits(pasted);
+      input.dispatchEvent(new Event("input",{bubbles:true}));
+    });
+    return;
+  }
+
   const cells=[...document.querySelectorAll(".otp-cell")];
   cells.forEach((cell,index)=>{
-    cell.addEventListener("input",e=>{
-      e.target.value=e.target.value.replace(/\D/g,"").slice(0,1);
-      if(e.target.value){
-        e.target.classList.add("filled");
-        if(cells[index+1])cells[index+1].focus();
-      }
+    cell.addEventListener("input",event=>{
+      event.target.value=normalizeOtpDigits(event.target.value).slice(0,1);
+      if(event.target.value && cells[index+1])cells[index+1].focus();
     });
-    cell.addEventListener("keydown",e=>{
-      if(e.key==="Backspace"&&!cell.value&&cells[index-1])cells[index-1].focus();
+    cell.addEventListener("keydown",event=>{
+      if(event.key==="Backspace"&&!cell.value&&cells[index-1])cells[index-1].focus();
     });
-    cell.addEventListener("paste",e=>{
-      const pasted=(e.clipboardData?.getData("text")||"").replace(/\D/g,"").slice(0,6);
+    cell.addEventListener("paste",event=>{
+      const pasted=normalizeOtpDigits(event.clipboardData?.getData("text")||"");
       if(!pasted)return;
-      e.preventDefault();
-      pasted.split("").forEach((digit,i)=>{if(cells[i]){cells[i].value=digit;cells[i].classList.add("filled");}});
+      event.preventDefault();
+      pasted.split("").forEach((digit,i)=>{if(cells[i])cells[i].value=digit;});
       cells[Math.min(pasted.length,cells.length)-1]?.focus();
     });
   });
