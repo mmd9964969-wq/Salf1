@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
+import { validateTelegramMiniAppInitData } from "./lib/telegram-miniapp-auth.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "dist");
 const scrypt = promisify(scryptCallback);
@@ -20,8 +21,6 @@ const authDb = process.env.DATABASE_URL ? new Pool({
 
 let masterSchemaPromise = null;
 let gemSchemaPromise = null;
-
-const TELEGRAM_MINI_APP_MAX_AGE_SECONDS = 24 * 60 * 60;
 
 const mime = {
   ".html":"text/html; charset=utf-8",
@@ -763,56 +762,6 @@ function authUser(account) {
 }
 
 
-function verifyTelegramMiniAppInitData(rawInitData) {
-  const initData = String(rawInitData || "");
-  if (!initData || initData.length > 16384) throw new Error("MINI_APP_DATA_INVALID");
-
-  const botToken = String(process.env.SALF1_BOT_TOKEN || "").trim();
-  if (!botToken) throw new Error("MINI_APP_AUTH_NOT_CONFIGURED");
-
-  const params = new URLSearchParams(initData);
-  const suppliedHash = String(params.get("hash") || "");
-  if (!/^[a-f0-9]{64}$/i.test(suppliedHash)) throw new Error("MINI_APP_HASH_INVALID");
-
-  const dataCheckString = [...params.entries()]
-    .filter(([key]) => key !== "hash")
-    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-    .map(([key, value]) => key + "=" + value)
-    .join("\n");
-
-  const secretKey = createHmac("sha256", "WebAppData").update(botToken).digest();
-  const calculatedHash = createHmac("sha256", secretKey).update(dataCheckString).digest();
-  const receivedHash = Buffer.from(suppliedHash, "hex");
-
-  if (receivedHash.length !== calculatedHash.length || !timingSafeEqual(receivedHash, calculatedHash)) {
-    throw new Error("MINI_APP_SIGNATURE_INVALID");
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  const authDate = Number(params.get("auth_date"));
-  if (!Number.isSafeInteger(authDate) || authDate > now + 60 || now - authDate > TELEGRAM_MINI_APP_MAX_AGE_SECONDS) {
-    throw new Error("MINI_APP_DATA_EXPIRED");
-  }
-
-  let user;
-  try {
-    user = JSON.parse(params.get("user") || "null");
-  } catch {
-    throw new Error("MINI_APP_USER_INVALID");
-  }
-
-  const userId = String(user?.id ?? "");
-  if (!/^\d{1,20}$/.test(userId)) throw new Error("MINI_APP_USER_INVALID");
-
-  return {
-    id: userId,
-    username: String(user.username || ""),
-    first_name: String(user.first_name || ""),
-    last_name: String(user.last_name || ""),
-    photo_url: String(user.photo_url || "")
-  };
-}
-
 async function miniAppLogin(req, res) {
   if (!directOrigin(req)) {
     sendJson(res,req,403,{ok:false,error:"ORIGIN_DENIED"});
@@ -830,7 +779,10 @@ async function miniAppLogin(req, res) {
   const body = await directBody(req);
   let telegramUser;
   try {
-    telegramUser = verifyTelegramMiniAppInitData(body.init_data);
+    telegramUser = validateTelegramMiniAppInitData(
+      body.init_data,
+      process.env.SALF1_BOT_TOKEN,
+    );
   } catch (error) {
     const missingConfig = error?.message === "MINI_APP_AUTH_NOT_CONFIGURED";
     sendJson(res,req,missingConfig ? 503 : 401,{ok:false,error:error?.message || "MINI_APP_AUTH_FAILED"});
