@@ -509,11 +509,17 @@ function render() {
   const consoleText = app.querySelector("#consoleText");
   const headerIndex = app.querySelector(".header-index");
   const sceneCaption = app.querySelector(".scene-caption span");
+  const brandWordmark = app.querySelector("#brandWordmark");
+  const languageNote = app.querySelector(".language-note");
   const footer = app.querySelectorAll(".site-footer span");
   if (live) live.textContent = t("security");
   if (consoleText) consoleText.textContent = t("security");
   if (headerIndex) headerIndex.textContent = t("management");
   if (sceneCaption) sceneCaption.textContent = t("scene");
+  if (brandWordmark) {
+    brandWordmark.className = "brand-wordmark " + (state.lang === "fa" ? "fa" : state.lang === "ar" ? "ar" : state.lang === "zh" ? "zh" : "latin");
+  }
+  if (languageNote) languageNote.textContent = "LANGUAGE / " + String(LANGS.indexOf(state.lang)+1).padStart(2,"0") + " OF 07";
   if (footer[0]) footer[0].textContent = t("footer1");
   if (footer[1]) footer[1].textContent = t("footer2");
   if (footer[2]) footer[2].textContent = t("footer3");
