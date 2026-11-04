@@ -3977,7 +3977,7 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
     unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(str(user_id), health.get("username"))
     balance = int(row["tron_balance"]) if row else 0
     return f"""
-<b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
+<b>Fᴀʀᴠᴀʜʀ Sᴇʟғ · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
 خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
