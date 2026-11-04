@@ -388,6 +388,8 @@ bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
 session_runtime_lock_connections: dict[str, object] = {}
+bot_update_wakeup = asyncio.Event()
+BOT_UPDATE_MAX_ATTEMPTS = 8
 
 
 def configured():
@@ -8432,6 +8434,7 @@ async def main():
             await init_web_login_tokens_table()
             await init_session_vault_table()
             await init_command_runtime_tables()
+            await init_bot_update_queue_table()
             await set_account_health_columns()
             await grant_owner_unlimited()
             await init_clock_settings_table()
@@ -8470,6 +8473,7 @@ async def main():
 
         tasks = []
         if ROLE in {"bot", "all"}:
+            tasks.append(asyncio.create_task(bot_update_queue_loop()))
             tasks.append(asyncio.create_task(mini_bot_loop()))
             tasks.append(asyncio.create_task(clock_loop()))
             tasks.append(asyncio.create_task(presence_loop()))
@@ -8886,6 +8890,170 @@ async def web_login_verify(request: web.Request):
     return web.json_response({"ok": status in {"2fa_required", "connected", "code_invalid", "code_expired", "2fa_invalid"}, **result})
 
 
+async def init_bot_update_queue_table():
+    """Create the durable Telegram update queue before the webhook is enabled."""
+    if db_pool is None:
+        return
+
+    await db_pool.execute(
+        """
+        create table if not exists salf1_bot_update_queue (
+            update_id bigint primary key,
+            payload jsonb not null,
+            status text not null default 'pending',
+            attempts integer not null default 0,
+            available_at timestamptz not null default now(),
+            locked_at timestamptz,
+            last_error text,
+            created_at timestamptz not null default now(),
+            completed_at timestamptz
+        )
+        """
+    )
+    await db_pool.execute(
+        """
+        create index if not exists idx_salf1_bot_update_queue_ready
+        on salf1_bot_update_queue (available_at, created_at, update_id)
+        where status in ('pending', 'processing')
+        """
+    )
+
+
+async def claim_bot_update():
+    if db_pool is None:
+        return None
+
+    async with db_pool.acquire() as conn:
+        return await conn.fetchrow(
+            """
+            with candidate as (
+                select update_id
+                from salf1_bot_update_queue
+                where
+                    (status = 'pending' and available_at <= now())
+                    or
+                    (status = 'processing' and locked_at < now() - interval '3 minutes')
+                order by created_at asc, update_id asc
+                limit 1
+                for update skip locked
+            )
+            update salf1_bot_update_queue as queued
+            set status = 'processing',
+                attempts = queued.attempts + 1,
+                locked_at = now(),
+                last_error = null
+            from candidate
+            where queued.update_id = candidate.update_id
+            returning queued.update_id, queued.payload::text as payload_json, queued.attempts
+            """
+        )
+
+
+async def bot_update_queue_loop():
+    """Process persisted Telegram updates outside the HTTP webhook request."""
+    print("Telegram update queue worker started.")
+    next_cleanup = time.monotonic() + 3600
+
+    while True:
+        if db_pool is None:
+            await asyncio.sleep(1)
+            continue
+
+        bot_update_wakeup.clear()
+        try:
+            queued = await claim_bot_update()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Telegram update queue claim failed: {type(exc).__name__}: {str(exc)[:180]}")
+            await asyncio.sleep(1)
+            continue
+
+        if queued is None:
+            if time.monotonic() >= next_cleanup:
+                try:
+                    await db_pool.execute(
+                        """
+                        delete from salf1_bot_update_queue
+                        where status in ('done', 'failed')
+                          and created_at < now() - interval '7 days'
+                        """
+                    )
+                except Exception as exc:
+                    print(f"Telegram update queue cleanup failed: {type(exc).__name__}")
+                next_cleanup = time.monotonic() + 3600
+
+            try:
+                await asyncio.wait_for(bot_update_wakeup.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                pass
+            continue
+
+        update_id = int(queued["update_id"])
+        attempts = int(queued["attempts"])
+        started_at = time.monotonic()
+
+        try:
+            update = json.loads(queued["payload_json"])
+            if not isinstance(update, dict):
+                raise ValueError("Telegram update payload is not an object")
+
+            if update.get("callback_query"):
+                await process_callback(update["callback_query"])
+            elif update.get("message"):
+                await process_bot_message(update["message"])
+
+            await db_pool.execute(
+                """
+                update salf1_bot_update_queue
+                set status = 'done',
+                    locked_at = null,
+                    last_error = null,
+                    completed_at = now()
+                where update_id = $1
+                """,
+                update_id,
+            )
+
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            if elapsed_ms >= 1000:
+                print(f"Telegram update processed: id={update_id} elapsed_ms={elapsed_ms}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            final_attempt = attempts >= BOT_UPDATE_MAX_ATTEMPTS
+            next_status = "failed" if final_attempt else "pending"
+            retry_delay = min(60, 2 ** max(0, attempts - 1))
+
+            try:
+                await db_pool.execute(
+                    """
+                    update salf1_bot_update_queue
+                    set status = $2,
+                        available_at = now() + ($3 * interval '1 second'),
+                        locked_at = null,
+                        last_error = left($4, 1200)
+                    where update_id = $1
+                    """,
+                    update_id,
+                    next_status,
+                    retry_delay,
+                    f"{type(exc).__name__}: {exc}",
+                )
+            except Exception as queue_exc:
+                print(
+                    f"Telegram update queue state write failed: "
+                    f"id={update_id} error={type(queue_exc).__name__}"
+                )
+
+            print(
+                f"Telegram update processing failed: id={update_id} "
+                f"attempt={attempts}/{BOT_UPDATE_MAX_ATTEMPTS} "
+                f"state={next_status} error={type(exc).__name__}: {str(exc)[:240]}"
+            )
+
+
 async def bot_webhook(request: web.Request):
     if not WEBHOOK_SECRET:
         return web.Response(status=503, text="webhook not configured")
@@ -8893,16 +9061,43 @@ async def bot_webhook(request: web.Request):
     if request.headers.get("X-Telegram-Bot-Api-Secret-Token", "") != WEBHOOK_SECRET:
         return web.Response(status=401, text="unauthorized")
 
+    if db_pool is None:
+        # Do not acknowledge updates that cannot be persisted. Telegram will retry.
+        return web.Response(status=503, text="update queue unavailable")
+
     try:
         update = await request.json()
-        if update.get("callback_query"):
-            await process_callback(update["callback_query"])
-        elif update.get("message"):
-            await process_bot_message(update["message"])
+        if not isinstance(update, dict):
+            return web.Response(status=400, text="invalid update")
+
+        raw_update_id = update.get("update_id")
+        if isinstance(raw_update_id, bool):
+            return web.Response(status=400, text="invalid update id")
+        update_id = int(raw_update_id)
+        if update_id < 0:
+            return web.Response(status=400, text="invalid update id")
+
+        if not update.get("callback_query") and not update.get("message"):
+            return web.json_response({"ok": True})
+
+        await db_pool.execute(
+            """
+            insert into salf1_bot_update_queue (update_id, payload)
+            values ($1, $2::jsonb)
+            on conflict (update_id) do nothing
+            """,
+            update_id,
+            json.dumps(update, ensure_ascii=False, separators=(",", ":")),
+        )
+        bot_update_wakeup.set()
         return web.json_response({"ok": True})
+
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Invalid Telegram webhook payload: {type(exc).__name__}")
+        return web.Response(status=400, text="invalid update payload")
     except Exception as exc:
-        print(f"Webhook update error: {exc}")
-        return web.json_response({"ok": False}, status=500)
+        print(f"Telegram webhook enqueue failed: {type(exc).__name__}: {str(exc)[:180]}")
+        return web.json_response({"ok": False}, status=503)
 
 
 async def web_login_status(request: web.Request):
