@@ -1,0 +1,48 @@
+name: SALF1 Quality Gate
+
+on:
+  push:
+    branches:
+      - main
+      - "salf1/**"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install web dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check server.js
+          node --check src/main.js
+          node --check cloudflare/worker.js
+
+      - name: Run automated tests
+        run: npm test
+
+      - name: Build web panel
+        run: npm run build
+
+      - name: Validate Telegram runtime syntax
+        run: python -m py_compile telegram-worker/main.py

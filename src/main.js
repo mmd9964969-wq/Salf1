@@ -2,11 +2,13 @@ import { startRegistration, startAuthentication, browserSupportsWebAuthn } from 
 import "./style.css";
 
 const app = document.querySelector("#app");
+const telegramWebApp = window.Telegram?.WebApp || null;
+const miniAppInitData = String(telegramWebApp?.initData || "");
 
 const LANGS = ["fa","en","ar","zh","es","fr","de"];
 const state = {
   lang: localStorage.getItem("salf1_lang") || "fa",
-  stage: "entry",
+  stage: miniAppInitData ? "miniapp_loading" : "entry",
   entryOpen: false,
   recovery: false,
   flowId: "",
@@ -190,7 +192,7 @@ const copy = {
 
 const t = key => (copy[state.lang] || copy.fa)[key];
 
-function pageHtml() {
+function pageHtml(bodyOnly = false) {
   const langButtons = LANGS.map((lang, index) =>
     '<button type="button" class="lang-item ' + (lang === state.lang ? 'active' : '') + '" data-lang="' + lang + '">' +
     copy[state.lang].languages[index] + '</button>'
@@ -198,7 +200,14 @@ function pageHtml() {
 
   let body = "";
 
-  if (state.stage === "entry") {
+  if (state.stage === "miniapp_loading") {
+    body =
+      '<div class="auth-stage" data-stage="miniapp_loading">' +
+        '<div class="stage-mark">SALF1 · TELEGRAM AUTH</div>' +
+        '<h1>' + (state.lang === "fa" ? "در حال تأیید هویت تلگرام" : "VERIFYING TELEGRAM IDENTITY") + '</h1>' +
+        '<p class="stage-subtitle">' + (state.lang === "fa" ? "نشست امن در حال آماده‌سازی است." : "Preparing your secure session.") + '</p>' +
+      '</div>';
+  } else if (state.stage === "entry") {
     const gatewayCopy = state.lang === "fa"
       ? {
           title: "درگاه ورود امن",
@@ -390,6 +399,8 @@ function pageHtml() {
       '</div>';
   }
 
+  if (bodyOnly) return body;
+
   return '<main class="universe">' +
     '<canvas id="cosmos" aria-hidden="true"></canvas>' +
     '<div class="cosmic-vignette"></div><div class="transition-mist"></div><div class="security-scan" id="securityScan"></div>' +
@@ -480,10 +491,44 @@ function resetButton(button) {
 function render() {
   document.documentElement.lang=state.lang;
   document.documentElement.dir=state.lang==="fa"||state.lang==="ar"?"rtl":"ltr";
-  app.innerHTML=pageHtml();
+
+  const existingRail = app.querySelector("#authRail");
+  const firstRender = !existingRail;
+  if (firstRender) {
+    app.innerHTML = pageHtml();
+  } else {
+    existingRail.innerHTML = pageHtml(true);
+  }
+
+  // Keep the application shell alive. Only replace the active view.
+  app.querySelectorAll(".lang-item").forEach((button, index) => {
+    button.textContent = (copy[state.lang] || copy.fa).languages[index] || button.textContent;
+    button.classList.toggle("active", button.dataset.lang === state.lang);
+  });
+  const live = app.querySelector("#liveStatus");
+  const consoleText = app.querySelector("#consoleText");
+  const headerIndex = app.querySelector(".header-index");
+  const sceneCaption = app.querySelector(".scene-caption span");
+  const brandWordmark = app.querySelector("#brandWordmark");
+  const languageNote = app.querySelector(".language-note");
+  const footer = app.querySelectorAll(".site-footer span");
+  if (live) live.textContent = t("security");
+  if (consoleText) consoleText.textContent = t("security");
+  if (headerIndex) headerIndex.textContent = t("management");
+  if (sceneCaption) sceneCaption.textContent = t("scene");
+  if (brandWordmark) {
+    brandWordmark.className = "brand-wordmark " + (state.lang === "fa" ? "fa" : state.lang === "ar" ? "ar" : state.lang === "zh" ? "zh" : "latin");
+  }
+  if (languageNote) languageNote.textContent = "LANGUAGE / " + String(LANGS.indexOf(state.lang)+1).padStart(2,"0") + " OF 07";
+  if (footer[0]) footer[0].textContent = t("footer1");
+  if (footer[1]) footer[1].textContent = t("footer2");
+  if (footer[2]) footer[2].textContent = t("footer3");
+
   bindCommon();
-  initCosmos();
-  startLogoMorph();
+  if (firstRender) {
+    initCosmos();
+    startLogoMorph();
+  }
   startGatewayTicker();
 
   if(state.stage==="code") {
@@ -522,6 +567,8 @@ function startGatewayTicker() {
 
 function bindCommon() {
   document.querySelectorAll(".lang-item").forEach(btn=>{
+    if (btn.dataset.salfBound === "1") return;
+    btn.dataset.salfBound = "1";
     btn.addEventListener("click",()=>{
       const next=btn.dataset.lang;
       if(!next||next===state.lang)return;
@@ -607,19 +654,6 @@ function bindCommon() {
     }
   });
 
-  document.querySelector("#siteUsername")?.addEventListener("input",async e=>{
-    const value=e.target.value.trim().replace(/^@/,"");
-    const status=document.querySelector("#usernameState");
-    if(!status)return;
-    if(!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(value)){status.textContent="نام کاربری آزاد را انتخاب کن";status.dataset.state="idle";return;}
-    status.textContent="در حال بررسی قلمرو...";
-    try{
-      const data=await postJson("/api/username/check",{username:value});
-      status.textContent=data.available?"نام آزاد است":"این نام قبلاً گرفته شده است";
-      status.dataset.state=data.available?"available":"taken";
-    }catch{status.textContent="بررسی نام کاربری ممکن نیست";}
-  });
-
   document.querySelector("#masterSetupForm")?.addEventListener("submit",async e=>{
     e.preventDefault();
     const password=document.querySelector("#master")?.value||"";
@@ -633,12 +667,12 @@ function bindCommon() {
     document.querySelector("#brandShield")?.classList.add("active");
     try{
       const siteUsername=(document.querySelector("#siteUsername")?.value||"").trim().replace(/^@/,"").toLowerCase();
-      if(!state.recovery && !siteUsername){setLive("نام کاربری سلف را انتخاب کن.");return;}
-      if(!state.recovery){
-        const check=await postJson("/api/username/check",{username:siteUsername});
-        if(!check.available){setLive("این نام کاربری قبلاً گرفته شده است.");return;}
-        state.siteUsername=siteUsername;
+      if(!state.recovery && !/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(siteUsername)){
+        setLive("نام کاربری باید ۵ تا ۳۲ کاراکتر و شامل حروف، عدد یا _ باشد.");
+        resetButton(button);
+        return;
       }
+      if(!state.recovery) state.siteUsername=siteUsername;
       const data=await postJson("/api/auth/master/setup",{telegram_id:state.account?.id,password,site_username:state.siteUsername,recovery:state.recovery});
       state.stage="success";
       state.account=data.account||state.account;
@@ -665,12 +699,11 @@ function bindCommon() {
     document.querySelector("#brandShield")?.classList.add("active");
     try{
       const data=await postJson("/api/auth/master/login",{identifier,password});
-      state.stage="success";
       state.account=data.account||null;
+      state.stage="dashboard";
       setLive(t("access"));
       render();
-      setTimeout(()=>document.body.classList.add("realm-open"),80);
-      setTimeout(()=>{state.stage="dashboard";render();},900);
+      document.body.classList.add("realm-open");
     }catch(error){
       setLive(translateStageError(error.message));
       document.querySelector(".auth-stage")?.classList.add("error-shake");
@@ -758,22 +791,9 @@ function bindCommon() {
     render();
   });
 
-  document.querySelector("#openGems")?.addEventListener("click",async()=>{
+  document.querySelector("#openGems")?.addEventListener("click",()=>{
     state.stage="gems";
     render();
-    try{
-      const data=await fetch("/api/gems/packages",{credentials:"same-origin",cache:"no-store"});
-      if(data.ok){
-        const payload=await data.json();
-        if(Array.isArray(payload.packages)&&payload.packages.length){
-          state.gemPackages=payload.packages.map(p=>({
-            code:p.code,name:p.name,gems:Number(p.gems||0),
-            price:p.price||"—",duration:p.duration||"تا پایان موجودی"
-          }));
-          render();
-        }
-      }
-    }catch{}
   });
   document.querySelectorAll(".gem-card").forEach(btn=>btn.addEventListener("click",()=>{
     state.selectedGem=state.gemPackages.find(p=>p.code===btn.dataset.gem)||null;
@@ -1510,9 +1530,48 @@ function initCosmos() {
   raf=requestAnimationFrame(function tick(now){ frame(now); });
 }
 
+async function bootstrapMiniAppAuth() {
+  if (!miniAppInitData) return;
+
+  try {
+    telegramWebApp?.ready?.();
+    telegramWebApp?.expand?.();
+
+    const result = await postJson("/api/auth/miniapp", {
+      init_data: miniAppInitData
+    });
+
+    if (result.authenticated && result.account) {
+      state.account = result.account;
+      state.stage = "dashboard";
+      render();
+      document.body.classList.add("realm-open");
+      return;
+    }
+
+    state.stage = "entry";
+    render();
+    setLive(state.lang === "fa"
+      ? "حسابی با این هویت تلگرام ثبت نشده است؛ اتصال اولیه را انجام دهید."
+      : "No SALF1 account is linked to this Telegram identity. Connect an account first.");
+  } catch (error) {
+    state.stage = "entry";
+    render();
+    setLive(state.lang === "fa"
+      ? "ورود سریع در دسترس نبود؛ از روش ورود معمول استفاده کنید."
+      : "Fast sign-in is unavailable. Use the standard sign-in method.");
+    console.warn("SALF1 Mini App authentication failed:", error?.message || error);
+  }
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 
 render();
+if (miniAppInitData) {
+  void bootstrapMiniAppAuth();
+} else {
+  telegramWebApp?.ready?.();
+}
