@@ -1,12 +1,13 @@
 {
-  "name": "salf1-royal-cosmic-auth",
+  "name": "farvahr-self",
   "private": true,
-  "version": "3.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "npm run build && python -m compileall -q telegram-worker"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.2.2",
@@ -14,5 +15,6 @@
     "pg": "^8.16.3",
     "vite": "^7.1.5",
     "@cloudflare/containers": "^0.3.0"
-  }
+  },
+  "description": "Farvahr Self Telegram account automation and management platform"
 }
