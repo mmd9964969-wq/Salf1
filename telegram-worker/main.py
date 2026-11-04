@@ -3896,8 +3896,10 @@ def trial_remaining_text(row) -> str:
 
 
 async def mini_main_text(user_id: int, user_first_name: str | None):
-    row = await db_user(str(user_id))
-    health = await account_health_snapshot(str(user_id), force=False)
+    row, health = await asyncio.gather(
+        db_user(str(user_id)),
+        account_health_snapshot(str(user_id), force=False),
+    )
     name = html.escape(user_first_name or (str(row["first_name"]) if row else "کاربر"))
     connected = bool(health.get("account_connected"))
     enabled = bool(row["salf_enabled"]) if row else False
@@ -3925,8 +3927,10 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
 
 
 async def mini_manage_text(user_id: int):
-    row = await db_user(str(user_id))
-    health = await account_health_snapshot(str(user_id), force=False)
+    row, health = await asyncio.gather(
+        db_user(str(user_id)),
+        account_health_snapshot(str(user_id), force=False),
+    )
     connected = bool(health.get("account_connected"))
     enabled = bool(row["salf_enabled"]) if row else False
     unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(str(user_id), health.get("username"))
@@ -5649,9 +5653,11 @@ Heartbeat : {"سالم" if hb_ok else ("منتظر" if cfg.get("activity_enabled
 
 
 async def salf_settings_text(user_id: int):
-    row = await db_user(str(user_id))
-    clock_config = await clock_get_settings(user_id)
-    presence_config = await presence_get_settings(user_id)
+    row, clock_config, presence_config = await asyncio.gather(
+        db_user(str(user_id)),
+        clock_get_settings(user_id),
+        presence_get_settings(user_id),
+    )
 
     connected = bool(row["account_connected"]) if row else False
     enabled = bool(row["salf_enabled"]) if row else False
@@ -6111,8 +6117,10 @@ async def clock_save_profile(user_id: int):
     await clock_save_settings(user_id, config)
 
 async def salf_panel_text(user_id: int):
-    row = await db_user(str(user_id))
-    health = await account_health_snapshot(str(user_id), force=False)
+    row, health = await asyncio.gather(
+        db_user(str(user_id)),
+        account_health_snapshot(str(user_id), force=False),
+    )
 
     connected = bool(health.get("account_connected"))
     enabled = bool(row["salf_enabled"]) if row else False
@@ -6752,7 +6760,12 @@ async def process_callback(callback_query: dict):
     chat_id = int(chat["id"])
     message_id = int(message.get("message_id", 0))
     await bot_answer_callback(callback_id)
-    await panel_session_touch_callback(user_id, chat_id, message_id, data)
+    # Panel navigation metadata is not on the critical path for the button response.
+    # Update it asynchronously so a database round-trip cannot delay every tap.
+    if data in PANEL_CALLBACKS:
+        asyncio.create_task(
+            panel_session_touch_callback(user_id, chat_id, message_id, data)
+        )
 
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
         if not await is_admin_user(user_id, from_user.get("username")):
