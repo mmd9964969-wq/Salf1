@@ -392,6 +392,9 @@ account_health_cache: dict[str, dict] = {}
 session_runtime_lock_connections: dict[str, object] = {}
 bot_update_wakeup = asyncio.Event()
 BOT_UPDATE_MAX_ATTEMPTS = 8
+BOT_UPDATE_WORKERS = max(1, min(4, int(os.getenv("SALF1_BOT_UPDATE_WORKERS", "4"))))
+bot_update_active_ids: set[int] = set()
+ping_response_samples = deque(maxlen=5)
 
 # Bounded, process-local latency samples. These are diagnostic only and never
 # participate in queue correctness or billing decisions.
@@ -3925,124 +3928,422 @@ async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
     return await bot_api("sendRichMessage", payload)
 
 
-async def send_ping_report(chat_id: int):
-    """Run a lightweight, explicitly separated latency and health probe."""
-    check_started = time.perf_counter()
-    queue_pool = webhook_db_pool or db_pool
-    database_ms = None
-    pending_updates = None
-    processing_updates = None
-    database_ok = False
+def _ping_format_ms(value):
+    return format_latency_ms(value)
 
-    if queue_pool is not None:
-        database_started = time.perf_counter()
-        try:
-            async with queue_pool.acquire(timeout=1.5) as conn:
-                row = await asyncio.wait_for(
-                    conn.fetchrow(
-                        """
-                        select
-                            (select count(*)::int from salf1_bot_update_queue where status='pending') as pending,
-                            (select count(*)::int from salf1_bot_update_queue where status='processing') as processing
-                        """
-                    ),
-                    timeout=2.0,
-                )
-            database_ms = (time.perf_counter() - database_started) * 1000
-            pending_updates = int(row["pending"] or 0)
-            processing_updates = int(row["processing"] or 0)
-            database_ok = True
-        except Exception as exc:
-            database_ms = (time.perf_counter() - database_started) * 1000
-            print(f"Ping database probe failed: {type(exc).__name__}")
 
-    telegram_api_ms = None
-    telegram_api_ok = False
-    if BOT_TOKEN and http_session is not None:
-        telegram_started = time.perf_counter()
-        try:
-            api_result = await bot_api(
-                "sendChatAction",
-                {"chat_id": chat_id, "action": "typing"},
-                timeout=5,
-            )
-            telegram_api_ms = (time.perf_counter() - telegram_started) * 1000
-            telegram_api_ok = bool(isinstance(api_result, dict) and api_result.get("ok"))
-        except Exception as exc:
-            telegram_api_ms = (time.perf_counter() - telegram_started) * 1000
-            print(f"Ping Telegram API probe failed: {type(exc).__name__}")
-
-    cloudflare_ms = None
-    cloudflare_ok = False
-    if http_session is not None:
-        cloudflare_started = time.perf_counter()
-        try:
-            async with http_session.get(
-                "https://www.cloudflare.com/cdn-cgi/trace",
-                timeout=ClientTimeout(total=4),
-            ) as response:
-                await response.read()
-                cloudflare_ms = (time.perf_counter() - cloudflare_started) * 1000
-                cloudflare_ok = response.status < 400
-        except Exception as exc:
-            cloudflare_ms = (time.perf_counter() - cloudflare_started) * 1000
-            print(f"Ping Cloudflare HTTPS probe failed: {type(exc).__name__}")
-
-    total_check_ms = (time.perf_counter() - check_started) * 1000
-    measured_external_ms = sum(
-        value for value in (database_ms, telegram_api_ms, cloudflare_ms)
-        if value is not None
+def _ping_gregorian_to_jalali(gy: int, gm: int, gd: int):
+    month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    if gy > 1600:
+        jy = 979
+        gy -= 1600
+    else:
+        jy = 0
+        gy -= 621
+    gy2 = gy + 1 if gm > 2 else gy
+    days = (
+        365 * gy
+        + (gy2 + 3) // 4
+        - (gy2 + 99) // 100
+        + (gy2 + 399) // 400
+        - 80
+        + gd
+        + month_days[gm - 1]
     )
-    internal_processing_ms = max(0.0, total_check_ms - measured_external_ms)
+    jy += 33 * (days // 12053)
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + days // 31
+        jd = 1 + days % 31
+    else:
+        jm = 7 + (days - 186) // 30
+        jd = 1 + (days - 186) % 30
+    return jy + 1, jm, jd
+
+
+def _ping_checked_at():
+    current = datetime.now(ZoneInfo("Asia/Tehran"))
+    jy, jm, jd = _ping_gregorian_to_jalali(current.year, current.month, current.day)
+    number_map = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+    return f"{jy:04d}/{jm:02d}/{jd:02d} · {current:%H:%M:%S}".translate(number_map)
+
+
+def _ping_response_stability(current_response_ms: float, current_status: str):
+    samples = list(ping_response_samples)[-(4):]
+    samples.append({"response_ms": current_response_ms, "status": current_status})
+    if len(samples) < 3 or any(item.get("response_ms") is None for item in samples):
+        return f"در حال ارزیابی · {len(samples)}/3"
+    values = sorted(float(item["response_ms"]) for item in samples)
+    median = values[len(values) // 2]
+    spread = values[-1] - values[0]
+    stable = all(item.get("status") == "healthy" for item in samples) and spread <= max(10.0, median * 0.25)
+    return f"پایدار ({len(samples)})" if stable else f"متغیر ({len(samples)})"
+
+
+async def _ping_probe_local_railway(url: str):
+    if http_session is None:
+        return {"status": "unknown", "latency_ms": None, "http_status": None}
+    started = time.perf_counter()
+    try:
+        async with http_session.get(url, timeout=ClientTimeout(total=1.0)) as response:
+            await response.read()
+            elapsed = (time.perf_counter() - started) * 1000
+            return {
+                "status": "healthy" if 200 <= response.status < 400 else "failed",
+                "latency_ms": elapsed,
+                "http_status": int(response.status),
+            }
+    except Exception as exc:
+        print(f"Ping Railway local probe failed: {type(exc).__name__}")
+        return {
+            "status": "failed",
+            "latency_ms": (time.perf_counter() - started) * 1000,
+            "http_status": None,
+        }
+
+
+async def _ping_probe_database():
+    queue_pool = webhook_db_pool or db_pool
+    if queue_pool is None:
+        return {"status": "not_configured", "latency_ms": None}
+    started = time.perf_counter()
+    try:
+        async with queue_pool.acquire(timeout=0.6) as conn:
+            value = await asyncio.wait_for(conn.fetchval("SELECT 1"), timeout=0.9)
+        elapsed = (time.perf_counter() - started) * 1000
+        return {
+            "status": "healthy" if value == 1 else "failed",
+            "latency_ms": elapsed,
+        }
+    except Exception as exc:
+        elapsed = (time.perf_counter() - started) * 1000
+        print(f"Ping PostgreSQL probe failed: {type(exc).__name__}")
+        return {"status": "failed", "latency_ms": elapsed}
+
+
+def _ping_build_view(mode: str, data: dict):
+    title = "« پینگ فروهر سلف »"
+    intro = (
+        "گزارش زنده پاسخ‌گویی و وضعیت بررسی‌شدهٔ سرویس."
+        if mode == "summary"
+        else "گزارش جزئیات عملیاتی و سلامت زیرساخت Railway."
+    )
+
+    core_rows = [
+        [{"text": "مشخصات", "is_header": True}, {"text": "مقدار", "is_header": True}],
+        ["زمان پاسخ‌گویی ربات", _ping_format_ms(data.get("response_ms"))],
+        ["زمان پردازش بررسی", _ping_format_ms(data.get("processing_ms"))],
+        ["زمان تأیید ارسال در API تلگرام", _ping_format_ms(data.get("telegram_api_ms"))],
+        ["آخرین بررسی", data.get("checked_at") or "در دسترس نیست"],
+        ["پایداری پاسخ‌گویی", data.get("stability") or "در حال ارزیابی"],
+        ["نتیجه آزمایش", data.get("status_text") or "نامشخص"],
+    ]
+
+    railway_rows = [
+        [{"text": "مشخصات زیرساخت", "is_header": True}, {"text": "مقدار", "is_header": True}],
+        ["وضعیت وب‌سرور Railway", data.get("railway_status_text") or "نامشخص"],
+        ["زمان پاسخ وب‌سرور Railway", _ping_format_ms(data.get("railway_http_ms"))],
+        ["وضعیت Worker", data.get("worker_status_text") or "نامشخص"],
+        ["زمان پاسخ Worker", _ping_format_ms(data.get("worker_http_ms"))],
+    ]
+
+    queue_rows = [
+        [{"text": "شاخص Runtime", "is_header": True}, {"text": "مقدار", "is_header": True}],
+        [
+            "دریافت وب‌هوک P50 / P95",
+            f"{_ping_format_ms(data.get('webhook_p50'))} / {_ping_format_ms(data.get('webhook_p95'))}",
+        ],
+        [
+            "انتظار صف P50 / P95",
+            f"{_ping_format_ms(data.get('queue_wait_p50'))} / {_ping_format_ms(data.get('queue_wait_p95'))}",
+        ],
+        [
+            "پردازش آپدیت P50 / P95",
+            f"{_ping_format_ms(data.get('process_p50'))} / {_ping_format_ms(data.get('process_p95'))}",
+        ],
+        ["Workerهای فعال", f"{data.get('active_workers', 0)} از {data.get('worker_count', BOT_UPDATE_WORKERS)}"],
+        ["نمونه‌های واقعی پردازش", str(data.get("sample_count", 0))],
+    ]
+
+    blocks = [
+        {"type": "pullquote", "text": {"type": "bold", "text": title}},
+        {"type": "divider"},
+        {"type": "paragraph", "text": intro},
+        {
+            "type": "table",
+            "cells": [[{"text": str(cell)} if not isinstance(cell, dict) else cell for cell in row] for row in core_rows],
+            "is_bordered": True,
+            "is_compact": False,
+        },
+        {"type": "paragraph", "text": "وضعیت زیرساخت Railway"},
+        {
+            "type": "table",
+            "cells": [[{"text": str(cell)} if not isinstance(cell, dict) else cell for cell in row] for row in railway_rows],
+            "is_bordered": True,
+            "is_compact": True,
+        },
+        {"type": "paragraph", "text": "عملکرد صف پردازش"},
+        {
+            "type": "table",
+            "cells": [[{"text": str(cell)} if not isinstance(cell, dict) else cell for cell in row] for row in queue_rows],
+            "is_bordered": True,
+            "is_compact": True,
+        },
+    ]
+
+    if mode == "details":
+        db_status = data.get("database_status") or {}
+        db_label = {
+            "healthy": "قابل دسترس",
+            "failed": "خطا در بررسی",
+            "not_configured": "پیکربندی نشده",
+            "timeout": "پایان مهلت بررسی",
+        }.get(db_status.get("status"), "نامشخص")
+        detail_rows = [
+            [{"text": "بررسی تکمیلی", "is_header": True}, {"text": "مقدار", "is_header": True}],
+            ["پایگاه داده PostgreSQL", db_label],
+            ["زمان بررسی PostgreSQL", _ping_format_ms(db_status.get("latency_ms"))],
+            ["نقش Worker", str(data.get("worker_role") or "نامشخص")],
+            ["تعداد نشست‌های بارگذاری‌شده", str(data.get("loaded_sessions", 0))],
+            ["مدت اجرای Worker", str(data.get("uptime") or "نامشخص")],
+            ["شناسه نسخه Railway", str(data.get("build_id") or "نامشخص")],
+        ]
+        blocks.extend([
+            {"type": "paragraph", "text": "جزئیات بررسی تکمیلی"},
+            {
+                "type": "table",
+                "cells": [[{"text": str(cell)} if not isinstance(cell, dict) else cell for cell in row] for row in detail_rows],
+                "is_bordered": True,
+                "is_compact": True,
+            },
+        ])
+
+    guide = (
+        "این گزارش فقط زمان‌های قابل‌اندازه‌گیری از سرویس Railway، Worker، PostgreSQL و Telegram API را نمایش می‌دهد. "
+        "سرعت اینترنت دستگاه کاربر یا پینگ ICMP در این آزمون اندازه‌گیری نمی‌شود. "
+        "مقادیر ناموجود، سالم فرض نمی‌شوند."
+    )
+    blocks.extend([
+        {"type": "divider"},
+        {"type": "blockquote", "blocks": [{"type": "paragraph", "text": guide}]},
+    ])
+
+    if mode == "details":
+        buttons = [
+            [{"text": "› بررسی دوباره", "callback_data": "salf_ping:recheck", "style": "success"}],
+            [{"text": "‹ بازگشت", "callback_data": "salf_ping:summary", "style": "primary"}],
+        ]
+    else:
+        buttons = [[
+            {"text": "› بررسی دوباره", "callback_data": "salf_ping:recheck", "style": "success"},
+            {"text": "› جزئیات Railway", "callback_data": "salf_ping:details"},
+        ]]
+
+    plain_lines = [title, intro]
+    for row in core_rows[1:]:
+        plain_lines.append(f"{row[0]}: {row[1]}")
+    for row in railway_rows[1:]:
+        plain_lines.append(f"{row[0]}: {row[1]}")
+    plain_lines.append(guide)
+
+    return {
+        "rich_message": {"blocks": blocks, "is_rtl": True},
+        "reply_markup": {"inline_keyboard": buttons},
+        "text": "\n".join(plain_lines),
+    }
+
+
+async def ping_access_allowed(user_id: int, username: str | None, chat: dict):
+    if str(user_id) in OWNER_USER_IDS or await is_admin_user(user_id, username):
+        return True
+    chat_type = str(chat.get("type") or "").lower()
+    if chat_type not in {"group", "supergroup"}:
+        return False
+    member = await bot_api(
+        "getChatMember",
+        {"chat_id": int(chat["id"]), "user_id": int(user_id)},
+        timeout=5,
+    )
+    status = str((member or {}).get("result", {}).get("status") or "").lower()
+    return bool(member and member.get("ok") and status in {"creator", "administrator"})
+
+
+async def send_ping_report(
+    chat_id: int,
+    message_id: int | None = None,
+    mode: str = "summary",
+    reply_to_message_id: int | None = None,
+):
+    mode = "details" if mode == "details" else "summary"
+    started = time.perf_counter()
+    check_id = secrets.token_hex(4).upper()
+    pending_data = {
+        "response_ms": None,
+        "processing_ms": None,
+        "telegram_api_ms": None,
+        "checked_at": _ping_checked_at(),
+        "stability": "در حال ارزیابی",
+        "status_text": "در حال بررسی",
+        "railway_status_text": "در حال بررسی",
+        "worker_status_text": "در حال بررسی",
+        "worker_count": BOT_UPDATE_WORKERS,
+        "active_workers": len(bot_update_active_ids),
+        "sample_count": len(bot_update_timing_samples),
+    }
+    pending_view = _ping_build_view("summary", pending_data)
+    pending_payload = {
+        "chat_id": int(chat_id),
+        "rich_message": pending_view["rich_message"],
+        "reply_markup": pending_view["reply_markup"],
+    }
+
+    api_started = time.perf_counter()
+    if message_id is not None:
+        pending_payload["message_id"] = int(message_id)
+        initial = await bot_api("editMessageText", pending_payload, timeout=10)
+    else:
+        if reply_to_message_id is not None:
+            pending_payload["reply_to_message_id"] = int(reply_to_message_id)
+        initial = await bot_api("sendRichMessage", pending_payload, timeout=10)
+    telegram_api_ms = (time.perf_counter() - api_started) * 1000
+
+    if not isinstance(initial, dict) or not initial.get("ok"):
+        fallback_payload = {
+            "chat_id": int(chat_id),
+            "text": pending_view["text"],
+            "reply_markup": pending_view["reply_markup"],
+        }
+        if message_id is not None:
+            fallback_payload["message_id"] = int(message_id)
+            initial = await bot_api("editMessageText", fallback_payload, timeout=10)
+        else:
+            fallback_payload["parse_mode"] = "HTML"
+            if reply_to_message_id is not None:
+                fallback_payload["reply_to_message_id"] = int(reply_to_message_id)
+            initial = await bot_api("sendMessage", fallback_payload, timeout=10)
+        telegram_api_ms += (time.perf_counter() - api_started) * 1000
+
+    if not isinstance(initial, dict) or not initial.get("ok"):
+        return {"ok": False, "reason": "initial_message_failed"}
+
+    result = initial.get("result") or {}
+    current_message_id = (
+        message_id
+        or result.get("message_id")
+        or (result.get("message") or {}).get("message_id")
+    )
+    if current_message_id is not None:
+        current_message_id = int(current_message_id)
+
+    railway_probe, worker_probe = await asyncio.gather(
+        _ping_probe_local_railway("http://127.0.0.1:4173/health"),
+        _ping_probe_local_railway("http://127.0.0.1:8080/health"),
+    )
+    database_status = await _ping_probe_database() if mode == "details" else None
+
+    processing_ms = max(0.0, (time.perf_counter() - started) * 1000 - telegram_api_ms)
+    response_ms = processing_ms + telegram_api_ms
 
     webhook_values = list(webhook_enqueue_samples)
-    queue_wait_values = [sample["queue_wait_ms"] for sample in bot_update_timing_samples]
-    update_process_values = [sample["process_ms"] for sample in bot_update_timing_samples]
+    queue_wait_values = [sample.get("queue_wait_ms") for sample in bot_update_timing_samples]
+    process_values = [sample.get("process_ms") for sample in bot_update_timing_samples]
 
-    webhook_p50 = percentile_value(webhook_values, 0.50)
-    webhook_p95 = percentile_value(webhook_values, 0.95)
-    queue_wait_p50 = percentile_value(queue_wait_values, 0.50)
-    queue_wait_p95 = percentile_value(queue_wait_values, 0.95)
-    process_p50 = percentile_value(update_process_values, 0.50)
-    process_p95 = percentile_value(update_process_values, 0.95)
-
-    if database_ok and telegram_api_ok:
-        result_text = "پاسخ‌گو"
-    elif database_ok or telegram_api_ok:
-        result_text = "پاسخ‌گویی ناقص"
+    railway_ok = railway_probe.get("status") == "healthy"
+    worker_ok = worker_probe.get("status") == "healthy"
+    if not railway_ok or not worker_ok:
+        status = "degraded"
+        status_text = "اختلال جزئی"
+    elif processing_ms > 800 or telegram_api_ms > 1500:
+        status = "slow"
+        status_text = "پاسخ‌گویی کند"
     else:
-        result_text = "نیازمند بررسی"
+        status = "healthy"
+        status_text = "پاسخ‌گو"
 
-    stability = "متغیر" if (
-        (pending_updates is not None and pending_updates > 25)
-        or (queue_wait_p95 is not None and queue_wait_p95 > 1000)
-        or (process_p95 is not None and process_p95 > 2000)
-    ) else ("قابل قبول" if database_ok and telegram_api_ok else "نامشخص")
+    stability = _ping_response_stability(response_ms, status)
+    ping_response_samples.append({"response_ms": response_ms, "status": status})
 
-    checked_at = datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d %H:%M:%S")
-    report = (
-        "<b>« پینگ فروهر سلف »</b>\n"
-        "گزارش زندهٔ پاسخ‌گویی و سنجش تفکیک‌شدهٔ سرویس.\n\n"
-        "<b>مشخصات</b>\n"
-        f"زمان پردازش داخلی بررسی: {internal_processing_ms:.1f} ms\n"
-        f"زمان بررسی دیتابیس و صف: {format_latency_ms(database_ms)}\n"
-        f"تأیید درخواست خروجی در API تلگرام: {format_latency_ms(telegram_api_ms)}\n"
-        f"پاسخ HTTPS به Cloudflare: {format_latency_ms(cloudflare_ms)}\n\n"
-        "<b>عملکرد صف تلگرام</b>\n"
-        f"دریافت وب‌هوک P50 / P95: {format_latency_ms(webhook_p50)} / {format_latency_ms(webhook_p95)}\n"
-        f"انتظار در صف P50 / P95: {format_latency_ms(queue_wait_p50)} / {format_latency_ms(queue_wait_p95)}\n"
-        f"پردازش آپدیت P50 / P95: {format_latency_ms(process_p50)} / {format_latency_ms(process_p95)}\n"
-        f"آپدیت‌های در انتظار: {pending_updates if pending_updates is not None else 'نامشخص'}\n"
-        f"آپدیت‌های در حال پردازش: {processing_updates if processing_updates is not None else 'نامشخص'}\n"
-        f"نمونه‌های ثبت‌شدهٔ صف: {len(bot_update_timing_samples)}\n\n"
-        "<b>نتیجهٔ آزمایش</b>\n"
-        f"وضعیت: {result_text}\n"
-        f"پایداری پاسخ‌گویی: {stability}\n"
-        f"آخرین بررسی: {checked_at} · Asia/Tehran\n\n"
-        "این سنجش از محیط اجرای SALF1 انجام می‌شود؛ زمان Cloudflare پینگ اینترنت دستگاه کاربر یا ICMP نیست. "
-        "P50/P95 فقط از نمونه‌های واقعی ثبت‌شده در همین اجرای سرویس محاسبه می‌شوند."
+    build_id = (
+        os.getenv("RAILWAY_GIT_COMMIT_SHA")
+        or os.getenv("RAILWAY_DEPLOYMENT_ID")
+        or os.getenv("SOURCE_VERSION")
+        or "نامشخص"
     )
-    await bot_send(chat_id, report)
+    data = {
+        "response_ms": round(response_ms, 1),
+        "processing_ms": round(processing_ms, 1),
+        "telegram_api_ms": round(telegram_api_ms, 1),
+        "checked_at": _ping_checked_at(),
+        "stability": stability,
+        "status": status,
+        "status_text": status_text,
+        "railway_status_text": "آنلاین" if railway_ok else "نیازمند بررسی",
+        "railway_http_ms": railway_probe.get("latency_ms"),
+        "worker_status_text": "فعال" if worker_ok else "نیازمند بررسی",
+        "worker_http_ms": worker_probe.get("latency_ms"),
+        "webhook_p50": percentile_value(webhook_values, 0.50),
+        "webhook_p95": percentile_value(webhook_values, 0.95),
+        "queue_wait_p50": percentile_value(queue_wait_values, 0.50),
+        "queue_wait_p95": percentile_value(queue_wait_values, 0.95),
+        "process_p50": percentile_value(process_values, 0.50),
+        "process_p95": percentile_value(process_values, 0.95),
+        "active_workers": len(bot_update_active_ids),
+        "worker_count": BOT_UPDATE_WORKERS,
+        "sample_count": len(bot_update_timing_samples),
+        "database_status": database_status,
+        "worker_role": ROLE,
+        "loaded_sessions": len(clients),
+        "uptime": format_uptime(time.monotonic()) if False else format_uptime(time.time() - PROCESS_STARTED_AT),
+        "build_id": str(build_id)[:40],
+    }
+
+    final_view = _ping_build_view(mode, data)
+    if current_message_id is not None:
+        final_payload = {
+            "chat_id": int(chat_id),
+            "message_id": current_message_id,
+            "rich_message": final_view["rich_message"],
+            "reply_markup": final_view["reply_markup"],
+        }
+        final_result = await bot_api("editMessageText", final_payload, timeout=10)
+        if not isinstance(final_result, dict) or not final_result.get("ok"):
+            fallback_payload = {
+                "chat_id": int(chat_id),
+                "message_id": current_message_id,
+                "text": final_view["text"],
+                "parse_mode": "HTML",
+                "reply_markup": final_view["reply_markup"],
+            }
+            fallback = await bot_api("editMessageText", fallback_payload, timeout=10)
+            if not isinstance(fallback, dict) or not fallback.get("ok"):
+                print(
+                    "Ping Rich Message update failed: "
+                    f"message_id={current_message_id} mode={mode}"
+                )
+    return {"ok": True, "check_id": check_id, "message_id": current_message_id, "data": data}
+
+
+async def process_ping_callback(callback_query: dict):
+    message = callback_query.get("message") or {}
+    user = callback_query.get("from") or {}
+    chat = message.get("chat") or {}
+    user_id = int(user.get("id") or 0)
+    chat_id = int(chat.get("id") or 0)
+    message_id = int(message.get("message_id") or 0)
+    action = str(callback_query.get("data") or "").split(":", 1)[1] if ":" in str(callback_query.get("data") or "") else ""
+
+    if not user_id or not chat_id or not message_id or action not in {"recheck", "details", "summary"}:
+        return
+    if not await ping_access_allowed(user_id, user.get("username"), chat):
+        return
+
+    mode = "details" if action == "details" else "summary"
+    await send_ping_report(chat_id, message_id=message_id, mode=mode)
 
 
 async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: int = 60):
@@ -4066,9 +4367,6 @@ async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: 
 
 
 async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
-    # SALF1 panels are sent through the Rich Message gateway. Editing them
-    # must use the matching Rich Message edit operation; the old
-    # editMessageText path silently rejects the rich_message payload.
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
@@ -4078,20 +4376,27 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
         },
         **({"reply_markup": reply_markup} if reply_markup else {}),
     }
-    result = await bot_api("editRichMessage", payload)
+    # Telegram Rich Message edits are handled by editMessageText. Calling the
+    # unsupported editRichMessage method first added a guaranteed 404 round-trip
+    # to every panel button before the working edit was attempted.
+    result = await bot_api("editMessageText", payload)
     if isinstance(result, dict) and result.get("ok"):
         return result
 
-    # Compatibility fallback for deployments whose gateway exposes only the
-    # legacy edit endpoint.
-    fallback = await bot_api("editMessageText", payload)
+    fallback = await bot_api(
+        "editMessageText",
+        {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": str(text or ""),
+            "parse_mode": "HTML",
+            **({"reply_markup": reply_markup} if reply_markup else {}),
+        },
+    )
     if isinstance(fallback, dict) and fallback.get("ok"):
         return fallback
 
-    print(
-        f"Rich Message edit failed: chat={chat_id} message={message_id} "
-        f"editRichMessage={result} editMessageText={fallback}"
-    )
+    print(f"Rich Message edit failed: chat={chat_id} message={message_id}")
     return fallback or result
 
 async def bot_answer_callback(callback_id: str):
@@ -6639,8 +6944,13 @@ async def process_bot_message(message: dict):
     # twice by the webhook. The shared message claim also closes the race.
     normalized = normalize_text(text)
     command_token = normalized.split(maxsplit=1)[0].split("@", 1)[0] if normalized else ""
-    if command_token in {"پینگ", "ping", "/ping"} and str(chat.get("type") or "").lower() == "private":
-        await send_ping_report(int(chat["id"]))
+    chat_type = str(chat.get("type") or "").lower()
+    if command_token in {"پینگ", "ping"} and chat_type in {"private", "group", "supergroup"}:
+        if await ping_access_allowed(user_id, username, chat):
+            await send_ping_report(
+                int(chat["id"]),
+                reply_to_message_id=int(message.get("message_id") or 0) or None,
+            )
         return
 
     if normalized in PANEL_COMMAND_ALIASES:
@@ -6979,7 +7289,13 @@ async def process_callback(callback_query: dict):
     user_id = int(from_user["id"])
     chat_id = int(chat["id"])
     message_id = int(message.get("message_id", 0))
-    await bot_answer_callback(callback_id)
+    if not callback_query.get("_salf1_callback_acknowledged"):
+        await bot_answer_callback(callback_id)
+
+    if data.startswith("salf_ping:"):
+        await process_ping_callback(callback_query)
+        return
+
     await panel_session_touch_callback(user_id, chat_id, message_id, data)
 
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
@@ -8585,10 +8901,13 @@ async def main():
                 webhook_db_pool = await asyncpg.create_pool(
                     DATABASE_URL,
                     min_size=1,
-                    max_size=2,
+                    max_size=max(3, min(6, BOT_UPDATE_WORKERS + 1)),
                     command_timeout=5,
                 )
-                print("Telegram webhook database pool ready (1-2 dedicated connections).")
+                print(
+                    "Telegram webhook database pool ready "
+                    f"(1-{max(3, min(6, BOT_UPDATE_WORKERS + 1))} dedicated connections)."
+                )
             except Exception as pool_exc:
                 webhook_db_pool = None
                 print(f"Telegram webhook pool unavailable; using shared pool: {type(pool_exc).__name__}")
@@ -8630,7 +8949,8 @@ async def main():
 
         tasks = []
         if ROLE in {"bot", "all"}:
-            tasks.append(asyncio.create_task(bot_update_queue_loop()))
+            for worker_index in range(BOT_UPDATE_WORKERS):
+                tasks.append(asyncio.create_task(bot_update_queue_loop(worker_index)))
             tasks.append(asyncio.create_task(mini_bot_loop()))
             tasks.append(asyncio.create_task(clock_loop()))
             tasks.append(asyncio.create_task(presence_loop()))
@@ -9065,8 +9385,32 @@ async def init_bot_update_queue_table():
             locked_at timestamptz,
             last_error text,
             created_at timestamptz not null default now(),
-            completed_at timestamptz
+            completed_at timestamptz,
+            lane_key text
         )
+        """
+    )
+    await db_pool.execute(
+        """
+        alter table salf1_bot_update_queue
+        add column if not exists lane_key text
+        """
+    )
+    await db_pool.execute(
+        """
+        update salf1_bot_update_queue
+        set lane_key = case
+            when payload ? 'callback_query' then
+                'callback:' ||
+                coalesce(payload->'callback_query'->'message'->'chat'->>'id', 'unknown') ||
+                ':' ||
+                coalesce(payload->'callback_query'->'message'->>'message_id',
+                         payload->'callback_query'->>'id', update_id::text)
+            when payload ? 'message' then
+                'chat:' || coalesce(payload->'message'->'chat'->>'id', update_id::text)
+            else 'update:' || update_id::text
+        end
+        where lane_key is null
         """
     )
     await db_pool.execute(
@@ -9076,6 +9420,32 @@ async def init_bot_update_queue_table():
         where status in ('pending', 'processing')
         """
     )
+    await db_pool.execute(
+        """
+        create index if not exists idx_salf1_bot_update_queue_lane
+        on salf1_bot_update_queue (lane_key, created_at, update_id)
+        where status in ('pending', 'processing')
+        """
+    )
+
+
+def bot_update_lane_key(update: dict, update_id: int) -> str:
+    callback = update.get("callback_query")
+    if isinstance(callback, dict):
+        message = callback.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        message_id = message.get("message_id")
+        if chat_id is not None and message_id is not None:
+            return f"callback:{chat_id}:{message_id}"
+        return f"callback:{callback.get('id') or update_id}"
+
+    message = update.get("message") or update.get("edited_message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    if chat_id is not None:
+        return f"chat:{chat_id}"
+    return f"update:{update_id}"
 
 
 async def claim_bot_update():
@@ -9087,13 +9457,39 @@ async def claim_bot_update():
         return await conn.fetchrow(
             """
             with candidate as (
-                select update_id
-                from salf1_bot_update_queue
-                where
-                    (status = 'pending' and available_at <= now())
+                select queued.update_id
+                from salf1_bot_update_queue as queued
+                where (
+                    (queued.status = 'pending' and queued.available_at <= now())
                     or
-                    (status = 'processing' and locked_at < now() - interval '3 minutes')
-                order by created_at asc, update_id asc
+                    (queued.status = 'processing' and queued.locked_at < now() - interval '3 minutes')
+                )
+                and (
+                    queued.lane_key is null
+                    or not exists (
+                        select 1
+                        from salf1_bot_update_queue as active
+                        where active.lane_key = queued.lane_key
+                          and active.status = 'processing'
+                          and active.locked_at >= now() - interval '3 minutes'
+                          and active.update_id <> queued.update_id
+                    )
+                )
+                and (
+                    queued.lane_key is null
+                    or not exists (
+                        select 1
+                        from salf1_bot_update_queue as earlier
+                        where earlier.lane_key = queued.lane_key
+                          and earlier.status = 'pending'
+                          and (earlier.created_at, earlier.update_id) <
+                              (queued.created_at, queued.update_id)
+                    )
+                )
+                order by
+                    case when queued.payload ? 'callback_query' then 0 else 1 end,
+                    queued.created_at asc,
+                    queued.update_id asc
                 limit 1
                 for update skip locked
             )
@@ -9104,14 +9500,15 @@ async def claim_bot_update():
                 last_error = null
             from candidate
             where queued.update_id = candidate.update_id
-            returning queued.update_id, queued.payload::text as payload_json, queued.attempts, queued.created_at
+            returning queued.update_id, queued.payload::text as payload_json,
+                      queued.attempts, queued.created_at
             """
         )
 
 
-async def bot_update_queue_loop():
-    """Process persisted Telegram updates outside the HTTP webhook request."""
-    print("Telegram update queue worker started.")
+async def bot_update_queue_loop(worker_id: int = 0):
+    """Process durable Telegram updates with isolated lanes and bounded concurrency."""
+    print(f"Telegram update queue worker started: worker={worker_id + 1}/{BOT_UPDATE_WORKERS}")
     next_cleanup = time.monotonic() + 3600
 
     while True:
@@ -9126,12 +9523,12 @@ async def bot_update_queue_loop():
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            print(f"Telegram update queue claim failed: {type(exc).__name__}: {str(exc)[:180]}")
-            await asyncio.sleep(1)
+            print(f"Telegram update queue claim failed: worker={worker_id} error={type(exc).__name__}: {str(exc)[:180]}")
+            await asyncio.sleep(0.5)
             continue
 
         if queued is None:
-            if time.monotonic() >= next_cleanup:
+            if worker_id == 0 and time.monotonic() >= next_cleanup:
                 try:
                     await queue_pool.execute(
                         """
@@ -9145,7 +9542,7 @@ async def bot_update_queue_loop():
                 next_cleanup = time.monotonic() + 3600
 
             try:
-                await asyncio.wait_for(bot_update_wakeup.wait(), timeout=2)
+                await asyncio.wait_for(bot_update_wakeup.wait(), timeout=1)
             except asyncio.TimeoutError:
                 pass
             continue
@@ -9160,6 +9557,7 @@ async def bot_update_queue_loop():
             0.0,
             (datetime.now(timezone.utc) - queued_at.astimezone(timezone.utc)).total_seconds() * 1000,
         )
+        bot_update_active_ids.add(update_id)
 
         try:
             update = json.loads(queued["payload_json"])
@@ -9189,7 +9587,11 @@ async def bot_update_queue_loop():
                 "process_ms": round(elapsed_ms, 1),
             })
             if elapsed_ms >= 1000:
-                print(f"Telegram update processed: id={update_id} elapsed_ms={int(elapsed_ms)} queue_wait_ms={int(queue_wait_ms)}")
+                print(
+                    f"Telegram update processed: id={update_id} "
+                    f"elapsed_ms={int(elapsed_ms)} queue_wait_ms={int(queue_wait_ms)} "
+                    f"worker={worker_id}"
+                )
 
         except asyncio.CancelledError:
             raise
@@ -9224,6 +9626,8 @@ async def bot_update_queue_loop():
                 f"attempt={attempts}/{BOT_UPDATE_MAX_ATTEMPTS} "
                 f"state={next_status} error={type(exc).__name__}: {str(exc)[:240]}"
             )
+        finally:
+            bot_update_active_ids.discard(update_id)
 
 
 async def bot_webhook(request: web.Request):
@@ -9253,20 +9657,28 @@ async def bot_webhook(request: web.Request):
         if not update.get("callback_query") and not update.get("message"):
             return web.json_response({"ok": True})
 
+        lane_key = bot_update_lane_key(update, update_id)
+        callback = update.get("callback_query")
+        if isinstance(callback, dict) and callback.get("id"):
+            # Stop Telegram's button spinner immediately after the durable insert.
+            # The callback action itself is still processed in its ordered panel lane.
+            callback["_salf1_callback_acknowledged"] = True
+
         payload_json = json.dumps(update, ensure_ascii=False, separators=(",", ":"))
-        # A small dedicated pool keeps webhook acknowledgement independent of
-        # session restoration, presence jobs, and other potentially slow queries.
         queue_pool = webhook_db_pool or db_pool
-        async with queue_pool.acquire(timeout=2) as conn:
+        async with queue_pool.acquire(timeout=1.5) as conn:
             await conn.execute(
                 """
-                insert into salf1_bot_update_queue (update_id, payload)
-                values ($1, $2::jsonb)
+                insert into salf1_bot_update_queue (update_id, payload, lane_key)
+                values ($1, $2::jsonb, $3)
                 on conflict (update_id) do nothing
                 """,
                 update_id,
                 payload_json,
+                lane_key,
             )
+        if isinstance(callback, dict) and callback.get("id"):
+            asyncio.create_task(bot_answer_callback(str(callback["id"])))
         elapsed_ms = (time.monotonic() - request_start) * 1000
         webhook_enqueue_samples.append(round(elapsed_ms, 1))
         if elapsed_ms >= 250:
