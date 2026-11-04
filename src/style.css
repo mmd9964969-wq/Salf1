@@ -1624,3 +1624,14 @@ body.auth-code-active #resendButton:disabled{opacity:.36}
   body.auth-flow-active .auth-stage:not(.secure-gateway-stage){padding-top:18px;padding-bottom:18px}
 }
 @media(prefers-reduced-motion:reduce){.otp-input{transition:none}}
+
+
+/* SALF1 PERFORMANCE: respect system motion preferences across all visual layers. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    scroll-behavior:auto!important;
+    transition-duration:.01ms!important;
+  }
+}
