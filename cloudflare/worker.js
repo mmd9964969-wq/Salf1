@@ -77,9 +77,14 @@ export class Salf1Container extends Container {
   constructor(ctx, env) {
     super(ctx, env);
     this.runtimeEnv = env;
+    this.runtimeConfigPromise = null;
+    this.keepaliveSetupPromise = null;
   }
 
   async configureRuntime(request) {
+    if (this.runtimeConfigPromise) return this.runtimeConfigPromise;
+
+    this.runtimeConfigPromise = (async () => {
     const requestUrl = new URL(request.url);
     const publicOrigin = String(
       this.runtimeEnv.PUBLIC_ORIGIN || requestUrl.origin,
@@ -138,13 +143,30 @@ export class Salf1Container extends Container {
       (await getOrCreateSecret(this.ctx.storage, "secret:webhook"));
 
     this.envVars = vars;
+    })();
+
+    try {
+      await this.runtimeConfigPromise;
+    } catch (error) {
+      this.runtimeConfigPromise = null;
+      throw error;
+    }
   }
 
   async scheduleKeepalive() {
-    const scheduledAt = await this.ctx.storage.getAlarm();
-    if (scheduledAt === null) {
-      await this.ctx.storage.setAlarm(Date.now() + KEEPALIVE_INTERVAL_MS);
-    }
+    if (this.keepaliveSetupPromise) return this.keepaliveSetupPromise;
+
+    this.keepaliveSetupPromise = (async () => {
+      const scheduledAt = await this.ctx.storage.getAlarm();
+      if (scheduledAt === null) {
+        await this.ctx.storage.setAlarm(Date.now() + KEEPALIVE_INTERVAL_MS);
+      }
+    })().catch(error => {
+      this.keepaliveSetupPromise = null;
+      throw error;
+    });
+
+    return this.keepaliveSetupPromise;
   }
 
   async fetch(request) {
