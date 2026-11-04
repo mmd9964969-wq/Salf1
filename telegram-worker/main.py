@@ -393,6 +393,7 @@ session_runtime_lock_connections: dict[str, object] = {}
 bot_update_wakeup = asyncio.Event()
 BOT_UPDATE_MAX_ATTEMPTS = 8
 BOT_UPDATE_WORKERS = max(1, min(4, int(os.getenv("SALF1_BOT_UPDATE_WORKERS", "4"))))
+PROCESS_STARTED_AT = time.time()
 bot_update_active_ids: set[int] = set()
 ping_response_samples = deque(maxlen=5)
 
@@ -3932,6 +3933,24 @@ def _ping_format_ms(value):
     return format_latency_ms(value)
 
 
+def _ping_format_uptime(seconds):
+    if seconds is None:
+        return "نامشخص"
+    remaining = max(0, int(seconds))
+    days, remaining = divmod(remaining, 86400)
+    hours, remaining = divmod(remaining, 3600)
+    minutes, seconds = divmod(remaining, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} روز")
+    if hours or days:
+        parts.append(f"{hours} ساعت")
+    if minutes or hours or days:
+        parts.append(f"{minutes} دقیقه")
+    parts.append(f"{seconds} ثانیه")
+    return " ".join(parts)
+
+
 def _ping_gregorian_to_jalali(gy: int, gm: int, gd: int):
     month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
     if gy > 1600:
@@ -4218,6 +4237,7 @@ async def send_ping_report(
             "text": pending_view["text"],
             "reply_markup": pending_view["reply_markup"],
         }
+        fallback_started = time.perf_counter()
         if message_id is not None:
             fallback_payload["message_id"] = int(message_id)
             initial = await bot_api("editMessageText", fallback_payload, timeout=10)
@@ -4226,7 +4246,7 @@ async def send_ping_report(
             if reply_to_message_id is not None:
                 fallback_payload["reply_to_message_id"] = int(reply_to_message_id)
             initial = await bot_api("sendMessage", fallback_payload, timeout=10)
-        telegram_api_ms += (time.perf_counter() - api_started) * 1000
+        telegram_api_ms += (time.perf_counter() - fallback_started) * 1000
 
     if not isinstance(initial, dict) or not initial.get("ok"):
         return {"ok": False, "reason": "initial_message_failed"}
@@ -4298,7 +4318,7 @@ async def send_ping_report(
         "database_status": database_status,
         "worker_role": ROLE,
         "loaded_sessions": len(clients),
-        "uptime": format_uptime(time.monotonic()) if False else format_uptime(time.time() - PROCESS_STARTED_AT),
+        "uptime": _ping_format_uptime(time.time() - PROCESS_STARTED_AT),
         "build_id": str(build_id)[:40],
     }
 
