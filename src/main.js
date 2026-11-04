@@ -921,14 +921,19 @@ function startLogoMorph() {
   if (window.__salfLogoTimer) clearTimeout(window.__salfLogoTimer);
   const logo=document.querySelector("#brandWordmark");
   if(!logo)return;
-  const effects=["weight","wave","shatter","tilt","glitch","energy","particles"];
+
+  const reducedMotion=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(reducedMotion)return;
+
+  const lowPower=window.matchMedia("(max-width: 700px)").matches || Boolean(navigator.connection?.saveData);
+  const effects=lowPower ? ["wave","tilt"] : ["weight","wave","shatter","tilt","glitch","energy","particles"];
   const run=()=>{
-    if(!document.body.contains(logo))return;
+    if(!document.body.contains(logo) || document.hidden)return;
     logo.dataset.effect=effects[Math.floor(Math.random()*effects.length)];
-    setTimeout(()=>{if(document.body.contains(logo))logo.removeAttribute("data-effect");},900+Math.random()*260);
-    window.__salfLogoTimer=setTimeout(run,1500+Math.random()*1000);
+    setTimeout(()=>{if(document.body.contains(logo))logo.removeAttribute("data-effect");},lowPower?620:900+Math.random()*260);
+    window.__salfLogoTimer=setTimeout(run,lowPower?4200:1500+Math.random()*1000);
   };
-  window.__salfLogoTimer=setTimeout(run,1400);
+  window.__salfLogoTimer=setTimeout(run,lowPower?2400:1400);
 }
 
 function initCosmos() {
@@ -948,11 +953,21 @@ function initCosmos() {
   let dpr = 1;
   let raf = 0;
   let start = performance.now();
+  let lastFrameAt = 0;
+  let lastSceneIndex = -1;
+
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const mobileViewport = window.matchMedia("(max-width: 700px)").matches;
+  const lowPower = mobileViewport || Boolean(navigator.connection?.saveData) ||
+    (Number(navigator.hardwareConcurrency || 0) > 0 && Number(navigator.hardwareConcurrency) <= 4);
+  const targetFps = lowPower ? 24 : 40;
+  const starCount = lowPower ? 220 : 520;
+  const dissolveCount = lowPower ? 22 : 44;
 
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
   const sceneNodeRef = document.querySelector("#sceneName");
 
-  for (let i = 0; i < 850; i++) {
+  for (let i = 0; i < starCount; i++) {
     stars.push({
       x: Math.random(),
       y: Math.random(),
@@ -963,7 +978,7 @@ function initCosmos() {
     });
   }
 
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < dissolveCount; i++) {
     dissolve.push({ x: Math.random(), y: Math.random(), a: Math.random() * Math.PI * 2, r: Math.random() * 1.4 + 0.2 });
   }
 
@@ -979,7 +994,7 @@ function initCosmos() {
   function resize() {
     width = window.innerWidth;
     height = window.innerHeight;
-    dpr = Math.min(window.devicePixelRatio || 1, width >= 2560 ? 2 : 1.65);
+    dpr = Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.25);
     canvas.width = Math.floor(width * dpr);
     canvas.height = Math.floor(height * dpr);
     canvas.style.width = width + "px";
@@ -988,6 +1003,15 @@ function initCosmos() {
   }
 
   function frame(now) {
+    if (document.hidden) return;
+
+    const minimumFrameGap = 1000 / targetFps;
+    if (lastFrameAt && now - lastFrameAt < minimumFrameGap) {
+      raf = requestAnimationFrame(frame);
+      return;
+    }
+    lastFrameAt = now;
+
     const duration = 15000;
     ctx.globalCompositeOperation = "source-over";
     const cycle = (now - start) % (duration * 6);
@@ -1000,7 +1024,10 @@ function initCosmos() {
     pointer.x += (pointer.tx - pointer.x) * 0.028;
     pointer.y += (pointer.ty - pointer.y) * 0.028;
 
-    if (sceneNodeRef) sceneNodeRef.textContent = names[current];
+    if (sceneNodeRef && lastSceneIndex !== current) {
+      sceneNodeRef.textContent = names[current];
+      lastSceneIndex = current;
+    }
 
     ctx.fillStyle = "#05050A";
     ctx.fillRect(0, 0, width, height);
@@ -1025,7 +1052,7 @@ function initCosmos() {
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, width, height);
 
-    raf = requestAnimationFrame(frame);
+    if (!reducedMotion) raf = requestAnimationFrame(frame);
   }
 
   function drawFallback(index) {
@@ -1540,16 +1567,30 @@ function initCosmos() {
     pointer.tx=event.clientX/Math.max(1,width)-.5;
     pointer.ty=event.clientY/Math.max(1,height)-.5;
   };
+  const onVisibilityChange = () => {
+    if (document.hidden) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+      return;
+    }
+    lastFrameAt = 0;
+    if (!raf) raf = requestAnimationFrame(frame);
+  };
+
   window.addEventListener("resize",onResize,{passive:true});
-  window.addEventListener("pointermove",onPointer,{passive:true});
+  if (!lowPower && !reducedMotion) {
+    window.addEventListener("pointermove",onPointer,{passive:true});
+  }
+  document.addEventListener("visibilitychange",onVisibilityChange);
 
   window.__salfCosmosCleanup = () => {
     cancelAnimationFrame(raf);
     window.removeEventListener("resize",onResize);
     window.removeEventListener("pointermove",onPointer);
+    document.removeEventListener("visibilitychange",onVisibilityChange);
   };
 
-  raf=requestAnimationFrame(function tick(now){ frame(now); });
+  raf=requestAnimationFrame(frame);
 }
 
 function delay(ms) {
