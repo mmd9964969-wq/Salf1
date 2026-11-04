@@ -38,6 +38,9 @@ jobs:
           node --check src/main.js
           node --check cloudflare/worker.js
 
+      - name: Run automated tests
+        run: npm test
+
       - name: Build web panel
         run: npm run build
 
