@@ -3982,7 +3982,7 @@ def _ping_gregorian_to_jalali(gy: int, gm: int, gd: int):
     else:
         jm = 7 + (days - 186) // 30
         jd = 1 + (days - 186) % 30
-    return jy + 1, jm, jd
+    return jy, jm, jd
 
 
 def _ping_checked_at():
