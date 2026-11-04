@@ -370,6 +370,7 @@ me_cache: dict[str, int] = {}
 bot_states: dict[int, object] = {}
 http_session: ClientSession | None = None
 db_pool: asyncpg.Pool | None = None
+webhook_db_pool: asyncpg.Pool | None = None
 bot_username = ""
 web_login_tokens: dict[str, dict] = {}
 clock_last_outputs: dict[str, dict] = {}
@@ -8419,7 +8420,7 @@ async def session_supervisor_loop():
 
 
 async def main():
-    global http_session, db_pool
+    global http_session, db_pool, webhook_db_pool
 
     if DATABASE_URL:
         try:
@@ -8435,6 +8436,19 @@ async def main():
             await init_session_vault_table()
             await init_command_runtime_tables()
             await init_bot_update_queue_table()
+            # Isolate Telegram webhook writes from long-running selfbot queries.
+            # This prevents a busy general-purpose pool from delaying Telegram ACKs.
+            try:
+                webhook_db_pool = await asyncpg.create_pool(
+                    DATABASE_URL,
+                    min_size=1,
+                    max_size=2,
+                    command_timeout=5,
+                )
+                print("Telegram webhook database pool ready (1-2 dedicated connections).")
+            except Exception as pool_exc:
+                webhook_db_pool = None
+                print(f"Telegram webhook pool unavailable; using shared pool: {type(pool_exc).__name__}")
             await set_account_health_columns()
             await grant_owner_unlimited()
             await init_clock_settings_table()
@@ -8484,6 +8498,8 @@ async def main():
         await asyncio.Event().wait()
     finally:
         await release_all_session_runtime_locks()
+        if webhook_db_pool is not None:
+            await webhook_db_pool.close()
         if db_pool is not None:
             await db_pool.close()
         if http_session is not None:
@@ -9055,6 +9071,7 @@ async def bot_update_queue_loop():
 
 
 async def bot_webhook(request: web.Request):
+    request_start = time.monotonic()
     if not WEBHOOK_SECRET:
         return web.Response(status=503, text="webhook not configured")
 
@@ -9080,15 +9097,23 @@ async def bot_webhook(request: web.Request):
         if not update.get("callback_query") and not update.get("message"):
             return web.json_response({"ok": True})
 
-        await db_pool.execute(
-            """
-            insert into salf1_bot_update_queue (update_id, payload)
-            values ($1, $2::jsonb)
-            on conflict (update_id) do nothing
-            """,
-            update_id,
-            json.dumps(update, ensure_ascii=False, separators=(",", ":")),
-        )
+        payload_json = json.dumps(update, ensure_ascii=False, separators=(",", ":"))
+        # A small dedicated pool keeps webhook acknowledgement independent of
+        # session restoration, presence jobs, and other potentially slow queries.
+        queue_pool = webhook_db_pool or db_pool
+        async with queue_pool.acquire(timeout=2) as conn:
+            await conn.execute(
+                """
+                insert into salf1_bot_update_queue (update_id, payload)
+                values ($1, $2::jsonb)
+                on conflict (update_id) do nothing
+                """,
+                update_id,
+                payload_json,
+            )
+        elapsed_ms = int((time.monotonic() - request_start) * 1000)
+        if elapsed_ms >= 250:
+            print(f"Telegram webhook enqueue slow: id={update_id} elapsed_ms={elapsed_ms}")
         bot_update_wakeup.set()
         return web.json_response({"ok": True})
 
