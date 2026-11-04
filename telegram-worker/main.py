@@ -379,8 +379,25 @@ bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
 account_health_cache_at: dict[str, float] = {}
+callback_background_tasks: set[asyncio.Task] = set()
 ACCOUNT_HEALTH_CACHE_TTL_SECONDS = 8.0
 session_runtime_lock_connections: dict[str, object] = {}
+
+
+def _spawn_callback_task(coro):
+    task = asyncio.create_task(coro)
+    callback_background_tasks.add(task)
+
+    def _finish(done_task):
+        callback_background_tasks.discard(done_task)
+        if done_task.cancelled():
+            return
+        error = done_task.exception()
+        if error is not None:
+            print(f"Callback background task failed: {type(error).__name__}: {error}")
+
+    task.add_done_callback(_finish)
+    return task
 
 
 def configured():
@@ -6772,11 +6789,11 @@ async def process_callback(callback_query: dict):
     user_id = int(from_user["id"])
     chat_id = int(chat["id"])
     message_id = int(message.get("message_id", 0))
-    asyncio.create_task(bot_answer_callback(callback_id))
+    _spawn_callback_task(bot_answer_callback(callback_id))
     # Panel navigation metadata is not on the critical path for the button response.
     # Update it asynchronously so a database round-trip cannot delay every tap.
     if data in PANEL_CALLBACKS:
-        asyncio.create_task(
+        _spawn_callback_task(
             panel_session_touch_callback(user_id, chat_id, message_id, data)
         )
 
