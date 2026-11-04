@@ -77,25 +77,32 @@ export class Salf1Container extends Container {
   constructor(ctx, env) {
     super(ctx, env);
     this.runtimeEnv = env;
-    this.runtimeConfigPromise = null;
+    this.runtimeSecretsPromise = null;
     this.keepaliveSetupPromise = null;
   }
 
-  async configureRuntime(request) {
-    if (this.runtimeConfigPromise) return this.runtimeConfigPromise;
+  async getRuntimeSecrets() {
+    if (!this.runtimeSecretsPromise) {
+      this.runtimeSecretsPromise = Promise.all([
+        getOrCreateSecret(this.ctx.storage, "secret:session"),
+        getOrCreateSecret(this.ctx.storage, "secret:worker-api"),
+        getOrCreateSecret(this.ctx.storage, "secret:webhook"),
+      ]).catch(error => {
+        this.runtimeSecretsPromise = null;
+        throw error;
+      });
+    }
+    return this.runtimeSecretsPromise;
+  }
 
-    this.runtimeConfigPromise = (async () => {
+  async configureRuntime(request) {
     const requestUrl = new URL(request.url);
     const publicOrigin = String(
       this.runtimeEnv.PUBLIC_ORIGIN || requestUrl.origin,
     ).replace(/\/+$/, "");
     const publicHost = new URL(publicOrigin).hostname;
 
-    const [sessionSecret, workerApiToken, webhookSecret] = await Promise.all([
-      getOrCreateSecret(this.ctx.storage, "secret:session"),
-      getOrCreateSecret(this.ctx.storage, "secret:worker-api"),
-      getOrCreateSecret(this.ctx.storage, "secret:webhook"),
-    ]);
+    const [sessionSecret, workerApiToken, webhookSecret] = await this.getRuntimeSecrets();
 
     const vars = {
       NODE_ENV: "production",
@@ -131,14 +138,6 @@ export class Salf1Container extends Container {
     );
 
     this.envVars = vars;
-    })();
-
-    try {
-      await this.runtimeConfigPromise;
-    } catch (error) {
-      this.runtimeConfigPromise = null;
-      throw error;
-    }
   }
 
   async scheduleKeepalive() {
