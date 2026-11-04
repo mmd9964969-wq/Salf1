@@ -180,10 +180,10 @@ def rich_message_html(text: str) -> str:
             parts.append(line)
             continue
 
-        # Telegram renders <aside> as a centered pull-quote block. Preserve it
-        # as a block so the /start brand heading is centered without whitespace
-        # padding or unsupported alignment attributes.
-        if line.startswith("<aside>") and line.endswith("</aside>"):
+        # Keep explicit single-line HTML tables intact. The /start title
+        # uses a borderless centered cell so its existing inline font styling
+        # is preserved without turning the title into a pull quote.
+        if line.startswith("<table>") and line.endswith("</table>"):
             flush_table()
             flush_list()
             parts.append(line)
@@ -3986,7 +3986,7 @@ async def mini_main_text(user_id: int, user_first_name: str | None):
     unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(str(user_id), health.get("username"))
     balance = int(row["tron_balance"]) if row else 0
     return f"""
-<aside><b>Fᴀʀᴠᴀʜʀ Sᴇʟғ · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b></aside>
+<table><tr><td align="center"><b>Fᴀʀᴠᴀʜʀ Sᴇʟғ · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b></td></tr></table>
 
 خـوش اومـدی <b>[ {name} ]</b> مـحتـرم.
 
