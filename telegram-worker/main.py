@@ -115,6 +115,34 @@ def _clean_rich_data_line(value: str):
     return label, data
 
 
+def rich_button(text: str, callback_data: str, style: str = "primary") -> str:
+    """Render a Telegram native Rich Message callback button safely."""
+    label = str(text or "").strip()
+    data = str(callback_data or "").strip()
+    button_style = str(style or "primary").strip().lower()
+    if not label or not data:
+        raise ValueError("Rich button text and callback_data are required")
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError("Rich button callback_data exceeds Telegram's 64-byte limit")
+    if button_style not in {"primary", "success", "danger", "link"}:
+        button_style = "primary"
+    return (
+        '<tg-button type="callback_data" '
+        f'style="{button_style}" data="{html.escape(data, quote=True)}">'
+        f'{html.escape(label, quote=False)}</tg-button>'
+    )
+
+
+def rich_button_row(*buttons: str) -> str:
+    """Render one native Rich Message button row (1–8 buttons)."""
+    items = [str(button) for button in buttons if str(button or "").strip()]
+    if not items:
+        return ""
+    if len(items) > 8:
+        raise ValueError("A Telegram Rich Message button row supports at most 8 buttons")
+    return '<tg-button-row align="center">' + "".join(items) + '</tg-button-row>'
+
+
 def rich_message_html(text: str) -> str:
     """
     Build Telegram's native Rich Message HTML structure.
