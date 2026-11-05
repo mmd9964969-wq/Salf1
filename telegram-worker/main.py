@@ -12,6 +12,7 @@ import secrets
 from datetime import datetime, timedelta, timezone, time as dt_time
 from zoneinfo import ZoneInfo
 from collections import deque
+from contextvars import ContextVar
 import time
 
 import asyncpg
@@ -429,6 +430,21 @@ PROCESS_STARTED_AT = time.time()
 bot_update_active_ids: set[int] = set()
 bot_callback_lane_locks: dict[str, asyncio.Lock] = {}
 bot_callback_tasks: set[asyncio.Task] = set()
+bot_callback_render_versions: dict[str, tuple[int, float]] = {}
+bot_callback_update_versions: dict[int, tuple[str, int, float]] = {}
+bot_fast_update_seen: dict[int, float] = {}
+bot_callback_render_context = ContextVar("salf1_bot_callback_render_context", default=None)
+
+
+def bot_callback_render_is_current() -> bool:
+    context = bot_callback_render_context.get()
+    if context is None:
+        return True
+    lane_key, generation = context
+    current = bot_callback_render_versions.get(str(lane_key))
+    return bool(current and int(current[0]) == int(generation))
+
+
 ping_response_samples = deque(maxlen=5)
 
 # Bounded, process-local latency samples. These are diagnostic only and never
@@ -2798,6 +2814,43 @@ PANEL_CALLBACKS = {
 }
 PANEL_DEDUP_TTL_SECONDS = 120.0
 
+# Pure page transitions and read-only views do not enter the durable update queue.
+# Mutations, confirmations, account/session actions and multi-step inputs remain durable.
+FAST_NAV_CALLBACKS = frozenset({
+    "panel", "panel_account", "panel_self", "panel_automation",
+    "panel_protection", "panel_tools", "panel_system",
+    "self_features", "self_status_center",
+    "presence", "prs_refresh", "prs_online", "prs_online_refresh",
+    "prs_activity", "prs_activity_refresh", "prs_timezone", "prs_schedule",
+    "prs_schedule_online", "prs_schedule_activity",
+    "prs_schedule_refresh_online", "prs_schedule_refresh_activity",
+    "prs_exceptions", "prs_exception_refresh",
+    "prs_destinations", "prs_destinations_refresh",
+    "prs_scenarios", "prs_scenarios_refresh",
+    "prs_profiles", "prs_profiles_refresh",
+    "prs_advanced", "prs_advanced_refresh", "prs_stats", "prs_stats_refresh",
+    "clock", "clock_status", "clock_destinations", "clock_timezone",
+    "clock_format", "clock_font", "clock_appearance", "clock_template",
+    "clock_schedule", "clock_engine", "clock_preview", "clock_stats",
+    "clock_advanced", "clock_profiles", "clock_profile_info",
+    "home", "manage", "referral", "shop", "shop_buy", "shop_packages",
+    "shop_history", "shop_discount", "shop_support", "shop_balance",
+    "balance_consumption", "balance_transactions", "support", "channel",
+    "channel_missing",
+    "account_status", "account_refresh", "account_details",
+    "account_presence", "account_salf", "account_health", "account_check",
+    "admin_balance", "admin_close", "admin_charge",
+})
+
+# These commands only open a view or run a read-only check. Commands that
+# change balances, sessions, settings or a pending interactive state stay durable.
+FAST_BOT_COMMANDS = frozenset({
+    "راهنما", "help",
+    "مدیریت سلف", "مدیریت", "مدیریت اصلی", "پنل مدیریت",
+    "admin", "admin panel", "salf", "self",
+    "الماس رایگان", "الماس", "رفرال", "referral",
+})
+
 command_seen: dict[str, float] = {}
 command_locks: dict[str, asyncio.Lock] = {}
 panel_sessions: dict[str, dict] = {}
@@ -3020,6 +3073,8 @@ async def panel_session_touch_callback(
     message_id: int,
     callback_data: str,
 ):
+    if not bot_callback_render_is_current():
+        return
     if callback_data not in PANEL_CALLBACKS:
         return
 
@@ -4445,6 +4500,8 @@ async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: 
 
 
 async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
+    if not bot_callback_render_is_current():
+        return {"ok": True, "salf1_stale_callback": True}
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
@@ -4465,6 +4522,9 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
         and "message is not modified" in str(result.get("description") or "").lower()
     ):
         return result
+
+    if not bot_callback_render_is_current():
+        return {"ok": True, "salf1_stale_callback": True}
 
     fallback = await bot_api(
         "editMessageText",
@@ -5809,6 +5869,32 @@ async def presence_loop():
         except Exception as exc:
             print(f"Presence loop error: {type(exc).__name__}: {exc}")
         await asyncio.sleep(3)
+
+def rich_button(text: str, callback_data: str, style: str = "primary") -> str:
+    label = str(text or "")
+    data = str(callback_data or "")
+    if not data or len(data.encode("utf-8")) > 64:
+        raise ValueError("Rich Message callback_data must be 1-64 UTF-8 bytes")
+    allowed_styles = {"danger", "success", "primary", "link"}
+    button_style = style if style in allowed_styles else "primary"
+    return (
+        '<tg-button type="callback_data" '
+        f'style="{button_style}" data="{html.escape(data, quote=True)}">'
+        f'{html.escape(label)}</tg-button>'
+    )
+
+
+def rich_button_row(*buttons: str, align: str = "center") -> str:
+    valid_buttons = [str(button).strip() for button in buttons if button]
+    if not valid_buttons:
+        return ""
+    if len(valid_buttons) > 8:
+        raise ValueError("A Rich Message button row can contain at most 8 buttons")
+    row_align = align if align in {"left", "center", "right"} else "center"
+    if any(not button.startswith('<tg-button ') for button in valid_buttons):
+        raise ValueError("rich_button_row accepts rich_button() results only")
+    return f'<tg-button-row align="{row_align}">{"".join(valid_buttons)}</tg-button-row>'
+
 
 async def presence_online_page(user_id):
     cfg=await presence_get_settings(user_id)
@@ -7403,7 +7489,7 @@ async def process_bot_message(message: dict):
         return
 
 
-async def process_callback(callback_query: dict):
+async def _process_callback_impl(callback_query: dict):
     callback_id = callback_query.get("id")
     message = callback_query.get("message") or {}
     from_user = callback_query.get("from") or {}
@@ -8917,6 +9003,30 @@ Telegram نام و Bio را با فونت فایل‌محور نمایش نمی�
         return
 
 
+async def process_callback(callback_query: dict):
+    lane_key = str(callback_query.get("_salf1_callback_lane") or "")
+    raw_generation = callback_query.get("_salf1_callback_generation")
+    if not lane_key or raw_generation is None:
+        await _process_callback_impl(callback_query)
+        return
+
+    try:
+        generation = int(raw_generation)
+    except (TypeError, ValueError):
+        await _process_callback_impl(callback_query)
+        return
+
+    current = bot_callback_render_versions.get(lane_key)
+    if current is None or int(current[0]) < generation:
+        bot_callback_render_versions[lane_key] = (generation, time.monotonic())
+
+    token = bot_callback_render_context.set((lane_key, generation))
+    try:
+        await _process_callback_impl(callback_query)
+    finally:
+        bot_callback_render_context.reset(token)
+
+
 async def mini_bot_loop():
     global bot_username, bot_user_id
     if not bot_configured():
@@ -9575,6 +9685,93 @@ def bot_update_lane_key(update: dict, update_id: int) -> str:
     return f"update:{update_id}"
 
 
+def prepare_bot_callback_generation(update_id: int, lane_key: str, callback: dict):
+    now = time.monotonic()
+    update_id = int(update_id)
+    existing = bot_callback_update_versions.get(update_id)
+    if existing and existing[0] == lane_key and now - existing[2] <= 600:
+        generation = int(existing[1])
+    else:
+        current = bot_callback_render_versions.get(lane_key)
+        generation = (int(current[0]) + 1) if current else 1
+        bot_callback_render_versions[lane_key] = (generation, now)
+        bot_callback_update_versions[update_id] = (lane_key, generation, now)
+
+    callback["_salf1_callback_lane"] = lane_key
+    callback["_salf1_callback_generation"] = generation
+
+    if len(bot_callback_update_versions) > 10000:
+        stale_ids = [
+            key for key, value in bot_callback_update_versions.items()
+            if now - value[2] > 600
+        ]
+        for key in stale_ids:
+            bot_callback_update_versions.pop(key, None)
+        while len(bot_callback_update_versions) > 8000:
+            bot_callback_update_versions.pop(next(iter(bot_callback_update_versions)), None)
+
+    if len(bot_callback_render_versions) > 6000:
+        stale_lanes = [
+            key for key, value in bot_callback_render_versions.items()
+            if now - value[1] > 600
+        ]
+        for key in stale_lanes:
+            bot_callback_render_versions.pop(key, None)
+        while len(bot_callback_render_versions) > 5000:
+            bot_callback_render_versions.pop(next(iter(bot_callback_render_versions)), None)
+
+
+def claim_bot_fast_update(update_id: int) -> bool:
+    now = time.monotonic()
+    update_id = int(update_id)
+    seen_at = bot_fast_update_seen.get(update_id)
+    if seen_at is not None and now - seen_at <= 600:
+        return False
+    bot_fast_update_seen[update_id] = now
+
+    if len(bot_fast_update_seen) > 10000:
+        stale_ids = [
+            key for key, timestamp in bot_fast_update_seen.items()
+            if now - timestamp > 600
+        ]
+        for key in stale_ids:
+            bot_fast_update_seen.pop(key, None)
+        while len(bot_fast_update_seen) > 8000:
+            bot_fast_update_seen.pop(next(iter(bot_fast_update_seen)), None)
+    return True
+
+
+def is_fast_navigation_callback(callback_data: str) -> bool:
+    value = str(callback_data or "")
+    return value in FAST_NAV_CALLBACKS or value.startswith("salf_ping:")
+
+
+def is_fast_bot_command_message(message: dict) -> bool:
+    if not isinstance(message, dict):
+        return False
+    user = message.get("from") or {}
+    chat = message.get("chat") or {}
+    if not user.get("id") or not chat.get("id"):
+        return False
+
+    text = str(message.get("text") or "").strip()
+    if not text:
+        return False
+    normalized = normalize_text(text)
+
+    # Global panel and ping commands are handled before interactive input state.
+    if normalized in PANEL_COMMAND_ALIASES:
+        return True
+    command_token = normalized.split(maxsplit=1)[0].split("@", 1)[0] if normalized else ""
+    if command_token in {"پینگ", "ping"}:
+        return True
+
+    # Text entered into a pending wizard/form is data, not a new command.
+    if bot_states.get(int(user["id"])):
+        return False
+    return normalized in FAST_BOT_COMMANDS
+
+
 async def claim_bot_update():
     queue_pool = webhook_db_pool or db_pool
     if queue_pool is None:
@@ -9757,6 +9954,54 @@ async def bot_update_queue_loop(worker_id: int = 0):
             bot_update_active_ids.discard(update_id)
 
 
+async def process_callback_immediate(update_id: int, callback_query: dict):
+    started_at = time.monotonic()
+    try:
+        await process_callback(callback_query)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(
+            f"Telegram navigation callback failed: id={update_id} "
+            f"error={type(exc).__name__}: {str(exc)[:180]}"
+        )
+    finally:
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        bot_update_timing_samples.append({
+            "queue_wait_ms": 0.0,
+            "process_ms": round(elapsed_ms, 1),
+        })
+        if elapsed_ms >= 700:
+            print(
+                f"Telegram navigation processed: id={update_id} "
+                f"elapsed_ms={int(elapsed_ms)} queue_wait_ms=0 path=unqueued"
+            )
+
+
+async def process_bot_message_immediate(update_id: int, message: dict):
+    started_at = time.monotonic()
+    try:
+        await process_bot_message(message)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(
+            f"Telegram fast command failed: id={update_id} "
+            f"error={type(exc).__name__}: {str(exc)[:180]}"
+        )
+    finally:
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        bot_update_timing_samples.append({
+            "queue_wait_ms": 0.0,
+            "process_ms": round(elapsed_ms, 1),
+        })
+        if elapsed_ms >= 700:
+            print(
+                f"Telegram command processed: id={update_id} "
+                f"elapsed_ms={int(elapsed_ms)} queue_wait_ms=0 path=unqueued"
+            )
+
+
 def _track_bot_callback_task(task: asyncio.Task):
     bot_callback_tasks.add(task)
 
@@ -9927,16 +10172,39 @@ async def bot_webhook(request: web.Request):
         lane_key = bot_update_lane_key(update, update_id)
         callback = update.get("callback_query")
         if isinstance(callback, dict) and callback.get("id"):
-            # Acknowledge Telegram immediately, then bypass the general message queue.
+            # Acknowledge Telegram before dispatch. Pure navigation is not persisted
+            # or scheduled behind the durable update queue; state-changing callbacks
+            # retain their durable, ordered PostgreSQL fast path.
             callback["_salf1_callback_acknowledged"] = True
+            prepare_bot_callback_generation(update_id, lane_key, callback)
             _track_bot_callback_task(
                 asyncio.create_task(bot_answer_callback(str(callback["id"])))
             )
+
+            if is_fast_navigation_callback(callback.get("data")):
+                if claim_bot_fast_update(update_id):
+                    _track_bot_callback_task(
+                        asyncio.create_task(process_callback_immediate(update_id, callback))
+                    )
+                elapsed_ms = (time.monotonic() - request_start) * 1000
+                webhook_enqueue_samples.append(round(elapsed_ms, 1))
+                return web.json_response({"ok": True})
+
             _track_bot_callback_task(
                 asyncio.create_task(
                     process_callback_fast(update_id, update, lane_key)
                 )
             )
+            elapsed_ms = (time.monotonic() - request_start) * 1000
+            webhook_enqueue_samples.append(round(elapsed_ms, 1))
+            return web.json_response({"ok": True})
+
+        message = update.get("message")
+        if isinstance(message, dict) and is_fast_bot_command_message(message):
+            if claim_bot_fast_update(update_id):
+                _track_bot_callback_task(
+                    asyncio.create_task(process_bot_message_immediate(update_id, message))
+                )
             elapsed_ms = (time.monotonic() - request_start) * 1000
             webhook_enqueue_samples.append(round(elapsed_ms, 1))
             return web.json_response({"ok": True})
