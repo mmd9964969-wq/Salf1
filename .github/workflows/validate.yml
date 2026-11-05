@@ -25,3 +25,6 @@ jobs:
         run: npm run build
       - name: Compile Python worker
         run: python -m compileall -q telegram-worker
+
+      - name: Test weekly presence scheduler and Rich Message rendering
+        run: python -m unittest discover -s telegram-worker/tests -v
