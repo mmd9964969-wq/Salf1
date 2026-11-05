@@ -5744,54 +5744,210 @@ async def presence_create_custom_scenario(user_id,name,raw_steps):
     await presence_save_settings(user_id,cfg)
     await presence_apply_now(user_id,True)
 
-async def handle_presence_input_state(user_id:int,chat_id:int,text:str)->bool:
-    state_obj=bot_states.get(int(user_id))
-    if not isinstance(state_obj,dict): return False
-    state=str(state_obj.get("state") or "")
-    if not state.startswith("presence_"): return False
-    if normalize_text(text) in {"لغو","cancel","انصراف"}:
-        bot_states.pop(int(user_id),None)
-        await bot_send(chat_id,await presence_page(user_id))
+
+def _presence_v2_parse_clock(raw: str) -> str:
+    value = str(raw or "").strip().translate(str.maketrans(
+        "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"
+    ))
+    import re
+    match = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", value)
+    if not match:
+        raise ValueError("ساعت معتبر نیست. نمونه: 06:00")
+    return f"{int(match.group(1)):02d}:{match.group(2)}"
+
+
+def _presence_v2_weekday_order():
+    return [5, 6, 0, 1, 2, 3, 4]
+
+
+def presence_wizard_days_page(selected_days):
+    selected = {int(d) for d in (selected_days or []) if str(d).isdigit() and int(d) in range(7)}
+    buttons = [
+        rich_button(
+            PRESENCE_V2_DAYS[day] + (" · انتخاب‌شده" if day in selected else ""),
+            f"prs_wiz_day_{day}",
+            "success" if day in selected else None,
+        )
+        for day in _presence_v2_weekday_order()
+    ]
+    rows = [rich_button_row(*buttons[i:i + 2]) for i in range(0, len(buttons), 2)]
+    return f"""<b>Sᴀʟғ1 · برنامه هفتگی حضور</b>
+
+<blockquote><b>مرحله ۱ از ۴ · انتخاب روزها</b>
+روزهایی را انتخاب کنید که اکانت باید آنلاین بماند.
+روزهای انتخاب‌شده : <b>{len(selected)} از ۷</b></blockquote>
+
+{chr(10).join(rows)}
+{rich_button_row(rich_button("› انتخاب همه روزها", "prs_wiz_all", "success" if len(selected) == 7 else None))}
+{rich_button_row(rich_button("› ادامه", "prs_wiz_continue", "success"))}
+{rich_button_row(rich_button("‹ بازگشت", "prs_wiz_cancel", "primary"))}"""
+
+
+def presence_wizard_time_page(stage, start_time="", error=""):
+    if stage == "presence_wizard_start":
+        heading, instruction, progress, back = "ساعت شروع", "ساعت شروع بازه آنلاین‌بودن را وارد کنید.", "مرحله ۲ از ۴", "prs_wiz_edit_days"
+    else:
+        heading, instruction, progress, back = "ساعت پایان", "ساعت پایان را وارد کنید؛ پایان می‌تواند در روز بعد باشد.", "مرحله ۳ از ۴", "prs_wiz_back_start"
+    start_line = f"\nشروع انتخاب‌شده : <code>{html.escape(start_time)}</code>" if start_time else ""
+    error_line = f"\n\n<blockquote>{html.escape(error)}</blockquote>" if error else ""
+    return f"""<b>Sᴀʟғ1 · برنامه هفتگی حضور</b>
+
+<blockquote><b>{progress} · {heading}</b>
+{instruction}
+فرمت ۲۴ ساعته : <code>HH:MM</code>
+نمونه : <code>06:00</code>{start_line}{error_line}</blockquote>
+
+{rich_button_row(rich_button("‹ بازگشت", back, "primary"), rich_button("› لغو", "prs_wiz_cancel", "danger"))}"""
+
+
+def presence_wizard_confirm_page(days, start_time, end_time, timezone_name):
+    selected = {int(d) for d in (days or [])}
+    names = "، ".join(PRESENCE_V2_DAYS[d] for d in _presence_v2_weekday_order() if d in selected)
+    start_m = int(start_time[:2]) * 60 + int(start_time[3:])
+    end_m = int(end_time[:2]) * 60 + int(end_time[3:])
+    duration = (end_m - start_m) % 1440
+    hours, minutes = divmod(duration, 60)
+    duration_text = f"{hours} ساعت" + (f" و {minutes} دقیقه" if minutes else "")
+    end_note = "روز بعد" if end_m < start_m else "همان روز"
+    return f"""<b>Sᴀʟғ1 · تأیید برنامه حضور</b>
+
+<blockquote><b>مرحله ۴ از ۴ · بررسی نهایی</b>
+روزها : <b>{html.escape(names)}</b>
+ساعت شروع : <code>{start_time}</code>
+ساعت پایان : <code>{end_time}</code>
+پایان بازه : {end_note}
+مدت بازه : <b>{duration_text}</b>
+منطقه زمانی : <code>{html.escape(str(timezone_name))}</code></blockquote>
+
+{rich_button_row(rich_button("‹ بازگشت", "prs_wiz_back_end", "primary"), rich_button("› ثبت برنامه", "prs_wiz_confirm", "success"))}
+{rich_button_row(rich_button("› لغو", "prs_wiz_cancel", "danger"))}"""
+
+
+async def _presence_wizard_edit(user_id, text, fallback_chat_id=None):
+    state = bot_states.get(int(user_id))
+    if isinstance(state, dict):
+        chat_id = state.get("panel_chat_id") or fallback_chat_id
+        message_id = state.get("panel_message_id")
+        if chat_id and message_id:
+            result = await bot_edit(int(chat_id), int(message_id), text)
+            if isinstance(result, dict) and result.get("ok"):
+                return result
+        if chat_id:
+            return await bot_send(int(chat_id), text)
+    if fallback_chat_id:
+        return await bot_send(int(fallback_chat_id), text)
+    return None
+
+
+async def handle_presence_input_state(user_id: int, chat_id: int, text: str) -> bool:
+    state_obj = bot_states.get(int(user_id))
+    if not isinstance(state_obj, dict):
+        return False
+    state = str(state_obj.get("state") or "")
+    if not state.startswith("presence_"):
+        return False
+
+    if normalize_text(text) in {"لغو", "cancel", "انصراف"}:
+        bot_states.pop(int(user_id), None)
+        if state.startswith("presence_wizard_"):
+            await _presence_wizard_edit(user_id, await presence_page(user_id), chat_id)
+        else:
+            await bot_send(chat_id, await presence_page(user_id))
         return True
+
     try:
-        if state=="presence_target_add":
-            await presence_target_add(user_id,text); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_targets_page(user_id)); return True
-        if state in {"presence_schedule_add_online","presence_schedule_add_activity"}:
-            p=str(text).strip().split()
-            if len(p)!=2 or "-" not in p[1]: raise ValueError("فرمت: شنبه 08:00-12:00")
-            st,en=p[1].split("-",1)
-            await presence_add_schedule_window(user_id,"online" if state.endswith("_online") else "activity",p[0],st,en)
-            bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_schedule_page(user_id,"online" if state.endswith("_online") else "activity")); return True
-        if state=="presence_exception_add":
-            await presence_add_exception(user_id,text); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_exceptions_page(user_id)); return True
-        if state=="presence_timezone_custom":
-            await presence_set_timezone(user_id,text); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_timezone_page(user_id)); return True
-        if state=="presence_profile_save":
-            await presence_profile_save(user_id,str(text).strip()); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_profiles_page(user_id)); return True
-        if state=="presence_scenario_name":
-            name=str(text).strip()
-            if not name: raise ValueError("نام سناریو را ارسال کنید.")
-            bot_states[user_id]={"state":"presence_scenario_steps","name":name}
-            await bot_send(chat_id,"""<b>Sᴀʟғ1 · ساخت سناریو</b>
+        if state == "presence_wizard_start":
+            start_time = _presence_v2_parse_clock(text)
+            state_obj["start"] = start_time
+            state_obj["state"] = "presence_wizard_end"
+            bot_states[int(user_id)] = state_obj
+            await _presence_wizard_edit(user_id, presence_wizard_time_page("presence_wizard_end", start_time), chat_id)
+            return True
+
+        if state == "presence_wizard_end":
+            end_time = _presence_v2_parse_clock(text)
+            start_time = str(state_obj.get("start") or "")
+            if end_time == start_time:
+                raise ValueError("ساعت شروع و پایان یکسان معتبر نیست. برای حضور ۲۴ ساعته حالت همیشه آنلاین را انتخاب کنید.")
+            state_obj["end"] = end_time
+            state_obj["state"] = "presence_wizard_confirm"
+            bot_states[int(user_id)] = state_obj
+            config = await presence_get_settings(user_id)
+            await _presence_wizard_edit(
+                user_id,
+                presence_wizard_confirm_page(state_obj.get("days") or [], start_time, end_time, config.get("timezone") or "UTC"),
+                chat_id,
+            )
+            return True
+
+        if state == "presence_target_add":
+            await presence_target_add(user_id, text)
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_targets_page(user_id))
+            return True
+
+        if state in {"presence_schedule_add_online", "presence_schedule_add_activity"}:
+            parts = str(text).strip().split()
+            if len(parts) != 2 or "-" not in parts[1]:
+                raise ValueError("فرمت: شنبه 08:00-12:00")
+            start_time, end_time = parts[1].split("-", 1)
+            engine = "online" if state.endswith("_online") else "activity"
+            await presence_add_schedule_window(user_id, engine, parts[0], _presence_v2_parse_clock(start_time), _presence_v2_parse_clock(end_time))
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_schedule_page(user_id, engine))
+            return True
+
+        if state == "presence_exception_add":
+            await presence_add_exception(user_id, text)
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_exceptions_page(user_id))
+            return True
+
+        if state == "presence_timezone_custom":
+            await presence_set_timezone(user_id, text)
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_timezone_page(user_id))
+            return True
+
+        if state == "presence_profile_save":
+            await presence_profile_save(user_id, str(text).strip())
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_profiles_page(user_id))
+            return True
+
+        if state == "presence_scenario_name":
+            name = str(text).strip()
+            if not name:
+                raise ValueError("نام سناریو را ارسال کنید.")
+            bot_states[int(user_id)] = {"state": "presence_scenario_steps", "name": name}
+            await bot_send(chat_id, """<b>Sᴀʟғ1 · ساخت سناریو</b>
 
 ترتیب Actionها را بفرستید:
 <code>typing:8-15,record_audio:10-20,typing:5-10</code>""")
             return True
-        if state=="presence_scenario_steps":
-            await presence_create_custom_scenario(user_id,str(state_obj.get("name") or "سناریو"),text)
-            bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_scenarios_page(user_id)); return True
+
+        if state == "presence_scenario_steps":
+            await presence_create_custom_scenario(user_id, str(state_obj.get("name") or "سناریو"), text)
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_scenarios_page(user_id))
+            return True
     except ValueError as exc:
-        await bot_send(chat_id,f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(str(exc))}</blockquote>")
+        if state.startswith("presence_wizard_"):
+            await _presence_wizard_edit(
+                user_id,
+                presence_wizard_time_page(state, str(state_obj.get("start") or ""), error=str(exc)),
+                chat_id,
+            )
+        else:
+            await bot_send(chat_id, f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(str(exc))}</blockquote>")
         return True
     except Exception as exc:
-        code=_presence_v2_error_code(exc)
-        await bot_send(chat_id,f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(_presence_v2_error_text(code))}</blockquote>")
+        error = _presence_v2_error_text(_presence_v2_error_code(exc))
+        message = f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(error)}</blockquote>"
+        if state.startswith("presence_wizard_"):
+            await _presence_wizard_edit(user_id, message, chat_id)
+        else:
+            await bot_send(chat_id, message)
         return True
     return False
 
