@@ -9761,54 +9761,52 @@ async def process_callback_fast(update_id: int, update: dict, lane_key: str):
 
         try:
             async with queue_pool.acquire(timeout=2.0) as conn:
-                async with conn.transaction():
-                    earlier_pending = await conn.fetchval(
-                        """
+                claimed = await conn.fetchrow(
+                    """
+                    with earlier as (
                         select exists(
                             select 1
                             from salf1_bot_update_queue
-                            where lane_key = $1
-                              and update_id < $2
+                            where lane_key = $3
+                              and update_id < $1
                               and status in ('pending', 'processing')
-                        )
-                        """,
-                        lane_key,
-                        int(update_id),
+                        ) as has_earlier
                     )
+                    insert into salf1_bot_update_queue
+                        (update_id, payload, status, attempts, locked_at, lane_key)
+                    select
+                        $1,
+                        $2::jsonb,
+                        case when earlier.has_earlier then 'pending' else 'processing' end,
+                        case when earlier.has_earlier then 0 else 1 end,
+                        case when earlier.has_earlier then null else now() end,
+                        $3
+                    from earlier
+                    on conflict (update_id) do update
+                    set status = excluded.status,
+                        attempts = case
+                            when excluded.status = 'processing'
+                                then salf1_bot_update_queue.attempts + 1
+                            else salf1_bot_update_queue.attempts
+                        end,
+                        locked_at = excluded.locked_at,
+                        last_error = case
+                            when excluded.status = 'processing' then null
+                            else salf1_bot_update_queue.last_error
+                        end
+                    where salf1_bot_update_queue.status = 'pending'
+                      and salf1_bot_update_queue.available_at <= now()
+                    returning status
+                    """,
+                    int(update_id),
+                    payload_json,
+                    lane_key,
+                )
 
-                    if earlier_pending:
-                        await conn.execute(
-                            """
-                            insert into salf1_bot_update_queue
-                                (update_id, payload, lane_key)
-                            values ($1, $2::jsonb, $3)
-                            on conflict (update_id) do nothing
-                            """,
-                            int(update_id),
-                            payload_json,
-                            lane_key,
-                        )
-                        bot_update_wakeup.set()
-                        return
-
-                    claimed = await conn.fetchrow(
-                        """
-                        insert into salf1_bot_update_queue
-                            (update_id, payload, status, attempts, locked_at, lane_key)
-                        values ($1, $2::jsonb, 'processing', 1, now(), $3)
-                        on conflict (update_id) do update
-                        set status = 'processing',
-                            attempts = salf1_bot_update_queue.attempts + 1,
-                            locked_at = now(),
-                            last_error = null
-                        where salf1_bot_update_queue.status = 'pending'
-                          and salf1_bot_update_queue.available_at <= now()
-                        returning update_id
-                        """,
-                        int(update_id),
-                        payload_json,
-                        lane_key,
-                    )
+            # Earlier clicks stay ahead in their panel lane; workers process them first.
+            if claimed and claimed["status"] == "pending":
+                bot_update_wakeup.set()
+                return
 
             # A duplicate Telegram delivery is already completed or being handled.
             if not claimed:
