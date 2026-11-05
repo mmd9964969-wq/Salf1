@@ -9743,7 +9743,10 @@ def claim_bot_fast_update(update_id: int) -> bool:
 
 def is_fast_navigation_callback(callback_data: str) -> bool:
     value = str(callback_data or "")
-    return value in FAST_NAV_CALLBACKS or value.startswith("salf_ping:")
+    return (
+        value in FAST_NAV_CALLBACKS
+        or value.startswith(("salf_ping:", "package_", "payment_"))
+    )
 
 
 def is_fast_bot_command_message(message: dict) -> bool:
