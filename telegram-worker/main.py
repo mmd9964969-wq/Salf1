@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from urllib.parse import urlparse
 import base64
 import hashlib
@@ -389,6 +390,9 @@ presence_watchdog_last_check: dict[str, float] = {}
 bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
+SETTINGS_CACHE_TTL_SECONDS = 3.0
+clock_settings_cache: dict[int, tuple[float, dict]] = {}
+presence_settings_cache: dict[int, tuple[float, dict]] = {}
 session_runtime_lock_connections: dict[str, object] = {}
 bot_update_wakeup = asyncio.Event()
 BOT_UPDATE_MAX_ATTEMPTS = 8
@@ -415,6 +419,24 @@ def percentile_value(values, fraction: float):
 
 def format_latency_ms(value):
     return f"{float(value):.1f} ms" if value is not None else "در دسترس نیست"
+
+
+def _settings_cache_get(cache: dict, user_id: int):
+    cached = cache.get(int(user_id))
+    if not cached:
+        return None
+    expires_at, value = cached
+    if expires_at <= time.monotonic():
+        cache.pop(int(user_id), None)
+        return None
+    return copy.deepcopy(value)
+
+
+def _settings_cache_set(cache: dict, user_id: int, value: dict):
+    cache[int(user_id)] = (
+        time.monotonic() + SETTINGS_CACHE_TTL_SECONDS,
+        copy.deepcopy(value),
+    )
 
 
 def configured():
@@ -4621,6 +4643,10 @@ async def clock_record(user_id: int):
     )
 
 async def clock_get_settings(user_id: int):
+    cached = _settings_cache_get(clock_settings_cache, user_id)
+    if cached is not None:
+        return cached
+
     defaults = clock_default_config()
     row = await clock_record(user_id)
     if not row:
@@ -4634,9 +4660,12 @@ async def clock_get_settings(user_id: int):
                 int(user_id),
                 json.dumps(defaults, ensure_ascii=False),
             )
+        _settings_cache_set(clock_settings_cache, user_id, defaults)
         return defaults
+
     stored = _clock_json(row["config"], {})
     defaults.update(stored)
+    _settings_cache_set(clock_settings_cache, user_id, defaults)
     return defaults
 
 async def clock_save_settings(user_id: int, config: dict):
@@ -4655,6 +4684,7 @@ async def clock_save_settings(user_id: int, config: dict):
         int(user_id),
         json.dumps(clean, ensure_ascii=False),
     )
+    _settings_cache_set(clock_settings_cache, user_id, clean)
 
 def _clock_digits(value: str, mode: str) -> str:
     maps = {
@@ -5243,6 +5273,10 @@ async def presence_record(user_id: int):
     )
 
 async def presence_get_settings(user_id: int):
+    cached = _settings_cache_get(presence_settings_cache, user_id)
+    if cached is not None:
+        return cached
+
     row = await presence_record(user_id)
     if not row:
         cfg = _presence_v2_defaults()
@@ -5257,8 +5291,12 @@ async def presence_get_settings(user_id: int):
                 "insert into salf1_presence_settings(customer_id,config) values($1,$2::jsonb) on conflict do nothing",
                 int(user_id), json.dumps(cfg, ensure_ascii=False)
             )
+        _settings_cache_set(presence_settings_cache, user_id, cfg)
         return cfg
-    return _presence_v2_normalize(_presence_json(row["config"], {}))
+
+    cfg = _presence_v2_normalize(_presence_json(row["config"], {}))
+    _settings_cache_set(presence_settings_cache, user_id, cfg)
+    return cfg
 
 async def _presence_v2_sync_relational(user_id: int, config: dict):
     if db_pool is None:
@@ -5350,6 +5388,7 @@ async def presence_save_settings(user_id: int, config: dict):
            on conflict(customer_id) do update set config=excluded.config,updated_at=now()""",
         int(user_id), json.dumps(clean, ensure_ascii=False)
     )
+    _settings_cache_set(presence_settings_cache, user_id, clean)
     try:
         await _presence_v2_sync_relational(user_id, clean)
     except Exception as exc:
