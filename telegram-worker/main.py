@@ -154,7 +154,25 @@ def rich_message_html(text: str) -> str:
     if not source:
         source = "<b>SALF1</b>"
 
-    lines = source.splitlines()
+    raw_lines = source.splitlines()
+    lines = []
+    index = 0
+    while index < len(raw_lines):
+        current = raw_lines[index]
+        if current.strip().startswith("<blockquote>") and not current.strip().endswith("</blockquote>"):
+            quote_lines = [current]
+            index += 1
+            while index < len(raw_lines):
+                quote_lines.append(raw_lines[index])
+                if raw_lines[index].strip().endswith("</blockquote>"):
+                    break
+                index += 1
+            if not quote_lines[-1].strip().endswith("</blockquote>"):
+                quote_lines.append("</blockquote>")
+            lines.append("\n".join(quote_lines))
+        else:
+            lines.append(current)
+        index += 1
     # Make the top-level SALF1 page heading establish a consistent minimum
     # intrinsic width. No visible separator/rail is added.
     if lines and RICH_NATIVE_WIDTH_PAD not in lines[0] and lines[0].lstrip().startswith("<b>Sᴀʟғ1"):
@@ -3439,10 +3457,6 @@ async def handle_self_command(event, customer_id: str, text: str):
                 clock_page_markup("schedule", config),
             )
             return
-
-    if normalized in {"وضعیت حضور", "حضور", "presence"}:
-        await bot_send(chat["id"], await presence_page(user_id))
-        return True
 
     if normalized in {"وضعیت حضور", "حضور", "presence"}:
         await bot_send(chat["id"], await presence_page(user_id))
