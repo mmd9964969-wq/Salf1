@@ -395,6 +395,8 @@ BOT_UPDATE_MAX_ATTEMPTS = 8
 BOT_UPDATE_WORKERS = max(1, min(4, int(os.getenv("SALF1_BOT_UPDATE_WORKERS", "4"))))
 PROCESS_STARTED_AT = time.time()
 bot_update_active_ids: set[int] = set()
+bot_callback_lane_locks: dict[str, asyncio.Lock] = {}
+bot_callback_tasks: set[asyncio.Task] = set()
 ping_response_samples = deque(maxlen=5)
 
 # Bounded, process-local latency samples. These are diagnostic only and never
@@ -6164,8 +6166,10 @@ async def handle_presence_input_state(user_id:int,chat_id:int,text:str)->bool:
     return False
 
 async def presence_page(user_id):
-    cfg=await presence_get_settings(user_id)
-    row=await db_user(str(user_id))
+    cfg, row = await asyncio.gather(
+        presence_get_settings(user_id),
+        db_user(str(user_id)),
+    )
     r=presence_runtime_stats.setdefault(str(user_id),{})
     current=[v for k,v in presence_current_actions.items() if k.startswith(f"{int(user_id)}:")]
     item=current[0] if current else None
@@ -6208,9 +6212,11 @@ Heartbeat : {"سالم" if hb_ok else ("منتظر" if cfg.get("activity_enabled
 
 
 async def salf_settings_text(user_id: int):
-    row = await db_user(str(user_id))
-    clock_config = await clock_get_settings(user_id)
-    presence_config = await presence_get_settings(user_id)
+    row, clock_config, presence_config = await asyncio.gather(
+        db_user(str(user_id)),
+        clock_get_settings(user_id),
+        presence_get_settings(user_id),
+    )
 
     connected = bool(row["account_connected"]) if row else False
     enabled = bool(row["salf_enabled"]) if row else False
@@ -6280,8 +6286,10 @@ def self_features_markup():
     ]}
 
 async def self_features_text(user_id: int):
-    clock_config = await clock_get_settings(user_id)
-    presence_config = await presence_get_settings(user_id)
+    clock_config, presence_config = await asyncio.gather(
+        clock_get_settings(user_id),
+        presence_get_settings(user_id),
+    )
     clock_enabled = bool(clock_config.get("enabled"))
     presence_enabled = bool(
         presence_config.get("online_enabled") or presence_config.get("activity_enabled")
@@ -6323,8 +6331,10 @@ async def self_features_text(user_id: int):
 """
 
 async def clock_settings_text(user_id: int):
-    config = await clock_get_settings(user_id)
-    row = await clock_record(user_id)
+    config, row = await asyncio.gather(
+        clock_get_settings(user_id),
+        clock_record(user_id),
+    )
     stats = _clock_json(row["stats"], {}) if row else {}
     time_text, _ = clock_format_time(datetime.now(timezone.utc), config)
     destinations = sum(
@@ -6368,8 +6378,10 @@ Bio : {"فعال" if config.get("destination_bio") else "خاموش"}
 ابتدا منطقه زمانی را انتخاب کنید، سپس قالب و فونت را تنظیم کنید. بعد از آن مقصدهای نمایش ساعت را فعال کنید. برای ساخت متن دلخواه از «متن هوشمند» استفاده کنید و در صورت نیاز برای ساعت فعال و غیرفعال شدن در زمان مشخص، «زمان‌بندی» را تنظیم کنید."""
 
 async def clock_page_text(user_id: int, page: str):
-    config = await clock_get_settings(user_id)
-    row = await clock_record(user_id)
+    config, row = await asyncio.gather(
+        clock_get_settings(user_id),
+        clock_record(user_id),
+    )
     stats = _clock_json(row["stats"], {}) if row else {}
     now = datetime.now(timezone.utc)
     time_text, local = clock_format_time(now, config)
@@ -6670,22 +6682,38 @@ async def clock_save_profile(user_id: int):
     await clock_save_settings(user_id, config)
 
 async def salf_panel_text(user_id: int):
-    row = await db_user(str(user_id))
-    health = await account_health_snapshot(str(user_id), force=False)
+    customer_id = str(user_id)
+    row = await db_user(customer_id)
+    health = account_health_cache.get(customer_id) or {}
+    presence = bot_presence_cache.get(customer_id) or {}
 
-    connected = bool(health.get("account_connected"))
+    client = clients.get(customer_id)
+    connected = bool(
+        (client and client.is_connected())
+        or (row and row["account_connected"])
+    )
     enabled = bool(row["salf_enabled"]) if row else False
-    unlimited = bool(row["unlimited"]) if row and "unlimited" in row.keys() else await is_owner_account(
-        str(user_id),
-        health.get("username"),
+    username = health.get("username") or (row["username"] if row else None)
+    unlimited = (
+        bool(row["unlimited"])
+        if row and "unlimited" in row.keys()
+        else owner_unlimited(customer_id, username)
     )
     balance = int(row["tron_balance"]) if row else 0
 
     balance_text = UNLIMITED_TRON_DISPLAY if unlimited else f"{balance:,} جم"
+    presence_state = (
+        health.get("bot_presence")
+        or presence.get("state")
+        or (row["bot_presence_state"] if row and "bot_presence_state" in row.keys() else "unknown")
+    )
     bot_presence = {
         "present": "● حاضر",
         "absent": "○ حاضر نیست",
-    }.get(health.get("bot_presence"), "■ در حال بررسی")
+    }.get(presence_state, "■ در حال بررسی")
+    health_state = health.get("state") or (
+        "healthy" if connected and presence_state == "present" else "degraded"
+    )
 
     return f"""<b>Sᴀʟғ1 · Cᴏᴍᴍᴀɴᴅ Cᴇɴᴛᴇʀ</b>
 
@@ -6697,7 +6725,7 @@ async def salf_panel_text(user_id: int):
 پلن : {"نامحدود" if unlimited else "رایگان"}
 زمان باقی‌مانده : {"∞" if unlimited else trial_remaining_text(row)}
 موجودی : {balance_text}
-وضعیت سیستم : {"پایدار" if health.get("state") == "healthy" else "در حال بررسی"}
+وضعیت سیستم : {"پایدار" if health_state == "healthy" else "در حال بررسی"}
 وضعیت Worker : آنلاین
 مصرف فعال : {"∞ / بدون کسر" if unlimited else "1 جم / دقیقه"}
 
@@ -9662,6 +9690,148 @@ async def bot_update_queue_loop(worker_id: int = 0):
             bot_update_active_ids.discard(update_id)
 
 
+def _track_bot_callback_task(task: asyncio.Task):
+    bot_callback_tasks.add(task)
+
+    def _finished(done_task: asyncio.Task):
+        bot_callback_tasks.discard(done_task)
+        if done_task.cancelled():
+            return
+        try:
+            error = done_task.exception()
+        except asyncio.CancelledError:
+            return
+        if error:
+            print(f"Telegram callback background task failed: {type(error).__name__}: {str(error)[:180]}")
+
+    task.add_done_callback(_finished)
+    return task
+
+
+async def process_callback_fast(update_id: int, update: dict, lane_key: str):
+    """Fast, ordered callback path with durable PostgreSQL recovery."""
+    queue_pool = webhook_db_pool or db_pool
+    if queue_pool is None:
+        print(f"Telegram callback fast path unavailable: id={update_id} database_pool_missing")
+        return
+
+    lock = bot_callback_lane_locks.setdefault(lane_key, asyncio.Lock())
+    async with lock:
+        started_at = time.monotonic()
+        payload_json = json.dumps(update, ensure_ascii=False, separators=(",", ":"))
+
+        try:
+            async with queue_pool.acquire(timeout=2.0) as conn:
+                async with conn.transaction():
+                    earlier_pending = await conn.fetchval(
+                        """
+                        select exists(
+                            select 1
+                            from salf1_bot_update_queue
+                            where lane_key = $1
+                              and update_id < $2
+                              and status in ('pending', 'processing')
+                        )
+                        """,
+                        lane_key,
+                        int(update_id),
+                    )
+
+                    if earlier_pending:
+                        await conn.execute(
+                            """
+                            insert into salf1_bot_update_queue
+                                (update_id, payload, lane_key)
+                            values ($1, $2::jsonb, $3)
+                            on conflict (update_id) do nothing
+                            """,
+                            int(update_id),
+                            payload_json,
+                            lane_key,
+                        )
+                        bot_update_wakeup.set()
+                        return
+
+                    claimed = await conn.fetchrow(
+                        """
+                        insert into salf1_bot_update_queue
+                            (update_id, payload, status, attempts, locked_at, lane_key)
+                        values ($1, $2::jsonb, 'processing', 1, now(), $3)
+                        on conflict (update_id) do update
+                        set status = 'processing',
+                            attempts = salf1_bot_update_queue.attempts + 1,
+                            locked_at = now(),
+                            last_error = null
+                        where salf1_bot_update_queue.status = 'pending'
+                          and salf1_bot_update_queue.available_at <= now()
+                        returning update_id
+                        """,
+                        int(update_id),
+                        payload_json,
+                        lane_key,
+                    )
+
+            # A duplicate Telegram delivery is already completed or being handled.
+            if not claimed:
+                return
+
+            callback = update.get("callback_query")
+            if not isinstance(callback, dict):
+                raise ValueError("Callback update payload is invalid")
+
+            await process_callback(callback)
+
+            await queue_pool.execute(
+                """
+                update salf1_bot_update_queue
+                set status = 'done',
+                    locked_at = null,
+                    last_error = null,
+                    completed_at = now()
+                where update_id = $1
+                """,
+                int(update_id),
+            )
+
+            elapsed_ms = (time.monotonic() - started_at) * 1000
+            bot_update_timing_samples.append({
+                "queue_wait_ms": 0.0,
+                "process_ms": round(elapsed_ms, 1),
+            })
+            if elapsed_ms >= 700:
+                print(
+                    f"Telegram callback processed: id={update_id} "
+                    f"elapsed_ms={int(elapsed_ms)} path=fast"
+                )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            try:
+                await queue_pool.execute(
+                    """
+                    update salf1_bot_update_queue
+                    set status = 'pending',
+                        available_at = now() + interval '1 second',
+                        locked_at = null,
+                        last_error = left($2, 1200)
+                    where update_id = $1
+                    """,
+                    int(update_id),
+                    f"{type(exc).__name__}: {exc}",
+                )
+            except Exception as queue_exc:
+                print(
+                    f"Telegram callback recovery write failed: id={update_id} "
+                    f"error={type(queue_exc).__name__}"
+                )
+            bot_update_wakeup.set()
+            print(
+                f"Telegram fast callback failed: id={update_id} "
+                f"error={type(exc).__name__}: {str(exc)[:180]}"
+            )
+
+
 async def bot_webhook(request: web.Request):
     request_start = time.monotonic()
     if not WEBHOOK_SECRET:
@@ -9692,9 +9862,19 @@ async def bot_webhook(request: web.Request):
         lane_key = bot_update_lane_key(update, update_id)
         callback = update.get("callback_query")
         if isinstance(callback, dict) and callback.get("id"):
-            # Acknowledge the click immediately; the durable queue still controls execution.
+            # Acknowledge Telegram immediately, then bypass the general message queue.
             callback["_salf1_callback_acknowledged"] = True
-            asyncio.create_task(bot_answer_callback(str(callback["id"])))
+            _track_bot_callback_task(
+                asyncio.create_task(bot_answer_callback(str(callback["id"])))
+            )
+            _track_bot_callback_task(
+                asyncio.create_task(
+                    process_callback_fast(update_id, update, lane_key)
+                )
+            )
+            elapsed_ms = (time.monotonic() - request_start) * 1000
+            webhook_enqueue_samples.append(round(elapsed_ms, 1))
+            return web.json_response({"ok": True})
 
         payload_json = json.dumps(update, ensure_ascii=False, separators=(",", ":"))
         queue_pool = webhook_db_pool or db_pool
