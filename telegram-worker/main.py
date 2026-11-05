@@ -156,7 +156,25 @@ def rich_message_html(text: str) -> str:
     if not source:
         source = "<b>Fᴀʀᴠᴀʜʀ Sᴇʟғ</b>"
 
-    lines = source.splitlines()
+    raw_lines = source.splitlines()
+    lines = []
+    line_index = 0
+    while line_index < len(raw_lines):
+        current_line = raw_lines[line_index]
+        if current_line.strip().startswith("<blockquote>") and not current_line.strip().endswith("</blockquote>"):
+            quote_lines = [current_line]
+            line_index += 1
+            while line_index < len(raw_lines):
+                quote_lines.append(raw_lines[line_index])
+                if raw_lines[line_index].strip().endswith("</blockquote>"):
+                    break
+                line_index += 1
+            if not quote_lines[-1].strip().endswith("</blockquote>"):
+                quote_lines.append("</blockquote>")
+            lines.append("\n".join(quote_lines))
+        else:
+            lines.append(current_line)
+        line_index += 1
     # Make the top-level SALF1 page heading establish a consistent minimum
     # intrinsic width. No visible separator/rail is added.
     if lines and RICH_NATIVE_WIDTH_PAD not in lines[0] and lines[0].lstrip().startswith("<b>Fᴀʀᴠᴀʜʀ"):
@@ -416,6 +434,8 @@ presence_destination_locks: dict[str, asyncio.Lock] = {}
 presence_current_actions: dict[str, dict] = {}
 presence_rate_next: dict[str, float] = {}
 presence_watchdog_last_check: dict[str, float] = {}
+presence_apply_locks: dict[str, asyncio.Lock] = {}
+presence_unavailable_until: dict[str, float] = {}
 bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
@@ -2811,6 +2831,9 @@ PANEL_CALLBACKS = {
     "prs_advanced",
     "prs_destinations",
     "prs_scenarios",
+    "prs_wiz_all", "prs_wiz_continue", "prs_wiz_cancel",
+    "prs_wiz_edit_days", "prs_wiz_back_start", "prs_wiz_back_end",
+    "prs_wiz_confirm",
 }
 PANEL_DEDUP_TTL_SECONDS = 120.0
 
@@ -2821,6 +2844,9 @@ FAST_NAV_CALLBACKS = frozenset({
     "panel_protection", "panel_tools", "panel_system",
     "self_features", "self_status_center",
     "presence", "prs_refresh", "prs_online", "prs_online_refresh",
+    "prs_online_schedule", "prs_online_always", "prs_online_manual",
+    "prs_online_stop", "prs_wiz_all", "prs_wiz_continue", "prs_wiz_cancel",
+    "prs_wiz_edit_days", "prs_wiz_back_start", "prs_wiz_back_end",
     "prs_activity", "prs_activity_refresh", "prs_timezone", "prs_schedule",
     "prs_schedule_online", "prs_schedule_activity",
     "prs_schedule_refresh_online", "prs_schedule_refresh_activity",
@@ -3316,9 +3342,6 @@ async def handle_self_command(event, customer_id: str, text: str):
     if await handle_presence_input_state(user_id, int(chat["id"]), text):
         return True
 
-    if await handle_presence_input_state(user_id, int(chat["id"]), text):
-        return True
-
     current_state = bot_states.get(user_id)
     if isinstance(current_state, dict):
         state = str(current_state.get("state") or "")
@@ -3590,10 +3613,6 @@ async def handle_self_command(event, customer_id: str, text: str):
                 clock_page_markup("schedule", config),
             )
             return
-
-    if normalized in {"وضعیت حضور", "حضور", "presence"}:
-        await bot_send(chat["id"], await presence_page(user_id))
-        return True
 
     if normalized in {"وضعیت حضور", "حضور", "presence"}:
         await bot_send(chat["id"], await presence_page(user_id))
@@ -5352,6 +5371,31 @@ async def init_presence_settings_table():
         );
     """)
 
+async def presence_restore_runtime_state():
+    if db_pool is None:
+        return
+    rows = await db_pool.fetch(
+        """select customer_id,online_state,activity_state,active_action,
+                  destination_peer,heartbeat_at,last_update_at,last_error_code
+           from salf1_presence_runtime_state"""
+    )
+    for row in rows:
+        uid = str(int(row["customer_id"]))
+        state = str(row["online_state"] or "unknown")
+        presence_runtime_stats[uid] = {
+            "online_state": state,
+            "activity_state": str(row["activity_state"] or "idle"),
+            "active_action": str(row["active_action"] or ""),
+            "destination_peer": str(row["destination_peer"] or ""),
+            "heartbeat_at": row["heartbeat_at"],
+            "last_update_at": row["last_update_at"],
+            "last_error_code": str(row["last_error_code"] or ""),
+        }
+        presence_last_online_state[uid] = state == "online"
+        presence_next_online[uid] = 0.0
+    print(f"Presence runtime restored: {len(rows)} account(s).")
+
+
 async def presence_record(user_id: int):
     if db_pool is None:
         return None
@@ -5484,40 +5528,75 @@ async def presence_save_settings(user_id: int, config: dict):
 
 def _presence_v2_time_active(value, start, end):
     try:
-        st=datetime.strptime(str(start),"%H:%M").time()
-        en=datetime.strptime(str(end),"%H:%M").time()
-    except ValueError:
+        st = datetime.strptime(str(start), "%H:%M").time()
+        en = datetime.strptime(str(end), "%H:%M").time()
+    except (TypeError, ValueError):
         return False
-    return (st <= value <= en) if st <= en else (value >= st or value <= en)
+    if st == en:
+        return False
+    return (st <= value < en) if st < en else (value >= st or value < en)
+
+
+def _presence_v2_window_active(local, window):
+    try:
+        start = datetime.strptime(str(window.get("start") or ""), "%H:%M").time()
+        end = datetime.strptime(str(window.get("end") or ""), "%H:%M").time()
+    except (TypeError, ValueError):
+        return False
+    if start == end:
+        return False
+    days = {
+        int(day) for day in (window.get("days") or [])
+        if str(day).isdigit() and int(day) in range(7)
+    }
+    if not days:
+        return False
+    weekday, current_time = local.weekday(), local.time()
+    if start < end:
+        return weekday in days and start <= current_time < end
+    if weekday in days and current_time >= start:
+        return True
+    return ((weekday - 1) % 7) in days and current_time < end
+
 
 def _presence_v2_engine_active(config, engine, local):
-    enabled = bool(config.get("online_enabled" if engine=="online" else "activity_enabled"))
+    enabled = bool(config.get("online_enabled" if engine == "online" else "activity_enabled"))
     if not enabled:
         return False
-    item = next(
-        (x for x in config.get("exceptions") or []
-         if str(x.get("date"))==local.date().isoformat()
-         and str(x.get("engine") or "all") in {"all",engine}),
-        None
+    exception = next(
+        (
+            item for item in (config.get("exceptions") or [])
+            if str(item.get("date")) == local.date().isoformat()
+            and str(item.get("engine") or "all") in {"all", engine}
+        ),
+        None,
     )
-    if item:
-        mode=str(item.get("mode") or "off")
-        if mode=="off": return False
-        if mode=="on": return True
-        if mode=="window":
-            return _presence_v2_time_active(local.time(),item.get("start","00:00"),item.get("end","23:59"))
-    if engine=="online" and str(config.get("online_mode") or "always") in {"always","manual"}:
-        return True
-    schedule_enabled=bool(config.get("online_schedule_enabled" if engine=="online" else "activity_schedule_enabled"))
-    if not schedule_enabled:
-        return True
-    windows=config.get("online_windows" if engine=="online" else "activity_windows") or []
-    for w in windows:
-        if not bool(w.get("enabled",True)): continue
-        days={int(x) for x in w.get("days") or [] if str(x).isdigit() and int(x) in range(7)}
-        if local.weekday() in days and _presence_v2_time_active(local.time(),w.get("start","00:00"),w.get("end","23:59")):
+    if exception:
+        mode = str(exception.get("mode") or "off")
+        if mode == "off":
+            return False
+        if mode == "on":
             return True
-    return False
+        if mode == "window":
+            return _presence_v2_time_active(
+                local.time(), exception.get("start", "00:00"), exception.get("end", "23:59")
+            )
+    if engine == "online":
+        mode = str(config.get("online_mode") or "always")
+        if mode in {"always", "manual"}:
+            return True
+        if mode != "schedule":
+            return False
+    schedule_enabled = bool(
+        config.get("online_schedule_enabled" if engine == "online" else "activity_schedule_enabled")
+    )
+    if not schedule_enabled:
+        return engine != "online"
+    windows = config.get("online_windows" if engine == "online" else "activity_windows") or []
+    return any(
+        bool(window.get("enabled", True)) and _presence_v2_window_active(local, window)
+        for window in windows
+    )
 
 def _presence_v2_scenario(config, target=None):
     sid=str((target or {}).get("scenario") or config.get("active_scenario") or "preset_normal")
@@ -5624,16 +5703,32 @@ async def presence_mark_offline(user_id: int):
 
 
 async def presence_stop_all(user_id, mark_offline=True):
-    prefix=f"{int(user_id)}:"
-    for key in [k for k in list(presence_activity_tasks) if k.startswith(prefix)]:
-        await _presence_v2_stop_task(user_id,key)
-    r=presence_runtime_stats.setdefault(str(user_id),{})
-    r.update({"activity_state":"idle","active_action":"","destination_peer":"","heartbeat_at":None,"online_state":"offline","last_update_at":datetime.now(timezone.utc)})
-    if mark_offline and client and client.is_connected():
-        try:
-            if await client.is_user_authorized():
-                await client(functions.account.UpdateStatusRequest(offline=True))
-        except Exception: pass
+    prefix = f"{int(user_id)}:"
+    for key in [key for key in list(presence_activity_tasks) if key.startswith(prefix)]:
+        await _presence_v2_stop_task(user_id, key)
+    client = clients.get(str(user_id))
+    runtime = presence_runtime_stats.setdefault(str(user_id), {})
+    runtime.update({
+        "activity_state": "idle",
+        "active_action": "",
+        "destination_peer": "",
+        "heartbeat_at": None,
+        "last_update_at": datetime.now(timezone.utc),
+    })
+    if mark_offline:
+        if client and client.is_connected():
+            try:
+                if await client.is_user_authorized():
+                    await client(functions.account.UpdateStatusRequest(offline=True))
+                    presence_last_online_state[str(user_id)] = False
+                    runtime["online_state"] = "offline"
+                else:
+                    runtime["online_state"] = "unknown"
+            except Exception as exc:
+                runtime["online_state"] = "unknown"
+                runtime["last_error_code"] = _presence_v2_error_code(exc)
+        else:
+            runtime["online_state"] = "unknown"
     await _presence_v2_runtime_save(user_id)
 
 async def _presence_v2_heartbeat(user_id,key,peer,label,stop_event):
@@ -5801,13 +5896,16 @@ async def _presence_v2_watchdog(user_id):
             await presence_log(user_id,"activity.telegram_error",peer=str(state.get("peer") or ""),action=str(state.get("action") or ""),meta={"code":"HEARTBEAT_FAILED"})
             await _presence_v2_stop_task(user_id,key)
 
-async def presence_apply_now(user_id:int,force:bool=False):
+async def _presence_apply_now_unlocked(user_id:int,force:bool=False):
     config=await presence_get_settings(user_id)
     row=await db_user(str(user_id))
     client=clients.get(str(user_id))
-    if not client or not client.is_connected() or not row or not row["account_connected"] or not row["salf_enabled"]:
+    if not client or not client.is_connected() or not row or not row["account_connected"]:
         await presence_stop_all(user_id,mark_offline=False)
         return {"ok":False,"reason":"account_unavailable"}
+    if not row["salf_enabled"]:
+        await presence_stop_all(user_id,mark_offline=True)
+        return {"ok":False,"reason":"salf_disabled"}
     try:
         if not await client.is_user_authorized():
             await presence_stop_all(user_id,mark_offline=False)
@@ -5850,6 +5948,13 @@ async def presence_apply_now(user_id:int,force:bool=False):
             except Exception: pass
         return {"ok":False,"reason":code}
 
+async def presence_apply_now(user_id: int, force: bool = False):
+    customer_id = str(int(user_id))
+    lock = presence_apply_locks.setdefault(customer_id, asyncio.Lock())
+    async with lock:
+        return await _presence_apply_now_unlocked(int(user_id), force=force)
+
+
 async def presence_loop():
     while True:
         try:
@@ -5858,11 +5963,13 @@ async def presence_loop():
                     select p.customer_id
                     from salf1_presence_settings p
                     join salf1_bot_users u on u.telegram_user_id=p.customer_id
+                    left join salf1_presence_runtime_state r on r.customer_id=p.customer_id
                     where (
                         coalesce((p.config->>'online_enabled')::boolean,false)=true
                         or coalesce((p.config->>'activity_enabled')::boolean,false)=true
                         or coalesce((p.config->>'typing_enabled')::boolean,false)=true
-                    ) and u.account_connected=true and u.salf_enabled=true
+                        or coalesce(r.online_state,'offline')='online'
+                    ) and u.account_connected=true
                 """)
                 for row in rows:
                     await presence_apply_now(int(row["customer_id"]))
@@ -7269,9 +7376,6 @@ async def process_bot_message(message: dict):
                     message_id=message_id,
                 )
             return
-
-    if await handle_presence_input_state(user_id, int(chat["id"]), text):
-        return
 
     if await handle_presence_input_state(user_id, int(chat["id"]), text):
         return
@@ -9152,6 +9256,7 @@ async def main():
             await grant_owner_unlimited()
             await init_clock_settings_table()
             await init_presence_settings_table()
+            await presence_restore_runtime_state()
             await ensure_admin_ledger_table()
             print("Farvahr Self web login token store ready.")
         except Exception as exc:
@@ -9745,7 +9850,7 @@ def is_fast_navigation_callback(callback_data: str) -> bool:
     value = str(callback_data or "")
     return (
         value in FAST_NAV_CALLBACKS
-        or value.startswith(("salf_ping:", "package_", "payment_"))
+        or value.startswith(("salf_ping:", "package_", "payment_", "prs_wiz_day_"))
     )
 
 
