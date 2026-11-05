@@ -2834,6 +2834,10 @@ PANEL_CALLBACKS = {
     "prs_wiz_all", "prs_wiz_continue", "prs_wiz_cancel",
     "prs_wiz_edit_days", "prs_wiz_back_start", "prs_wiz_back_end",
     "prs_wiz_confirm",
+    "prs_online_schedule", "prs_online_always", "prs_online_manual",
+    "prs_online_toggle", "prs_online_stop",
+    "prs_schedule_add_online", "prs_schedule_toggle_online",
+    "prs_schedule_clear_online", "prs_schedule_refresh_online",
 }
 PANEL_DEDUP_TTL_SECONDS = 120.0
 
@@ -6004,27 +6008,8 @@ def rich_button_row(*buttons: str, align: str = "center") -> str:
 
 
 async def presence_online_page(user_id):
-    cfg=await presence_get_settings(user_id)
-    _,local=_presence_v2_now_local(cfg)
-    r=presence_runtime_stats.setdefault(str(user_id),{})
-    return f"""<b>Sᴀʟғ1 · آنلاین بودن</b>
-
-<blockquote><b>وضعیت</b>
-فعال : {"بله" if cfg.get("online_enabled") else "خیر"}
-حالت : {html.escape({"always":"همیشه آنلاین","schedule":"طبق برنامه","manual":"دستی"}.get(str(cfg.get("online_mode")),"همیشه آنلاین"))}
-منطقه زمانی : <code>{html.escape(str(cfg.get("timezone") or "UTC"))}</code>
-وضعیت لحظه‌ای : {"آنلاین" if r.get("online_state")=="online" else "آفلاین"}</blockquote>
-
-<blockquote><b>برنامه امروز</b>
-{html.escape(_presence_v2_windows_text([w for w in cfg.get("online_windows") or [] if local.weekday() in {int(x) for x in w.get("days") or [] if str(x).isdigit()}]))}
-وضعیت برنامه : {"در بازه" if _presence_v2_engine_active(cfg,"online",local) else "خارج از بازه"}</blockquote>
-
-{rich_button_row(rich_button("فعال" if cfg.get("online_enabled") else "غیرفعال","prs_online_toggle","success" if cfg.get("online_enabled") else "danger"))}
-{rich_button_row(rich_button("› همیشه آنلاین","prs_online_always","primary"),rich_button("› طبق برنامه","prs_online_schedule","primary"),rich_button("› دستی","prs_online_manual","primary"))}
-{rich_button_row(rich_button("› منطقه زمانی","prs_timezone","primary"))}
-{rich_button_row(rich_button("› برنامه آنلاین","prs_schedule_online","primary"))}
-{rich_button_row(rich_button("› بروزرسانی","prs_online_refresh","primary"))}
-{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+    """Legacy route compatibility: show the unified Presence Center."""
+    return await presence_page(user_id)
 
 def _presence_v2_windows_text(windows,limit=8):
     lines=[]
@@ -6083,26 +6068,44 @@ async def presence_timezone_page(user_id):
 {rich_button_row(rich_button("› ورود منطقه IANA","prs_tz_custom","primary"))}
 {rich_button_row(rich_button("‹ بازگشت","prs_online","primary"))}"""
 
-async def presence_schedule_page(user_id,engine):
-    cfg=await presence_get_settings(user_id)
-    engine="activity" if engine=="activity" else "online"
-    key=f"{engine}_windows"
-    skey=f"{engine}_schedule_enabled"
-    return f"""<b>Sᴀʟғ1 · زمان‌بندی</b>
+async def presence_schedule_page(user_id, engine):
+    config = await presence_get_settings(user_id)
+    engine = "activity" if engine == "activity" else "online"
+    if engine == "online":
+        _, local = _presence_v2_now_local(config)
+        windows = _presence_v2_windows_text(config.get("online_windows") or [], 10)
+        if not config.get("online_schedule_enabled") or not config.get("online_windows"):
+            windows = "برنامه‌ای ثبت نشده است."
+        active = _presence_v2_engine_active(config, "online", local)
+        return f"""<b>Sᴀʟғ1 · برنامه هفتگی حضور</b>
 
-<blockquote><b>{"آنلاین بودن" if engine=="online" else "فعالیت داخل چت"}</b>
-منطقه زمانی : <code>{html.escape(str(cfg.get("timezone") or "UTC"))}</code>
-زمان‌بندی : {"فعال" if cfg.get(skey) else "خاموش"}</blockquote>
+<blockquote><b>وضعیت برنامه</b>
+قابلیت آنلاین : {"فعال" if config.get("online_enabled") else "متوقف"}
+زمان‌بندی : {"فعال" if config.get("online_schedule_enabled") else "خاموش"}
+منطقه زمانی : <code>{html.escape(str(config.get("timezone") or "UTC"))}</code>
+وضعیت اکنون : {"داخل بازه" if active else "خارج از بازه"}</blockquote>
+
+<blockquote><b>بازه‌های ثبت‌شده</b>
+{html.escape(windows)}</blockquote>
+
+{rich_button_row(rich_button("› تنظیم یا جایگزینی برنامه", "prs_online_schedule", "success"))}
+{rich_button_row(rich_button("› توقف برنامه آنلاین", "prs_schedule_clear_online", "danger"))}
+{rich_button_row(rich_button("‹ بازگشت", "presence", "primary"))}"""
+
+    windows = _presence_v2_windows_text(config.get("activity_windows") or [], 10)
+    return f"""<b>Sᴀʟғ1 · زمان‌بندی فعالیت</b>
+
+<blockquote><b>تنظیمات</b>
+فعالیت : {"فعال" if config.get("activity_enabled") else "غیرفعال"}
+زمان‌بندی : {"فعال" if config.get("activity_schedule_enabled") else "خاموش"}
+منطقه زمانی : <code>{html.escape(str(config.get("timezone") or "UTC"))}</code></blockquote>
 
 <blockquote><b>بازه‌ها</b>
-{html.escape(_presence_v2_windows_text(cfg.get(key) or [],10))}</blockquote>
+{html.escape(windows if config.get("activity_windows") else "برنامه‌ای ثبت نشده است.")}</blockquote>
 
-{rich_button_row(rich_button("› آنلاین بودن","prs_schedule_online","success" if engine=="online" else "primary"),rich_button("› فعالیت داخل چت","prs_schedule_activity","success" if engine=="activity" else "primary"))}
-{rich_button_row(rich_button("فعال" if cfg.get(skey) else "غیرفعال",f"prs_schedule_toggle_{engine}","success" if cfg.get(skey) else "danger"))}
-{rich_button_row(rich_button("› افزودن بازه",f"prs_schedule_add_{engine}","primary"))}
-{rich_button_row(rich_button("› پاک‌سازی",f"prs_schedule_clear_{engine}","danger"))}
-{rich_button_row(rich_button("› بروزرسانی",f"prs_schedule_refresh_{engine}","primary"))}
-{rich_button_row(rich_button("‹ بازگشت","presence","primary"))}"""
+{rich_button_row(rich_button("› افزودن بازه", "prs_schedule_add_activity", "primary"))}
+{rich_button_row(rich_button("› پاک‌سازی برنامه", "prs_schedule_clear_activity", "danger"))}
+{rich_button_row(rich_button("‹ بازگشت", "prs_activity", "primary"))}"""
 
 async def presence_exceptions_page(user_id):
     cfg=await presence_get_settings(user_id)
@@ -6293,6 +6296,8 @@ async def presence_add_schedule_window(user_id,engine,day_token,start,end):
                 raise ValueError("روز معتبر نیست.")
     if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d",start) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d",end):
         raise ValueError("زمان باید با فرمت HH:MM باشد.")
+    if start == end:
+        raise ValueError("ساعت شروع و پایان نمی‌توانند یکسان باشند.")
     cfg=await presence_get_settings(user_id)
     key=f"{engine}_windows"
     cfg[key]=(cfg.get(key) or [])+[{"days":days,"start":start,"end":end,"enabled":True}]
@@ -6302,12 +6307,18 @@ async def presence_add_schedule_window(user_id,engine,day_token,start,end):
     await presence_apply_now(user_id,True)
 
 async def presence_clear_schedule(user_id,engine):
-    cfg=await presence_get_settings(user_id)
-    cfg[f"{engine}_windows"]=[]
-    cfg[f"{engine}_schedule_enabled"]=False
-    if engine=="online": cfg["online_mode"]="always"
-    await presence_save_settings(user_id,cfg)
-    await presence_apply_now(user_id,True)
+    config = await presence_get_settings(user_id)
+    if engine == "online":
+        config["online_windows"] = []
+        config["online_schedule_enabled"] = False
+        config["online_mode"] = "schedule"
+        config["online_enabled"] = False
+    else:
+        config["activity_windows"] = []
+        config["activity_schedule_enabled"] = False
+    await presence_save_settings(user_id, config)
+    presence_next_online[str(user_id)] = 0.0
+    await presence_apply_now(user_id, True)
 
 async def presence_add_exception(user_id,raw):
     import re
@@ -6374,102 +6385,346 @@ async def presence_create_custom_scenario(user_id,name,raw_steps):
     await presence_save_settings(user_id,cfg)
     await presence_apply_now(user_id,True)
 
-async def handle_presence_input_state(user_id:int,chat_id:int,text:str)->bool:
-    state_obj=bot_states.get(int(user_id))
-    if not isinstance(state_obj,dict): return False
-    state=str(state_obj.get("state") or "")
-    if not state.startswith("presence_"): return False
-    if normalize_text(text) in {"لغو","cancel","انصراف"}:
-        bot_states.pop(int(user_id),None)
-        await bot_send(chat_id,await presence_page(user_id))
+
+def _presence_v2_parse_clock(raw: str) -> str:
+    """Accept HH:MM in ASCII, Persian or Arabic numerals."""
+    value = str(raw or "").strip().translate(
+        str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    )
+    import re
+    match = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", value)
+    if not match:
+        raise ValueError("ساعت معتبر نیست. نمونهٔ صحیح: 06:00")
+    return f"{int(match.group(1)):02d}:{match.group(2)}"
+
+
+def _presence_v2_weekday_order():
+    # Python weekday: Monday=0. Persian week starts with Saturday=5.
+    return [5, 6, 0, 1, 2, 3, 4]
+
+
+def presence_wizard_days_page(selected_days):
+    selected = {
+        int(day) for day in (selected_days or [])
+        if str(day).isdigit() and int(day) in range(7)
+    }
+    buttons = [
+        rich_button(
+            PRESENCE_V2_DAYS[day] + (" · انتخاب‌شده" if day in selected else ""),
+            f"prs_wiz_day_{day}",
+            "success" if day in selected else "primary",
+        )
+        for day in _presence_v2_weekday_order()
+    ]
+    rows = [rich_button_row(*buttons[index:index + 2]) for index in range(0, len(buttons), 2)]
+    return f"""<b>Sᴀʟғ1 · برنامه هفتگی حضور</b>
+
+<blockquote><b>مرحله ۱ از ۴ · انتخاب روزها</b>
+روزهایی را انتخاب کنید که اکانت باید آنلاین بماند.
+برای انتخاب چند روز، روی هر روز بزنید.
+
+روزهای انتخاب‌شده : <b>{len(selected)} از ۷</b></blockquote>
+
+{chr(10).join(rows)}
+{rich_button_row(rich_button("› انتخاب همه روزها", "prs_wiz_all", "success" if len(selected) == 7 else "primary"))}
+{rich_button_row(rich_button("› ادامه", "prs_wiz_continue", "success"))}
+{rich_button_row(rich_button("‹ بازگشت", "prs_wiz_cancel", "primary"))}"""
+
+
+def presence_wizard_time_page(stage, start_time="", error=""):
+    if stage == "presence_wizard_start":
+        heading = "ساعت شروع"
+        instruction = "ساعت شروع بازهٔ آنلاین‌بودن را وارد کنید."
+        progress = "مرحله ۲ از ۴"
+        back_callback = "prs_wiz_edit_days"
+    else:
+        heading = "ساعت پایان"
+        instruction = "ساعت پایان را وارد کنید؛ پایان می‌تواند در روز بعد باشد."
+        progress = "مرحله ۳ از ۴"
+        back_callback = "prs_wiz_back_start"
+
+    start_line = f"\nشروع انتخاب‌شده : <code>{html.escape(start_time)}</code>" if start_time else ""
+    error_line = f"\n\n<blockquote>{html.escape(error)}</blockquote>" if error else ""
+    return f"""<b>Sᴀʟғ1 · برنامه هفتگی حضور</b>
+
+<blockquote><b>{progress} · {heading}</b>
+{instruction}
+فرمت ۲۴ ساعته : <code>HH:MM</code>
+نمونه : <code>06:00</code>{start_line}{error_line}</blockquote>
+
+{rich_button_row(rich_button("‹ بازگشت", back_callback, "primary"), rich_button("› لغو", "prs_wiz_cancel", "danger"))}"""
+
+
+def presence_wizard_confirm_page(days, start_time, end_time, timezone_name):
+    selected = {int(day) for day in (days or [])}
+    day_names = "، ".join(
+        PRESENCE_V2_DAYS[day]
+        for day in _presence_v2_weekday_order()
+        if day in selected
+    )
+    start_minutes = int(start_time[:2]) * 60 + int(start_time[3:])
+    end_minutes = int(end_time[:2]) * 60 + int(end_time[3:])
+    duration = (end_minutes - start_minutes) % 1440
+    hours, minutes = divmod(duration, 60)
+    duration_text = f"{hours} ساعت" + (f" و {minutes} دقیقه" if minutes else "")
+    end_note = "روز بعد" if end_minutes < start_minutes else "همان روز"
+
+    return f"""<b>Sᴀʟғ1 · تأیید برنامه حضور</b>
+
+<blockquote><b>مرحله ۴ از ۴ · بررسی نهایی</b>
+روزها : <b>{html.escape(day_names)}</b>
+ساعت شروع : <code>{start_time}</code>
+ساعت پایان : <code>{end_time}</code>
+پایان بازه : {end_note}
+مدت بازه : <b>{duration_text}</b>
+منطقه زمانی : <code>{html.escape(str(timezone_name))}</code></blockquote>
+
+<blockquote>پس از ثبت، اکانت فقط در روزها و ساعت‌های انتخاب‌شده آنلاین نگه داشته می‌شود.</blockquote>
+
+{rich_button_row(rich_button("‹ بازگشت", "prs_wiz_back_end", "primary"), rich_button("› ثبت برنامه", "prs_wiz_confirm", "success"))}
+{rich_button_row(rich_button("› لغو", "prs_wiz_cancel", "danger"))}"""
+
+
+async def _presence_wizard_edit(user_id, text, fallback_chat_id=None):
+    state = bot_states.get(int(user_id))
+    if isinstance(state, dict):
+        chat_id = state.get("panel_chat_id") or fallback_chat_id
+        message_id = state.get("panel_message_id")
+        if chat_id and message_id:
+            result = await bot_edit(int(chat_id), int(message_id), text)
+            if isinstance(result, dict) and result.get("ok"):
+                return result
+        if chat_id:
+            return await bot_send(int(chat_id), text)
+    if fallback_chat_id:
+        return await bot_send(int(fallback_chat_id), text)
+    return None
+
+
+async def handle_presence_input_state(user_id: int, chat_id: int, text: str) -> bool:
+    state_obj = bot_states.get(int(user_id))
+    if not isinstance(state_obj, dict):
+        return False
+    state = str(state_obj.get("state") or "")
+    if not state.startswith("presence_"):
+        return False
+
+    if normalize_text(text) in {"لغو", "cancel", "انصراف"}:
+        if state.startswith("presence_wizard_"):
+            await _presence_wizard_edit(user_id, await presence_page(user_id), chat_id)
+            bot_states.pop(int(user_id), None)
+        else:
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_page(user_id))
         return True
+
     try:
-        if state=="presence_target_add":
-            await presence_target_add(user_id,text); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_targets_page(user_id)); return True
-        if state in {"presence_schedule_add_online","presence_schedule_add_activity"}:
-            p=str(text).strip().split()
-            if len(p)!=2 or "-" not in p[1]: raise ValueError("فرمت: شنبه 08:00-12:00")
-            st,en=p[1].split("-",1)
-            await presence_add_schedule_window(user_id,"online" if state.endswith("_online") else "activity",p[0],st,en)
-            bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_schedule_page(user_id,"online" if state.endswith("_online") else "activity")); return True
-        if state=="presence_exception_add":
-            await presence_add_exception(user_id,text); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_exceptions_page(user_id)); return True
-        if state=="presence_timezone_custom":
-            await presence_set_timezone(user_id,text); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_timezone_page(user_id)); return True
-        if state=="presence_profile_save":
-            await presence_profile_save(user_id,str(text).strip()); bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_profiles_page(user_id)); return True
-        if state=="presence_scenario_name":
-            name=str(text).strip()
-            if not name: raise ValueError("نام سناریو را ارسال کنید.")
-            bot_states[user_id]={"state":"presence_scenario_steps","name":name}
-            await bot_send(chat_id,"""<b>Sᴀʟғ1 · ساخت سناریو</b>
+        if state == "presence_wizard_start":
+            start_time = _presence_v2_parse_clock(text)
+            state_obj["start"] = start_time
+            state_obj["state"] = "presence_wizard_end"
+            bot_states[int(user_id)] = state_obj
+            await _presence_wizard_edit(
+                user_id,
+                presence_wizard_time_page("presence_wizard_end", start_time),
+                chat_id,
+            )
+            return True
+
+        if state == "presence_wizard_end":
+            end_time = _presence_v2_parse_clock(text)
+            start_time = str(state_obj.get("start") or "")
+            if end_time == start_time:
+                raise ValueError("ساعت شروع و پایان یکسان معتبر نیست. برای حضور ۲۴ ساعته، حالت همیشه آنلاین را انتخاب کنید.")
+            state_obj["end"] = end_time
+            state_obj["state"] = "presence_wizard_confirm"
+            bot_states[int(user_id)] = state_obj
+            config = await presence_get_settings(user_id)
+            await _presence_wizard_edit(
+                user_id,
+                presence_wizard_confirm_page(
+                    state_obj.get("days") or [],
+                    start_time,
+                    end_time,
+                    config.get("timezone") or "UTC",
+                ),
+                chat_id,
+            )
+            return True
+
+        if state == "presence_target_add":
+            await presence_target_add(user_id, text)
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_targets_page(user_id))
+            return True
+
+        if state in {"presence_schedule_add_online", "presence_schedule_add_activity"}:
+            parts = str(text).strip().split()
+            if len(parts) != 2 or "-" not in parts[1]:
+                raise ValueError("فرمت: شنبه 08:00-12:00")
+            start_time, end_time = parts[1].split("-", 1)
+            engine = "online" if state.endswith("_online") else "activity"
+            await presence_add_schedule_window(
+                user_id,
+                engine,
+                parts[0],
+                _presence_v2_parse_clock(start_time),
+                _presence_v2_parse_clock(end_time),
+            )
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_schedule_page(user_id, engine))
+            return True
+
+        if state == "presence_exception_add":
+            await presence_add_exception(user_id, text)
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_exceptions_page(user_id))
+            return True
+
+        if state == "presence_timezone_custom":
+            await presence_set_timezone(user_id, text)
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_timezone_page(user_id))
+            return True
+
+        if state == "presence_profile_save":
+            await presence_profile_save(user_id, str(text).strip())
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_profiles_page(user_id))
+            return True
+
+        if state == "presence_scenario_name":
+            name = str(text).strip()
+            if not name:
+                raise ValueError("نام سناریو را ارسال کنید.")
+            bot_states[int(user_id)] = {"state": "presence_scenario_steps", "name": name}
+            await bot_send(
+                chat_id,
+                """<b>Sᴀʟғ1 · ساخت سناریو</b>
 
 ترتیب Actionها را بفرستید:
-<code>typing:8-15,record_audio:10-20,typing:5-10</code>""")
+<code>typing:8-15,record_audio:10-20,typing:5-10</code>""",
+            )
             return True
-        if state=="presence_scenario_steps":
-            await presence_create_custom_scenario(user_id,str(state_obj.get("name") or "سناریو"),text)
-            bot_states.pop(int(user_id),None)
-            await bot_send(chat_id,await presence_scenarios_page(user_id)); return True
+
+        if state == "presence_scenario_steps":
+            await presence_create_custom_scenario(
+                user_id,
+                str(state_obj.get("name") or "سناریو"),
+                text,
+            )
+            bot_states.pop(int(user_id), None)
+            await bot_send(chat_id, await presence_scenarios_page(user_id))
+            return True
+
     except ValueError as exc:
-        await bot_send(chat_id,f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(str(exc))}</blockquote>")
+        if state.startswith("presence_wizard_"):
+            await _presence_wizard_edit(
+                user_id,
+                presence_wizard_time_page(
+                    state,
+                    str(state_obj.get("start") or ""),
+                    error=str(exc),
+                ),
+                chat_id,
+            )
+        else:
+            await bot_send(
+                chat_id,
+                f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(str(exc))}</blockquote>",
+            )
         return True
     except Exception as exc:
-        code=_presence_v2_error_code(exc)
-        await bot_send(chat_id,f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(_presence_v2_error_text(code))}</blockquote>")
+        error = _presence_v2_error_text(_presence_v2_error_code(exc))
+        message = f"<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>{html.escape(error)}</blockquote>"
+        if state.startswith("presence_wizard_"):
+            await _presence_wizard_edit(user_id, message, chat_id)
+        else:
+            await bot_send(chat_id, message)
         return True
     return False
 
 async def presence_page(user_id):
-    cfg, row = await asyncio.gather(
+    config, row = await asyncio.gather(
         presence_get_settings(user_id),
         db_user(str(user_id)),
     )
-    r=presence_runtime_stats.setdefault(str(user_id),{})
-    current=[v for k,v in presence_current_actions.items() if k.startswith(f"{int(user_id)}:")]
-    item=current[0] if current else None
-    scenario=_presence_v2_scenario(cfg,item or {}) or {}
-    hb=r.get("heartbeat_at")
-    hb_ok=bool(hb and (datetime.now(timezone.utc)-hb).total_seconds()<=12)
-    return f"""<b>Sᴀʟғ1 · وضعیت حضور</b>
+    runtime = presence_runtime_stats.setdefault(str(user_id), {})
+    _, local = _presence_v2_now_local(config)
+    connected = bool(row and row["account_connected"])
+    salf_enabled = bool(row and row["salf_enabled"])
+    enabled = bool(config.get("online_enabled"))
+    mode = str(config.get("online_mode") or "always")
+    active = _presence_v2_engine_active(config, "online", local)
+    mode_text = {
+        "always": "همیشه آنلاین",
+        "schedule": "برنامه هفتگی",
+        "manual": "دستی",
+    }.get(mode, "همیشه آنلاین")
 
-<blockquote><b>وضعیت اصلی</b>
-آنلاین بودن : {"فعال" if cfg.get("online_enabled") else "غیرفعال"}
-فعالیت داخل چت : {"فعال" if cfg.get("activity_enabled") else "غیرفعال"}
-اکانت : {"متصل" if row and row["account_connected"] else "متصل نیست"}
-سلف : {"فعال" if row and row["salf_enabled"] else "خاموش"}
-منطقه زمانی : <code>{html.escape(str(cfg.get("timezone") or "UTC"))}</code></blockquote>
+    if not connected:
+        live_text = "اکانت متصل نیست"
+    elif not salf_enabled:
+        live_text = "سلف خاموش است"
+    elif not enabled:
+        live_text = "متوقف"
+    elif active and runtime.get("online_state") == "online":
+        live_text = "آنلاین · تأییدشده"
+    elif active:
+        live_text = "فعال · در انتظار همگام‌سازی"
+    else:
+        live_text = "خارج از بازه برنامه"
 
-<blockquote><b>وضعیت لحظه‌ای</b>
-اکنون : {html.escape(str(item.get("label"))) if item else "بدون فعالیت"}
-مقصد : {html.escape(str(item.get("peer"))) if item else "—"}
-Heartbeat : {"سالم" if hb_ok else ("منتظر" if cfg.get("activity_enabled") else "—")}
-آخرین بروزرسانی : {presence_runtime_stats.get(str(user_id),{}).get("last_update_at") or "—"}</blockquote>
+    windows = _presence_v2_windows_text(config.get("online_windows") or [], 8)
+    if mode != "schedule" or not config.get("online_schedule_enabled"):
+        windows = "برنامه هفتگی انتخاب نشده است."
 
-<blockquote><b>برنامه</b>
-آنلاین : {"در برنامه" if _presence_v2_engine_active(cfg,"online",_presence_v2_now_local(cfg)[1]) else "خارج از برنامه"}
-فعالیت : {"در برنامه" if _presence_v2_engine_active(cfg,"activity",_presence_v2_now_local(cfg)[1]) else "خارج از برنامه"}
-سناریو : {html.escape(str(scenario.get("name") or "—"))}
-مقصدهای فعال : {sum(1 for t in cfg.get("targets") or [] if t.get("enabled",True))}</blockquote>
+    actions = [
+        value for key, value in presence_current_actions.items()
+        if key.startswith(f"{int(user_id)}:")
+    ]
+    action = actions[0] if actions else None
+    heartbeat = runtime.get("heartbeat_at")
+    heartbeat_ok = bool(
+        heartbeat and (datetime.now(timezone.utc) - heartbeat).total_seconds() <= 12
+    )
+    error_code = str(runtime.get("last_error_code") or "")
+    health = _presence_v2_error_text(error_code) if error_code else "بدون خطای ثبت‌شده"
+
+    stop_button = (
+        rich_button_row(rich_button("› توقف وضعیت آنلاین", "prs_online_stop", "danger"))
+        if enabled else ""
+    )
+    always_style = "success" if enabled and mode in {"always", "manual"} else "primary"
+    schedule_style = "success" if enabled and mode == "schedule" else "primary"
+
+    return f"""<b>Sᴀʟғ1 · مرکز وضعیت حضور</b>
+
+<blockquote><b>وضعیت حساب</b>
+اکانت : <b>{"متصل" if connected else "متصل نیست"}</b>
+سرویس سلف : <b>{"فعال" if salf_enabled else "خاموش"}</b>
+قابلیت آنلاین : <b>{"فعال" if enabled else "متوقف"}</b>
+وضعیت لحظه‌ای : <b>{html.escape(live_text)}</b>
+حالت اجرا : {html.escape(mode_text)}
+منطقه زمانی : <code>{html.escape(str(config.get("timezone") or "UTC"))}</code></blockquote>
+
+<blockquote><b>برنامه هفتگی آنلاین</b>
+{html.escape(windows)}
+وضعیت اکنون : {"داخل بازه" if active else "خارج از بازه"}
+فعالیت جاری : {html.escape(str(action.get("label") or "بدون فعالیت")) if action else "بدون فعالیت"}
+Heartbeat : {"سالم" if heartbeat_ok else "—"}</blockquote>
 
 <blockquote><b>سلامت موتور</b>
-{"سالم" if not r.get("last_error_code") else html.escape(_presence_v2_error_text(str(r.get("last_error_code"))))}</blockquote>
+{html.escape(health)}</blockquote>
 
-{rich_button_row(rich_button("› آنلاین بودن","prs_online","primary"))}
-{rich_button_row(rich_button("› فعالیت داخل چت","prs_activity","primary"))}
-{rich_button_row(rich_button("› پروفایل‌های حضور","prs_profiles","primary"))}
-{rich_button_row(rich_button("› زمان‌بندی","prs_schedule","primary"))}
-{rich_button_row(rich_button("› استثناها","prs_exceptions","primary"))}
-{rich_button_row(rich_button("› تنظیمات پیشرفته","prs_advanced","primary"))}
-{rich_button_row(rich_button("› بروزرسانی","prs_refresh","primary"))}
-{rich_button_row(rich_button("‹ بازگشت","self_features","primary"))}"""
-
-
+{rich_button_row(rich_button("› همیشه آنلاین", "prs_online_always", always_style))}
+{rich_button_row(rich_button("› تنظیم برنامه هفتگی", "prs_online_schedule", schedule_style))}
+{stop_button}
+{rich_button_row(rich_button("› فعالیت داخل چت", "prs_activity", "primary"), rich_button("› برنامه و استثناها", "prs_schedule", "primary"))}
+{rich_button_row(rich_button("› مقصدها", "prs_destinations", "primary"), rich_button("› پروفایل‌ها", "prs_profiles", "primary"))}
+{rich_button_row(rich_button("› منطقه زمانی", "prs_timezone", "primary"), rich_button("› تنظیمات پیشرفته", "prs_advanced", "primary"))}
+{rich_button_row(rich_button("› بروزرسانی", "prs_refresh", "primary"))}
+{rich_button_row(rich_button("‹ بازگشت", "self_features", "primary"))}"""
 
 async def salf_settings_text(user_id: int):
     row, clock_config, presence_config = await asyncio.gather(
