@@ -7978,63 +7978,313 @@ async def _process_callback_impl(callback_query: dict):
         return
 
 
-    if data == "presence":
+    if data in {"presence", "prs_refresh", "prs_online", "prs_online_refresh"}:
         await bot_edit(chat_id, message_id, await presence_page(user_id))
         return
 
-    if data in {"presence_toggle_online"}:
-        data = "prs_online_toggle"
-    elif data in {"presence_force_sync"}:
-        data = "prs_refresh"
-    elif data in {"presence_targets"}:
-        data = "prs_destinations"
-    elif data in {"presence_schedule"}:
-        data = "prs_schedule"
-    elif data in {"presence_behavior"}:
-        data = "prs_activity"
-    elif data in {"presence_stats"}:
-        data = "prs_stats"
-    elif data in {"presence_advanced"}:
-        data = "prs_advanced"
-    elif data in {"presence_profiles"}:
-        data = "prs_profiles"
-
-    if data == "prs_refresh":
-        await bot_edit(chat_id, message_id, await presence_page(user_id))
-        return
-
-    if data == "prs_online":
-        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
-        return
-    if data == "prs_online_refresh":
-        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
-        return
-    if data == "prs_online_toggle":
+    if data == "prs_online_schedule":
         row = await db_user(str(user_id))
         if not row or not row["account_connected"] or not row["salf_enabled"]:
-            await bot_edit(chat_id, message_id, await presence_online_page(user_id))
+            await bot_edit(
+                chat_id,
+                message_id,
+                "<b>Sᴀʟғ1 · برنامه هفتگی حضور</b>\n\n<blockquote>برای اجرای برنامه، ابتدا اکانت را متصل و سرویس سلف را فعال کنید.</blockquote>\n\n"
+                + rich_button_row(rich_button("‹ بازگشت", "presence", "primary")),
+            )
             return
-        cfg = await presence_get_settings(user_id)
-        cfg["online_enabled"] = not bool(cfg.get("online_enabled"))
-        await presence_save_settings(user_id, cfg)
-        presence_next_online[str(user_id)] = 0.0
-        await presence_apply_now(user_id, True)
-        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
+        config = await presence_get_settings(user_id)
+        current = next(
+            (window for window in (config.get("online_windows") or []) if window.get("enabled", True)),
+            None,
+        ) if config.get("online_schedule_enabled") else None
+        days = list((current or {}).get("days") or [])
+        bot_states[user_id] = {
+            "state": "presence_wizard_days",
+            "days": days,
+            "start": str((current or {}).get("start") or ""),
+            "end": str((current or {}).get("end") or ""),
+            "panel_chat_id": chat_id,
+            "panel_message_id": message_id,
+        }
+        await bot_edit(chat_id, message_id, presence_wizard_days_page(days))
         return
 
-    if data in {"prs_online_always","prs_online_schedule","prs_online_manual"}:
-        cfg = await presence_get_settings(user_id)
-        cfg["online_mode"] = {
-            "prs_online_always":"always",
-            "prs_online_schedule":"schedule",
-            "prs_online_manual":"manual",
-        }[data]
-        if data == "prs_online_schedule":
-            cfg["online_schedule_enabled"] = True
-        await presence_save_settings(user_id, cfg)
-        await presence_apply_now(user_id, True)
-        await bot_edit(chat_id, message_id, await presence_online_page(user_id))
+    if data.startswith("prs_wiz_day_"):
+        wizard = bot_states.get(user_id)
+        if not isinstance(wizard, dict) or wizard.get("state") != "presence_wizard_days":
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        try:
+            day = int(data.removeprefix("prs_wiz_day_"))
+        except ValueError:
+            return
+        if day not in range(7):
+            return
+        selected = {int(value) for value in wizard.get("days") or []}
+        if day in selected:
+            selected.remove(day)
+        else:
+            selected.add(day)
+        wizard["days"] = sorted(selected)
+        bot_states[user_id] = wizard
+        await bot_edit(chat_id, message_id, presence_wizard_days_page(wizard["days"]))
         return
+
+    if data == "prs_wiz_all":
+        wizard = bot_states.get(user_id)
+        if not isinstance(wizard, dict) or wizard.get("state") != "presence_wizard_days":
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        wizard["days"] = list(range(7))
+        bot_states[user_id] = wizard
+        await bot_edit(chat_id, message_id, presence_wizard_days_page(wizard["days"]))
+        return
+
+    if data == "prs_wiz_continue":
+        wizard = bot_states.get(user_id)
+        if not isinstance(wizard, dict) or wizard.get("state") != "presence_wizard_days":
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        if not wizard.get("days"):
+            page = presence_wizard_days_page([])
+            page = page.replace(
+                "<blockquote><b>مرحله ۱ از ۴ · انتخاب روزها</b>",
+                "<blockquote><b>مرحله ۱ از ۴ · انتخاب روزها</b>\n\nحداقل یک روز را انتخاب کنید.",
+                1,
+            )
+            await bot_edit(chat_id, message_id, page)
+            return
+        wizard["state"] = "presence_wizard_start"
+        bot_states[user_id] = wizard
+        await bot_edit(
+            chat_id,
+            message_id,
+            presence_wizard_time_page("presence_wizard_start", str(wizard.get("start") or "")),
+        )
+        return
+
+    if data == "prs_wiz_edit_days":
+        wizard = bot_states.get(user_id)
+        if not isinstance(wizard, dict):
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        wizard["state"] = "presence_wizard_days"
+        bot_states[user_id] = wizard
+        await bot_edit(chat_id, message_id, presence_wizard_days_page(wizard.get("days") or []))
+        return
+
+    if data == "prs_wiz_back_start":
+        wizard = bot_states.get(user_id)
+        if not isinstance(wizard, dict):
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        wizard["state"] = "presence_wizard_start"
+        wizard.pop("start", None)
+        wizard.pop("end", None)
+        bot_states[user_id] = wizard
+        await bot_edit(chat_id, message_id, presence_wizard_time_page("presence_wizard_start"))
+        return
+
+    if data == "prs_wiz_back_end":
+        wizard = bot_states.get(user_id)
+        if not isinstance(wizard, dict):
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        wizard["state"] = "presence_wizard_end"
+        wizard.pop("end", None)
+        bot_states[user_id] = wizard
+        await bot_edit(
+            chat_id,
+            message_id,
+            presence_wizard_time_page("presence_wizard_end", str(wizard.get("start") or "")),
+        )
+        return
+
+    if data == "prs_wiz_cancel":
+        bot_states.pop(user_id, None)
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data == "prs_wiz_confirm":
+        wizard = bot_states.get(user_id)
+        if not isinstance(wizard, dict) or wizard.get("state") != "presence_wizard_confirm":
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        try:
+            start_time = _presence_v2_parse_clock(str(wizard.get("start") or ""))
+            end_time = _presence_v2_parse_clock(str(wizard.get("end") or ""))
+            days = sorted({
+                int(value) for value in wizard.get("days") or []
+                if str(value).isdigit() and int(value) in range(7)
+            })
+            if not days:
+                raise ValueError("حداقل یک روز باید انتخاب شود.")
+            if start_time == end_time:
+                raise ValueError("ساعت شروع و پایان یکسان معتبر نیست.")
+            if db_pool is None:
+                raise RuntimeError("DATABASE_UNAVAILABLE")
+            row = await db_user(str(user_id))
+            if not row or not row["account_connected"] or not row["salf_enabled"]:
+                raise RuntimeError("PRESENCE_ACCESS_REQUIRED")
+
+            config = await presence_get_settings(user_id)
+            config["online_enabled"] = True
+            config["online_mode"] = "schedule"
+            config["online_schedule_enabled"] = True
+            config["online_windows"] = [{
+                "days": days,
+                "start": start_time,
+                "end": end_time,
+                "enabled": True,
+            }]
+            await presence_save_settings(user_id, config)
+            presence_next_online[str(user_id)] = 0.0
+            bot_states.pop(user_id, None)
+            result = await presence_apply_now(user_id, True)
+            if not result.get("ok"):
+                print(
+                    f"Presence schedule saved but not immediately applied for "
+                    f"{customer_key(str(user_id))}: {result.get('reason')}"
+                )
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+        except ValueError as exc:
+            await bot_edit(
+                chat_id,
+                message_id,
+                f"<b>Sᴀʟғ1 · ثبت برنامه</b>\n\n<blockquote>{html.escape(str(exc))}</blockquote>",
+            )
+        except Exception as exc:
+            if str(exc) == "DATABASE_UNAVAILABLE":
+                error = "پایگاه داده در دسترس نیست؛ برنامه ذخیره نشد."
+            elif str(exc) == "PRESENCE_ACCESS_REQUIRED":
+                error = "اکانت متصل یا سرویس سلف فعال نیست؛ برنامه ذخیره نشد."
+            else:
+                error = _presence_v2_error_text(_presence_v2_error_code(exc))
+            await bot_edit(
+                chat_id,
+                message_id,
+                f"<b>Sᴀʟғ1 · ثبت برنامه</b>\n\n<blockquote>{html.escape(error)}</blockquote>",
+            )
+        return
+
+    if data == "prs_online_stop":
+        config = await presence_get_settings(user_id)
+        config["online_enabled"] = False
+        await presence_save_settings(user_id, config)
+        presence_next_online[str(user_id)] = 0.0
+        await presence_apply_now(user_id, True)
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data in {"prs_online_always", "prs_online_manual", "prs_online_toggle"}:
+        row = await db_user(str(user_id))
+        if not row or not row["account_connected"] or not row["salf_enabled"]:
+            await bot_edit(
+                chat_id,
+                message_id,
+                "<b>Sᴀʟғ1 · وضعیت حضور</b>\n\n<blockquote>ابتدا اکانت را متصل و سرویس سلف را فعال کنید.</blockquote>\n\n"
+                + rich_button_row(rich_button("‹ بازگشت", "presence", "primary")),
+            )
+            return
+
+        config = await presence_get_settings(user_id)
+        if data == "prs_online_toggle":
+            config["online_enabled"] = not bool(config.get("online_enabled"))
+            if config["online_enabled"] and str(config.get("online_mode") or "") not in {"schedule"}:
+                config["online_mode"] = "always"
+                config["online_schedule_enabled"] = False
+        else:
+            config["online_enabled"] = True
+            config["online_mode"] = "always" if data == "prs_online_always" else "manual"
+            config["online_schedule_enabled"] = False
+
+        await presence_save_settings(user_id, config)
+        presence_next_online[str(user_id)] = 0.0
+        await presence_apply_now(user_id, True)
+        await bot_edit(chat_id, message_id, await presence_page(user_id))
+        return
+
+    if data == "prs_schedule":
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id, "online"))
+        return
+
+    if data in {"prs_schedule_online", "prs_schedule_activity"}:
+        engine = "online" if data.endswith("online") else "activity"
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id, engine))
+        return
+
+    if data == "prs_schedule_add_online":
+        # Legacy route: open the new guided scheduler instead of free-text input.
+        row = await db_user(str(user_id))
+        if not row or not row["account_connected"] or not row["salf_enabled"]:
+            await bot_edit(chat_id, message_id, await presence_page(user_id))
+            return
+        config = await presence_get_settings(user_id)
+        current = next(
+            (window for window in (config.get("online_windows") or []) if window.get("enabled", True)),
+            None,
+        ) if config.get("online_schedule_enabled") else None
+        days = list((current or {}).get("days") or [])
+        bot_states[user_id] = {
+            "state": "presence_wizard_days",
+            "days": days,
+            "start": str((current or {}).get("start") or ""),
+            "end": str((current or {}).get("end") or ""),
+            "panel_chat_id": chat_id,
+            "panel_message_id": message_id,
+        }
+        await bot_edit(chat_id, message_id, presence_wizard_days_page(days))
+        return
+
+    if data in {"prs_schedule_toggle_online", "prs_schedule_toggle_activity"}:
+        engine = "online" if data.endswith("online") else "activity"
+        if engine == "online":
+            config = await presence_get_settings(user_id)
+            if not config.get("online_schedule_enabled") and not config.get("online_windows"):
+                # A schedule cannot be enabled without a configured time window.
+                row = await db_user(str(user_id))
+                if row and row["account_connected"] and row["salf_enabled"]:
+                    current = None
+                    bot_states[user_id] = {
+                        "state": "presence_wizard_days",
+                        "days": [],
+                        "start": "",
+                        "end": "",
+                        "panel_chat_id": chat_id,
+                        "panel_message_id": message_id,
+                    }
+                    await bot_edit(chat_id, message_id, presence_wizard_days_page([]))
+                else:
+                    await bot_edit(chat_id, message_id, await presence_page(user_id))
+                return
+            config["online_schedule_enabled"] = not bool(config.get("online_schedule_enabled"))
+            config["online_mode"] = "schedule"
+            config["online_enabled"] = bool(config["online_schedule_enabled"])
+            await presence_save_settings(user_id, config)
+            presence_next_online[str(user_id)] = 0.0
+            await presence_apply_now(user_id, True)
+            await bot_edit(chat_id, message_id, await presence_schedule_page(user_id, "online"))
+            return
+
+        config = await presence_get_settings(user_id)
+        config["activity_schedule_enabled"] = not bool(config.get("activity_schedule_enabled"))
+        await presence_save_settings(user_id, config)
+        await presence_apply_now(user_id, True)
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id, "activity"))
+        return
+
+    if data in {"prs_schedule_clear_online", "prs_schedule_clear_activity"}:
+        engine = "online" if data.endswith("online") else "activity"
+        await presence_clear_schedule(user_id, engine)
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id, engine))
+        return
+
+    if data in {"prs_schedule_refresh_online", "prs_schedule_refresh_activity"}:
+        engine = "online" if data.endswith("online") else "activity"
+        await bot_edit(chat_id, message_id, await presence_schedule_page(user_id, engine))
+        return
+
+
 
     if data == "prs_activity":
         await bot_edit(chat_id, message_id, await presence_activity_page(user_id))
