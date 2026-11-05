@@ -3910,7 +3910,13 @@ async def bot_api(method: str, payload: dict | None = None, timeout: int = 35):
         ) as response:
             data = await response.json()
             if not data.get("ok"):
-                print(f"Bot API {method} failed: {data}")
+                description = str(data.get("description") or "").lower()
+                unchanged_edit = (
+                    method == "editMessageText"
+                    and "message is not modified" in description
+                )
+                if not unchanged_edit:
+                    print(f"Bot API {method} failed: {data}")
             return data
     except Exception as exc:
         print(f"Bot API {method} error: {exc}")
@@ -4401,6 +4407,11 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
     # to every panel button before the working edit was attempted.
     result = await bot_api("editMessageText", payload)
     if isinstance(result, dict) and result.get("ok"):
+        return result
+    if (
+        isinstance(result, dict)
+        and "message is not modified" in str(result.get("description") or "").lower()
+    ):
         return result
 
     fallback = await bot_api(
@@ -7316,7 +7327,8 @@ async def process_callback(callback_query: dict):
         await process_ping_callback(callback_query)
         return
 
-    await panel_session_touch_callback(user_id, chat_id, message_id, data)
+    # Session tracking is bookkeeping; it must not delay the visible page transition.
+    asyncio.create_task(panel_session_touch_callback(user_id, chat_id, message_id, data))
 
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
         if not await is_admin_user(user_id, from_user.get("username")):
@@ -9680,9 +9692,9 @@ async def bot_webhook(request: web.Request):
         lane_key = bot_update_lane_key(update, update_id)
         callback = update.get("callback_query")
         if isinstance(callback, dict) and callback.get("id"):
-            # Stop Telegram's button spinner immediately after the durable insert.
-            # The callback action itself is still processed in its ordered panel lane.
+            # Acknowledge the click immediately; the durable queue still controls execution.
             callback["_salf1_callback_acknowledged"] = True
+            asyncio.create_task(bot_answer_callback(str(callback["id"])))
 
         payload_json = json.dumps(update, ensure_ascii=False, separators=(",", ":"))
         queue_pool = webhook_db_pool or db_pool
@@ -9697,8 +9709,6 @@ async def bot_webhook(request: web.Request):
                 payload_json,
                 lane_key,
             )
-        if isinstance(callback, dict) and callback.get("id"):
-            asyncio.create_task(bot_answer_callback(str(callback["id"])))
         elapsed_ms = (time.monotonic() - request_start) * 1000
         webhook_enqueue_samples.append(round(elapsed_ms, 1))
         if elapsed_ms >= 250:
