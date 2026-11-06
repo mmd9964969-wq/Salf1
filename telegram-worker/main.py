@@ -4527,14 +4527,18 @@ async def media_guard_scopes_page(user_id):
 
 def media_guard_scopes_markup(config):
     rows = []
-    for key, label in MEDIA_GUARD_SCOPE_LABELS.items():
-        enabled = bool(config["scopes"].get(key))
-        rows.append([{
-            "text": ("› " + label + " روشن") if enabled else ("› " + label + " خاموش"),
-            "callback_data": "mg_scope_" + key,
-            "style": "success" if enabled else "danger",
-        }])
-    rows.append([{"text": "‹ بازگشت", "callback_data": "media_guard"}])
+    items = list(MEDIA_GUARD_SCOPE_LABELS.items())
+    for index in range(0, len(items), 2):
+        row = []
+        for key, label in items[index:index + 2]:
+            enabled = bool(config["scopes"].get(key))
+            row.append({
+                "text": ("› " + label + " روشن") if enabled else ("› " + label + " خاموش"),
+                "callback_data": "mg_scope_" + key,
+                "style": "success" if enabled else "danger",
+            })
+        rows.append(row)
+    rows.append([{"text": "‹ بازگشت", "callback_data": "media_guard", "style": "primary"}])
     return {"inline_keyboard": rows}
 
 
