@@ -5933,6 +5933,18 @@ def _presence_v2_error_text(code):
         "ACTION_FAILED":"اجرای فعالیت ناموفق بود.",
     }.get(code or "","بدون خطا")
 
+def _presence_v2_status_expiry_epoch(expires_at):
+    if isinstance(expires_at, datetime):
+        value = expires_at
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    try:
+        return int(expires_at)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _presence_v2_status_refresh_delay(expires_at, now_epoch, configured_seconds=45):
     try:
         configured = int(configured_seconds or 45)
@@ -5940,11 +5952,8 @@ def _presence_v2_status_refresh_delay(expires_at, now_epoch, configured_seconds=
         configured = 45
     configured = max(15, min(90, configured))
 
-    try:
-        remaining = int(expires_at) - int(now_epoch)
-    except (TypeError, ValueError, OverflowError):
-        remaining = 0
-
+    expiry_epoch = _presence_v2_status_expiry_epoch(expires_at)
+    remaining = expiry_epoch - int(now_epoch) if expiry_epoch is not None else 0
     if remaining <= 0:
         return float(min(configured, 20))
     return float(max(5, min(configured, remaining - 5)))
@@ -6212,23 +6221,26 @@ async def _presence_apply_now_unlocked(user_id:int,force:bool=False):
             return {"ok":False,"reason":"ACCOUNT_NOT_AUTHORIZED"}
         _,local=_presence_v2_now_local(config)
         online_active=_presence_v2_engine_active(config,"online",local)
+        online_verified=bool(presence_last_online_state.get(str(user_id)))
         if online_active:
             due=force or time.monotonic()>=float(presence_next_online.get(str(user_id),0) or 0)
             if due:
                 await client(functions.account.UpdateStatusRequest(offline=False))
                 status_name, status_expires = await _presence_v2_read_self_status(client)
                 now_epoch = int(time.time())
+                status_expiry_epoch = _presence_v2_status_expiry_epoch(status_expires)
                 if status_name != "UserStatusOnline" or (
-                    status_expires is not None and int(status_expires) <= now_epoch
+                    status_expiry_epoch is not None and status_expiry_epoch <= now_epoch
                 ):
                     # One bounded retry handles the short propagation delay after updateStatus.
                     await asyncio.sleep(1)
                     await client(functions.account.UpdateStatusRequest(offline=False))
                     status_name, status_expires = await _presence_v2_read_self_status(client)
                     now_epoch = int(time.time())
+                    status_expiry_epoch = _presence_v2_status_expiry_epoch(status_expires)
 
                 if status_name != "UserStatusOnline" or (
-                    status_expires is not None and int(status_expires) <= now_epoch
+                    status_expiry_epoch is not None and status_expiry_epoch <= now_epoch
                 ):
                     presence_last_online_state[str(user_id)]=False
                     presence_next_online[str(user_id)]=time.monotonic()+12
@@ -6249,40 +6261,43 @@ async def _presence_apply_now_unlocked(user_id:int,force:bool=False):
                         f"Presence online status not confirmed for "
                         f"{customer_key(str(user_id))}: telegram_status={status_name}"
                     )
-                    return {
-                        "ok":False,
-                        "reason":"TELEGRAM_STATUS_NOT_CONFIRMED",
-                        "online":False,
-                        "activity":False,
-                    }
-
-                refresh_delay = _presence_v2_status_refresh_delay(
-                    status_expires,
+                    online_verified=False
+                else:
+                    refresh_delay = _presence_v2_status_refresh_delay(
+                    status_expiry_epoch,
                     now_epoch,
                     config.get("online_refresh_seconds", 45),
-                )
-                presence_next_online[str(user_id)]=time.monotonic()+refresh_delay
-                presence_last_online_state[str(user_id)]=True
-                r=presence_runtime_stats.setdefault(str(user_id),{})
-                r.update({
-                    "online_state":"online",
-                    "last_update_at":datetime.now(timezone.utc),
-                    "last_error_code":"",
-                })
-                r["online_success"]=int(r.get("online_success") or 0)+1
-                await _presence_v2_runtime_save(user_id)
-                await presence_log(
-                    user_id,
-                    "presence.started",
-                    meta={"telegram_status":"online","refresh_in_seconds":round(refresh_delay,1)},
-                )
+                    )
+                    presence_next_online[str(user_id)]=time.monotonic()+refresh_delay
+                    presence_last_online_state[str(user_id)]=True
+                    online_verified=True
+                    r=presence_runtime_stats.setdefault(str(user_id),{})
+                    r.update({
+                        "online_state":"online",
+                        "last_update_at":datetime.now(timezone.utc),
+                        "last_error_code":"",
+                    })
+                    r["online_success"]=int(r.get("online_success") or 0)+1
+                    await _presence_v2_runtime_save(user_id)
+                    await presence_log(
+                        user_id,
+                        "presence.started",
+                        meta={"telegram_status":"online","refresh_in_seconds":round(refresh_delay,1)},
+                    )
         elif presence_last_online_state.get(str(user_id)):
             await presence_mark_offline(user_id)
+            online_verified=False
+        else:
+            online_verified=False
 
         activity_active=_presence_v2_engine_active(config,"activity",local)
         await _presence_v2_sync_activity(user_id,config,activity_active)
         await _presence_v2_watchdog(user_id)
-        return {"ok":True,"online":bool(online_active),"activity":bool(activity_active)}
+        return {
+            "ok": bool(not online_active or online_verified),
+            "online": bool(online_active and online_verified),
+            "activity": bool(activity_active),
+        }
     except FloodWaitError as exc:
         r=presence_runtime_stats.setdefault(str(user_id),{})
         r["last_error_code"]="TELEGRAM_FLOOD_WAIT"
