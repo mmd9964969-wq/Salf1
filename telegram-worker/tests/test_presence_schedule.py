@@ -210,7 +210,9 @@ Heartbeat : سالم</blockquote>
 
     def test_non_presence_pages_are_not_reformatted(self):
         self.assertIsNone(
-            presence_date_style_page("<b>Sᴀʟғ1 · تنظیمات سلف</b>\\n\\nمتن عادی")
+            presence_date_style_page("""<b>Sᴀʟғ1 · تنظیمات سلف</b>
+
+متن عادی""")
         )
 
     def test_multiline_blockquote_is_preserved_as_one_rich_element(self):
