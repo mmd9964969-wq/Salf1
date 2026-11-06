@@ -20,6 +20,8 @@ FUNCTIONS = {
     "_presence_v2_parse_clock",
     "_presence_v2_status_expiry_epoch",
     "_presence_v2_status_refresh_delay",
+    "_presence_v2_status_update_accepted",
+    "_presence_v2_build_disconnect_ping_request",
     "_presence_date_style_page",
 }
 CONSTANTS = {"RICH_DIVIDER", "RICH_NATIVE_WIDTH_PAD"}
@@ -67,6 +69,8 @@ rich_message_html = namespace["rich_message_html"]
 presence_date_style_page = namespace["_presence_date_style_page"]
 status_expiry_epoch = namespace["_presence_v2_status_expiry_epoch"]
 status_refresh_delay = namespace["_presence_v2_status_refresh_delay"]
+status_update_accepted = namespace["_presence_v2_status_update_accepted"]
+build_disconnect_ping_request = namespace["_presence_v2_build_disconnect_ping_request"]
 
 
 class PresenceScheduleTests(unittest.TestCase):
@@ -164,7 +168,7 @@ class PresenceScheduleTests(unittest.TestCase):
 
     def test_online_refresh_is_scheduled_before_telegram_expiry(self):
         self.assertEqual(status_refresh_delay(200, 100, 45), 45.0)
-        self.assertEqual(status_refresh_delay(125, 100, 45), 20.0)
+        self.assertEqual(status_refresh_delay(125, 100, 45), 15.0)
         self.assertEqual(status_refresh_delay(102, 100, 45), 5.0)
 
     def test_status_expiry_accepts_telethon_datetime_and_unix_values(self):
@@ -172,6 +176,33 @@ class PresenceScheduleTests(unittest.TestCase):
         self.assertEqual(status_expiry_epoch(value), 200)
         self.assertEqual(status_expiry_epoch(200), 200)
         self.assertIsNone(status_expiry_epoch(None))
+
+    def test_status_update_booltrue_and_boolfalse_are_distinguished(self):
+        class BoolTrue:
+            pass
+        class BoolFalse:
+            pass
+        self.assertTrue(status_update_accepted(BoolTrue()))
+        self.assertFalse(status_update_accepted(BoolFalse()))
+        self.assertTrue(status_update_accepted(True))
+        self.assertFalse(status_update_accepted(False))
+
+    def test_delayed_disconnect_ping_uses_75_second_grace(self):
+        class Request:
+            def __init__(self, ping_id, disconnect_delay):
+                self.ping_id = ping_id
+                self.disconnect_delay = disconnect_delay
+        class Functions:
+            PingDelayDisconnectRequest = Request
+
+        request = build_disconnect_ping_request(Functions, 123)
+        self.assertEqual(request.ping_id, 123)
+        self.assertEqual(request.disconnect_delay, 75)
+
+    def test_delayed_disconnect_ping_has_safe_native_fallback(self):
+        class Functions:
+            pass
+        self.assertIsNone(build_disconnect_ping_request(Functions, 123))
 
     def test_online_refresh_uses_safe_fallback_when_expiry_is_unavailable(self):
         self.assertEqual(status_refresh_delay(None, 100, 45), 20.0)
