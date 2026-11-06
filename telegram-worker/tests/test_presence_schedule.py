@@ -2,7 +2,7 @@ import ast
 import html
 import re
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -18,6 +18,7 @@ FUNCTIONS = {
     "_presence_v2_window_active",
     "_presence_v2_engine_active",
     "_presence_v2_parse_clock",
+    "_presence_v2_status_expiry_epoch",
     "_presence_v2_status_refresh_delay",
     "_presence_date_style_page",
 }
@@ -63,6 +64,7 @@ rich_button = namespace["rich_button"]
 rich_button_row = namespace["rich_button_row"]
 rich_message_html = namespace["rich_message_html"]
 presence_date_style_page = namespace["_presence_date_style_page"]
+status_expiry_epoch = namespace["_presence_v2_status_expiry_epoch"]
 status_refresh_delay = namespace["_presence_v2_status_refresh_delay"]
 
 
@@ -163,6 +165,12 @@ class PresenceScheduleTests(unittest.TestCase):
         self.assertEqual(status_refresh_delay(200, 100, 45), 45.0)
         self.assertEqual(status_refresh_delay(125, 100, 45), 20.0)
         self.assertEqual(status_refresh_delay(102, 100, 45), 5.0)
+
+    def test_status_expiry_accepts_telethon_datetime_and_unix_values(self):
+        value = datetime.fromtimestamp(200, tz=timezone.utc)
+        self.assertEqual(status_expiry_epoch(value), 200)
+        self.assertEqual(status_expiry_epoch(200), 200)
+        self.assertIsNone(status_expiry_epoch(None))
 
     def test_online_refresh_uses_safe_fallback_when_expiry_is_unavailable(self):
         self.assertEqual(status_refresh_delay(None, 100, 45), 20.0)
