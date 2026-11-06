@@ -3213,15 +3213,16 @@ async def inline_panel_bind_controls(token: str, text: str, reply_markup: dict |
     if db_pool is None:
         raise RuntimeError("DATABASE_UNAVAILABLE")
     callback_rows = []
-    next_key = 0
+    used_keys = set()
 
     def bind_callback(value):
-        nonlocal next_key
         raw = str(value or "")
         if not raw:
             return raw
-        key = str(next_key)
-        next_key += 1
+        key = secrets.token_urlsafe(4).replace("-", "").replace("_", "")[:6]
+        while key in used_keys:
+            key = secrets.token_urlsafe(4).replace("-", "").replace("_", "")[:6]
+        used_keys.add(key)
         callback_rows.append((str(token), key, raw))
         return _inline_panel_callback_data(token, key)
 
@@ -3239,7 +3240,14 @@ async def inline_panel_bind_controls(token: str, text: str, reply_markup: dict |
         output_text,
     )
 
-    await db_pool.execute("delete from salf1_inline_panel_callbacks where token=$1", str(token))
+    # Keep prior keys briefly so an already in-flight tap cannot resolve to a
+    # different button after a fast page transition.
+    await db_pool.execute(
+        """
+        delete from salf1_inline_panel_callbacks
+        where created_at < now() - interval '30 days'
+        """
+    )
     if callback_rows:
         await db_pool.executemany(
             "insert into salf1_inline_panel_callbacks(token,callback_key,callback_data) values($1,$2,$3)",
@@ -3270,6 +3278,11 @@ async def inline_panel_answer_markup(customer_id: int, token: str):
 
 
 async def send_inline_panel_to_destination(event, customer_id: str, owner_id: int):
+    global bot_inline_enabled
+    if not bot_inline_enabled:
+        identity = await bot_api("getMe", {}, timeout=10)
+        if isinstance(identity, dict) and identity.get("ok"):
+            bot_inline_enabled = bool((identity.get("result") or {}).get("supports_inline_queries"))
     if not bot_inline_enabled or not bot_username:
         raise RuntimeError("BOT_INLINE_MODE_DISABLED")
     client = client_for(customer_id)
