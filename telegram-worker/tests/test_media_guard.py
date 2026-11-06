@@ -9,6 +9,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "main.py"
 FUNCTIONS = {
     "media_guard_default_config",
     "media_guard_normalize_config",
+    "media_guard_has_selection",
     "media_guard_classify_message",
     "media_guard_render_page",
     "media_guard_main_markup",
@@ -50,6 +51,7 @@ namespace = {"html": html, "json": json}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), namespace)
 defaults = namespace["media_guard_default_config"]
 normalize = namespace["media_guard_normalize_config"]
+has_selection = namespace["media_guard_has_selection"]
 classify = namespace["media_guard_classify_message"]
 render_page = namespace["media_guard_render_page"]
 main_markup = namespace["media_guard_main_markup"]
@@ -103,6 +105,15 @@ class MediaGuardTests(unittest.TestCase):
         self.assertTrue(config["scopes"]["private"])
         self.assertTrue(config["scopes"]["group"])
         self.assertFalse(config["scopes"]["channel"])
+
+    def test_activation_requires_media_and_scope_selection(self):
+        config = defaults()
+        self.assertTrue(has_selection(config))
+        config["media"] = {key: False for key in config["media"]}
+        self.assertFalse(has_selection(config))
+        config = defaults()
+        config["scopes"] = {"private": False, "group": False, "channel": False}
+        self.assertFalse(has_selection(config))
 
     def test_normal_photo_is_eligible(self):
         message = self.message(
@@ -168,6 +179,8 @@ class MediaGuardTests(unittest.TestCase):
             "برای ادامه از دکمه‌ها استفاده کنید.",
         )
         self.assertIn("<table compact>", rendered)
+        self.assertIn('<td align="center"><b>رسانه‌بان</b></td>', rendered)
+        self.assertNotIn("« رسانه‌بان »", rendered)
         self.assertIn("<blockquote>", rendered)
         self.assertIn("&lt;script&gt;", rendered)
         self.assertNotIn("<script>", rendered)
@@ -177,6 +190,8 @@ class MediaGuardTests(unittest.TestCase):
         keyboard = main_markup(config)["inline_keyboard"]
         self.assertEqual(keyboard[0][0]["style"], "success")
         self.assertEqual(keyboard[-1][0]["style"], "primary")
+        self.assertTrue(all(len(row) <= 2 for row in keyboard))
+        self.assertTrue(all(button["text"].startswith(("›", "‹")) for row in keyboard for button in row))
         config["enabled"] = True
         keyboard = main_markup(config)["inline_keyboard"]
         self.assertEqual(keyboard[0][0]["style"], "danger")

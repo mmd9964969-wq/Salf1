@@ -3354,7 +3354,7 @@ async def handle_self_command(event, customer_id: str, text: str):
                 media_guard_render_page(
                     "رسانه‌بان",
                     "برای فعال‌سازی آماده نیست.",
-                    [("وضعیت", "اکانت متصل و سلف فعال لازم است.")],
+                    [("وضعیت", "اکانت باید متصل باشد و یک رسانه و یک محدوده گفتگو فعال باشد.")],
                     "ابتدا اکانت را متصل کنید و سلف را فعال کنید.",
                 ),
             )
@@ -3934,9 +3934,9 @@ def media_guard_render_page(title, intro, rows, guide):
     safe_title = html.escape(str(title or ""), quote=False)
     safe_intro = html.escape(str(intro or ""), quote=False)
     header = (
-        '<table compact><tr><td align="center"><b>« '
+        '<table compact><tr><td align="center"><b>'
         + safe_title
-        + ' »</b></td></tr><tr><td align="center">'
+        + '</b></td></tr><tr><td align="center">'
         + safe_intro
         + '</td></tr></table>'
     )
@@ -4089,6 +4089,32 @@ async def media_guard_add_exception(user_id, entity):
         str(title)[:120],
     )
     return peer_id, peer_type, str(title)[:120], result.endswith("1")
+
+
+async def media_guard_exception_confirm_page(user_id, peer_id):
+    if db_pool is None:
+        return None
+    row = await db_pool.fetchrow(
+        """
+        select peer_id, peer_type, title
+        from salf1_media_guard_exceptions
+        where customer_id=$1 and peer_id=$2
+        """,
+        int(user_id),
+        int(peer_id),
+    )
+    if row is None:
+        return None
+    return media_guard_render_page(
+        "تأیید حذف استثنا",
+        "پیش از حذف گفتگو اطلاعات را بررسی کنید.",
+        [
+            ("گفتگو", str(row["title"] or row["peer_id"])),
+            ("نوع گفتگو", MEDIA_GUARD_SCOPE_LABELS.get(str(row["peer_type"]), "گفتگو")),
+            ("نتیجه", "رسانه‌های مجاز این گفتگو دوباره ذخیره می‌شوند."),
+        ],
+        "حذف استثنا فقط پس از تأیید انجام می‌شود.",
+    )
 
 
 async def media_guard_delete_exception(user_id, peer_id):
@@ -4402,14 +4428,30 @@ async def media_guard_queue_loop():
             await asyncio.sleep(2.0)
 
 
+def media_guard_has_selection(config):
+    normalized = media_guard_normalize_config(config)
+    return any(normalized["media"].values()) and any(normalized["scopes"].values())
+
+
 async def media_guard_enable(user_id, enabled):
     config = await media_guard_get_config(user_id)
     if enabled:
+        if not media_guard_has_selection(config):
+            return False
         row = await db_user(str(user_id))
         if not row or not row["account_connected"] or not row["salf_enabled"]:
             return False
     config["enabled"] = bool(enabled)
     await media_guard_save_config(user_id, config)
+    if not enabled and db_pool is not None:
+        await db_pool.execute(
+            """
+            update salf1_media_guard_queue
+            set status='skipped', reason='feature_disabled', updated_at=now()
+            where customer_id=$1 and status='pending'
+            """,
+            int(user_id),
+        )
     return True
 
 
@@ -4417,6 +4459,7 @@ async def media_guard_main_page(user_id):
     config = await media_guard_get_config(user_id)
     if db_pool is None:
         saved_total = skipped_total = failed_total = today_total = exception_count = 0
+        view_once_total = timed_total = 0
     else:
         stats = await db_pool.fetchrow(
             """
@@ -4424,6 +4467,8 @@ async def media_guard_main_page(user_id):
                 count(*) filter(where status='saved') as saved_total,
                 count(*) filter(where status='skipped') as skipped_total,
                 count(*) filter(where status='failed') as failed_total,
+                count(*) filter(where status='skipped' and reason='view_once') as view_once_total,
+                count(*) filter(where status='skipped' and reason='timed_media') as timed_total,
                 count(*) filter(where created_at>=date_trunc('day', now())) as today_total
             from salf1_media_guard_queue where customer_id=$1
             """,
@@ -4436,6 +4481,8 @@ async def media_guard_main_page(user_id):
         saved_total = int(stats["saved_total"] or 0)
         skipped_total = int(stats["skipped_total"] or 0)
         failed_total = int(stats["failed_total"] or 0)
+        view_once_total = int(stats["view_once_total"] or 0)
+        timed_total = int(stats["timed_total"] or 0)
         today_total = int(stats["today_total"] or 0)
 
     selected_media = sum(1 for value in config["media"].values() if value)
@@ -4448,11 +4495,13 @@ async def media_guard_main_page(user_id):
         ("ذخیره امروز", str(today_total)),
         ("ذخیره موفق", str(saved_total)),
         ("موارد ردشده", str(skipped_total)),
+        ("یک‌بارمشاهده", str(view_once_total)),
+        ("رسانه زمان‌دار", str(timed_total)),
         ("خطاها", str(failed_total)),
     ]
     return media_guard_render_page(
         "رسانه‌بان",
-        "مدیریت ذخیره رسانه‌های دریافتی در پیام‌های ذخیره‌شده",
+        "مدیریت ذخیره رسانه‌های دریافتی در پیام‌های ذخیره‌شده.",
         rows,
         "برای تنظیم رسانه‌ها و گفتگوها از دکمه‌های زیر استفاده کنید.",
     )
@@ -4466,18 +4515,19 @@ def media_guard_main_markup(config):
         "style": "danger" if enabled else "success",
     }
     return {"inline_keyboard": [
-        [toggle],
+        [toggle, {"text": "› تنظیم رسانه‌ها", "callback_data": "mg_media"}],
         [
-            {"text": "› تنظیم رسانه‌ها", "callback_data": "mg_media"},
             {"text": "› محدوده گفتگوها", "callback_data": "mg_scopes"},
+            {"text": "› مدیریت استثناها", "callback_data": "mg_exceptions"},
         ],
         [
-            {"text": "› مدیریت استثناها", "callback_data": "mg_exceptions"},
             {"text": "› گزارش ذخیره‌ها", "callback_data": "mg_report"},
+            {"text": "› راهنمای رسانه‌بان", "callback_data": "mg_help"},
         ],
-        [{"text": "› راهنمای رسانه‌بان", "callback_data": "mg_help"}],
         [{"text": "‹ بازگشت", "callback_data": "self_features", "style": "primary"}],
     ]}
+
+
 
 
 async def media_guard_media_page(user_id):
@@ -4588,7 +4638,10 @@ def media_guard_exceptions_markup(rows):
 
 async def media_guard_report_page(user_id):
     if db_pool is None:
-        stats = {"saved": 0, "skipped": 0, "failed": 0, "pending": 0}
+        stats = {
+            "saved": 0, "skipped": 0, "failed": 0, "pending": 0,
+            "view_once": 0, "timed": 0, "protected": 0,
+        }
         recent = []
     else:
         raw = await db_pool.fetchrow(
@@ -4597,12 +4650,18 @@ async def media_guard_report_page(user_id):
                 count(*) filter(where status='saved') as saved,
                 count(*) filter(where status='skipped') as skipped,
                 count(*) filter(where status='failed') as failed,
-                count(*) filter(where status in ('pending','processing')) as pending
+                count(*) filter(where status in ('pending','processing')) as pending,
+                count(*) filter(where status='skipped' and reason='view_once') as view_once,
+                count(*) filter(where status='skipped' and reason='timed_media') as timed,
+                count(*) filter(where status='skipped' and reason='protected') as protected
             from salf1_media_guard_queue where customer_id=$1
             """,
             int(user_id),
         )
-        stats = {key: int(raw[key] or 0) for key in ("saved", "skipped", "failed", "pending")}
+        stats = {key: int(raw[key] or 0) for key in (
+            "saved", "skipped", "failed", "pending",
+            "view_once", "timed", "protected",
+        )}
         recent = await db_pool.fetch(
             """
             select media_type, chat_title, status, reason, created_at
@@ -4617,8 +4676,23 @@ async def media_guard_report_page(user_id):
         ("ذخیره موفق", str(stats["saved"])),
         ("در انتظار", str(stats["pending"])),
         ("ردشده", str(stats["skipped"])),
+        ("یک‌بارمشاهده", str(stats["view_once"])),
+        ("رسانه زمان‌دار", str(stats["timed"])),
+        ("محتوای محافظت‌شده", str(stats["protected"])),
         ("ناموفق", str(stats["failed"])),
     ]
+    reason_labels = {
+        "view_once": "یک‌بارمشاهده",
+        "timed_media": "رسانه زمان‌دار",
+        "protected": "محتوای محافظت‌شده",
+        "unsupported": "نوع رسانه پشتیبانی نمی‌شود",
+        "source_unavailable": "پیام مبدأ در دسترس نیست",
+        "media_type_changed": "نوع رسانه تغییر کرده است",
+        "chat_exception": "گفتگو مستثنا است",
+        "feature_disabled": "رسانه‌بان غیرفعال است",
+        "scope_disabled": "محدوده گفتگو غیرفعال است",
+        "media_disabled": "این نوع رسانه غیرفعال است",
+    }
     for index, item in enumerate(recent, 1):
         state = {
             "saved": "ذخیره شد",
@@ -4628,13 +4702,20 @@ async def media_guard_report_page(user_id):
             "processing": "در حال پردازش",
         }.get(str(item["status"]), str(item["status"]))
         label = MEDIA_GUARD_MEDIA_LABELS.get(str(item["media_type"]), "رسانه")
-        rows.append((f"عملیات {index}", f"{label} {item['chat_title'] or 'گفتگو'} {state}"))
+        reason = reason_labels.get(str(item["reason"]), "") if item["reason"] else ""
+        timestamp = item["created_at"].strftime("%Y.%m.%d %H.%M") if item["created_at"] else ""
+        detail = " ".join(part for part in (
+            label, str(item["chat_title"] or "گفتگو"), state, reason, timestamp
+        ) if part)
+        rows.append((f"عملیات {index}", detail))
     return media_guard_render_page(
         "گزارش ذخیره‌ها",
-        "آخرین وضعیت عملیات رسانه‌بان",
+        "آخرین وضعیت عملیات رسانه‌بان.",
         rows,
         "گزارش فقط وضعیت عملیات را نگه می‌دارد و متن پیام‌ها را ذخیره نمی‌کند.",
     )
+
+
 
 
 def media_guard_report_markup():
@@ -4652,14 +4733,21 @@ def media_guard_help_page():
         ("رسانه زمان‌دار", "به دلیل محدودیت تلگرام ذخیره نمی‌شود."),
         ("یک‌بارمشاهده", "به دلیل محدودیت تلگرام ذخیره نمی‌شود."),
         ("محتوای محافظت‌شده", "ذخیره یا بازنشر نمی‌شود."),
+        ("فعال‌سازی", "فعالسازی رسانه‌بان"),
+        ("غیرفعال‌سازی", "غیرفعالسازی رسانه‌بان"),
+        ("استثنا", "استثنا رسانه‌بان را در گفتگوی موردنظر اجرا کنید."),
+        ("وضعیت", "وضعیت رسانه‌بان"),
+        ("راهنما", "راهنمای رسانه‌بان"),
         ("خطاها", "عملیات موقت در صف می‌ماند و دوباره بررسی می‌شود."),
     ]
     return media_guard_render_page(
         "راهنمای رسانه‌بان",
-        "روش استفاده از مرکز ذخیره رسانه",
+        "روش استفاده از مرکز ذخیره رسانه.",
         rows,
         "ابتدا محدوده گفتگوها را انتخاب کنید و سپس رسانه‌بان را فعال کنید.",
     )
+
+
 
 
 async def media_guard_open_page(user_id, chat_id, message_id, page="main"):
@@ -9202,7 +9290,7 @@ async def process_bot_message(message: dict):
                     "مدیریت استثناها",
                     "گفتگو شناسایی نشد.",
                     [("وضعیت", "نام کاربری یا شناسه را بررسی کنید.")],
-                    "نمونه ورودی. @username یا شناسه عددی گفتگو.",
+                    "نام کاربری یا شناسه عددی گفتگو را وارد کنید.",
                 )
                 if panel_message_id:
                     await bot_edit(
@@ -10096,7 +10184,7 @@ PV یا گروه را در پیام بعدی ارسال کنید.
                 media_guard_render_page(
                     "رسانه‌بان",
                     "فعال‌سازی انجام نشد.",
-                    [("وضعیت", "اکانت متصل و سلف فعال لازم است.")],
+                    [("وضعیت", "اکانت باید متصل باشد و یک رسانه و یک محدوده گفتگو فعال باشد.")],
                     "ابتدا اکانت را متصل کنید و سلف را فعال کنید.",
                 ),
                 {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "media_guard", "style": "primary"}]]},
@@ -10174,6 +10262,26 @@ PV یا گروه را در پیام بعدی ارسال کنید.
 
     if data.startswith("mg_exception_del:"):
         raw_peer_id = data.removeprefix("mg_exception_del:")
+        if not raw_peer_id.lstrip("-").isdigit() or len(raw_peer_id) > 21:
+            return
+        peer_id = int(raw_peer_id)
+        confirmation = await media_guard_exception_confirm_page(user_id, peer_id)
+        if confirmation is None:
+            await media_guard_open_page(user_id, chat_id, message_id, "exceptions")
+            return
+        await bot_edit(
+            chat_id,
+            message_id,
+            confirmation,
+            {"inline_keyboard": [
+                [{"text": "› تأیید حذف", "callback_data": "mg_exception_confirm:" + str(peer_id), "style": "danger"}],
+                [{"text": "‹ بازگشت", "callback_data": "mg_exceptions", "style": "primary"}],
+            ]},
+        )
+        return
+
+    if data.startswith("mg_exception_confirm:"):
+        raw_peer_id = data.removeprefix("mg_exception_confirm:")
         if not raw_peer_id.lstrip("-").isdigit() or len(raw_peer_id) > 21:
             return
         await media_guard_delete_exception(user_id, int(raw_peer_id))
