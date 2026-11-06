@@ -11,6 +11,10 @@ FUNCTIONS = {
     "media_guard_normalize_config",
     "media_guard_classify_message",
     "media_guard_render_page",
+    "media_guard_main_markup",
+    "media_guard_media_markup",
+    "media_guard_scopes_markup",
+    "media_guard_exceptions_markup",
 }
 CONSTANTS = {
     "RICH_DIVIDER",
@@ -48,6 +52,10 @@ defaults = namespace["media_guard_default_config"]
 normalize = namespace["media_guard_normalize_config"]
 classify = namespace["media_guard_classify_message"]
 render_page = namespace["media_guard_render_page"]
+main_markup = namespace["media_guard_main_markup"]
+media_markup = namespace["media_guard_media_markup"]
+scopes_markup = namespace["media_guard_scopes_markup"]
+exceptions_markup = namespace["media_guard_exceptions_markup"]
 
 
 class MessageType:
@@ -163,7 +171,42 @@ class MediaGuardTests(unittest.TestCase):
         self.assertIn("<blockquote>", rendered)
         self.assertIn("&lt;script&gt;", rendered)
         self.assertNotIn("<script>", rendered)
-        self.assertEqual(rendered.count("<hr/>"), 0)
+        self.assertEqual(rendered.count("[[RICH_DIVIDER]]"), 2)
+    def test_main_keyboard_uses_green_enable_and_red_disable(self):
+        config = defaults()
+        keyboard = main_markup(config)["inline_keyboard"]
+        self.assertEqual(keyboard[0][0]["style"], "success")
+        self.assertEqual(keyboard[-1][0]["style"], "primary")
+        config["enabled"] = True
+        keyboard = main_markup(config)["inline_keyboard"]
+        self.assertEqual(keyboard[0][0]["style"], "danger")
+        self.assertEqual(keyboard[0][0]["callback_data"], "mg_toggle_off")
+
+    def test_media_keyboard_is_two_columns_and_keeps_blue_back(self):
+        config = defaults()
+        keyboard = media_markup(config)["inline_keyboard"]
+        self.assertTrue(all(len(row) <= 2 for row in keyboard))
+        self.assertEqual(keyboard[-1][0]["style"], "primary")
+        self.assertEqual(len([button for row in keyboard[:-1] for button in row]), 8)
+
+    def test_scope_keyboard_is_two_columns_and_keeps_blue_back(self):
+        config = defaults()
+        keyboard = scopes_markup(config)["inline_keyboard"]
+        self.assertEqual([len(row) for row in keyboard], [2, 1, 1])
+        self.assertEqual(keyboard[-1][0]["style"], "primary")
+
+    def test_exception_keyboard_uses_danger_for_delete_and_valid_callback_ids(self):
+        rows = [
+            {"peer_id": -1001234567890, "title": "Group A"},
+            {"peer_id": 123456789, "title": "User B"},
+        ]
+        keyboard = exceptions_markup(rows)["inline_keyboard"]
+        self.assertEqual(keyboard[0][0]["callback_data"], "mg_exception_add")
+        deletes = [button for row in keyboard[1:-1] for button in row]
+        self.assertEqual(len(deletes), 2)
+        self.assertTrue(all(button["style"] == "danger" for button in deletes))
+        self.assertEqual(keyboard[-1][0]["style"], "primary")
+
 
 
 if __name__ == "__main__":

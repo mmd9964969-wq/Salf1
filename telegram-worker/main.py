@@ -4365,17 +4365,28 @@ async def media_guard_process_item(row):
 
 
 async def media_guard_queue_loop():
+    print("Media Guard persistent queue worker started.")
     while True:
         try:
-            if db_pool is not None:
+            active_customers = [
+                int(customer_id)
+                for customer_id, client in list(clients.items())
+                if client is not None
+                and client.is_connected()
+                and enabled_cache.get(str(customer_id), False)
+            ]
+            if db_pool is not None and active_customers:
                 rows = await db_pool.fetch(
                     """
                     select id, customer_id
                     from salf1_media_guard_queue
-                    where status='pending' and available_at<=now()
+                    where customer_id=any($1::bigint[])
+                      and status='pending'
+                      and available_at<=now()
                     order by created_at
                     limit 20
-                    """
+                    """,
+                    active_customers,
                 )
                 processed = False
                 for row in rows:
@@ -4465,7 +4476,7 @@ def media_guard_main_markup(config):
             {"text": "› گزارش ذخیره‌ها", "callback_data": "mg_report"},
         ],
         [{"text": "› راهنمای رسانه‌بان", "callback_data": "mg_help"}],
-        [{"text": "‹ بازگشت", "callback_data": "self_features"}],
+        [{"text": "‹ بازگشت", "callback_data": "self_features", "style": "primary"}],
     ]}
 
 
@@ -4496,7 +4507,7 @@ def media_guard_media_markup(config):
                 "style": "success" if enabled else "danger",
             })
         rows.append(row)
-    rows.append([{"text": "‹ بازگشت", "callback_data": "media_guard"}])
+    rows.append([{"text": "‹ بازگشت", "callback_data": "media_guard", "style": "primary"}])
     return {"inline_keyboard": rows}
 
 
@@ -4528,9 +4539,16 @@ def media_guard_scopes_markup(config):
 
 
 async def media_guard_exceptions_page(user_id):
-    rows = await media_guard_exception_rows(user_id, 30)
+    rows = await media_guard_exception_rows(user_id, 50)
+    total = 0
+    if db_pool is not None:
+        total = int(await db_pool.fetchval(
+            "select count(*) from salf1_media_guard_exceptions where customer_id=$1",
+            int(user_id),
+        ) or 0)
     details = [
-        ("تعداد استثناها", str(len(rows))),
+        ("تعداد استثناها", str(total)),
+        ("نمایش گفتگوها", str(min(len(rows), 8))),
         ("نحوه اعمال", "برای تمام رسانه‌های همان گفتگو"),
     ]
     for index, row in enumerate(rows[:8], 1):
@@ -4546,15 +4564,21 @@ async def media_guard_exceptions_page(user_id):
 
 def media_guard_exceptions_markup(rows):
     keyboard = [[{"text": "› افزودن گفتگو", "callback_data": "mg_exception_add"}]]
-    for row in rows[:8]:
+    pending = []
+    for row in rows[:50]:
         peer_id = int(row["peer_id"])
-        title = str(row["title"] or peer_id).strip()[:24]
-        keyboard.append([{
+        title = str(row["title"] or peer_id).strip()[:20]
+        pending.append({
             "text": "› حذف " + title,
             "callback_data": "mg_exception_del:" + str(peer_id),
             "style": "danger",
-        }])
-    keyboard.append([{"text": "‹ بازگشت", "callback_data": "media_guard"}])
+        })
+        if len(pending) == 2:
+            keyboard.append(pending)
+            pending = []
+    if pending:
+        keyboard.append(pending)
+    keyboard.append([{"text": "‹ بازگشت", "callback_data": "media_guard", "style": "primary"}])
     return {"inline_keyboard": keyboard}
 
 
@@ -4600,7 +4624,7 @@ async def media_guard_report_page(user_id):
             "processing": "در حال پردازش",
         }.get(str(item["status"]), str(item["status"]))
         label = MEDIA_GUARD_MEDIA_LABELS.get(str(item["media_type"]), "رسانه")
-        rows.append((f"عملیات {index}", f"{label} · {item['chat_title'] or 'گفتگو'} · {state}"))
+        rows.append((f"عملیات {index}", f"{label} {item['chat_title'] or 'گفتگو'} {state}"))
     return media_guard_render_page(
         "گزارش ذخیره‌ها",
         "آخرین وضعیت عملیات رسانه‌بان",
@@ -4612,7 +4636,7 @@ async def media_guard_report_page(user_id):
 def media_guard_report_markup():
     return {"inline_keyboard": [
         [{"text": "› بروزرسانی گزارش", "callback_data": "mg_report"}],
-        [{"text": "‹ بازگشت", "callback_data": "media_guard"}],
+        [{"text": "‹ بازگشت", "callback_data": "media_guard", "style": "primary"}],
     ]}
 
 
@@ -4656,7 +4680,7 @@ async def media_guard_open_page(user_id, chat_id, message_id, page="main"):
         markup = media_guard_report_markup()
     else:
         text = media_guard_help_page()
-        markup = {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "media_guard"}]]}
+        markup = {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "media_guard", "style": "primary"}]]}
     await bot_edit(chat_id, message_id, text, markup)
 
 
@@ -9179,7 +9203,7 @@ async def process_bot_message(message: dict):
                 if panel_message_id:
                     await bot_edit(
                         panel_chat_id, panel_message_id, error_text,
-                        {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "mg_exceptions"}]]},
+                        {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "mg_exceptions", "style": "primary"}]]},
                     )
                 else:
                     await bot_send(chat["id"], error_text)
@@ -10055,6 +10079,8 @@ PV یا گروه را در پیام بعدی ارسال کنید.
         return
 
     if data == "media_guard":
+        if isinstance(bot_states.get(user_id), dict) and str(bot_states[user_id].get("state") or "").startswith("media_guard_"):
+            bot_states.pop(user_id, None)
         await media_guard_open_page(user_id, chat_id, message_id, "main")
         return
 
@@ -10069,13 +10095,14 @@ PV یا گروه را در پیام بعدی ارسال کنید.
                     [("وضعیت", "اکانت متصل و سلف فعال لازم است.")],
                     "ابتدا اکانت را متصل کنید و سلف را فعال کنید.",
                 ),
-                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "media_guard"}]]},
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "media_guard", "style": "primary"}]]},
             )
             return
         await media_guard_open_page(user_id, chat_id, message_id, "main")
         return
 
     if data == "mg_media":
+        bot_states.pop(user_id, None)
         await media_guard_open_page(user_id, chat_id, message_id, "media")
         return
 
@@ -10090,6 +10117,7 @@ PV یا گروه را در پیام بعدی ارسال کنید.
         return
 
     if data == "mg_scopes":
+        bot_states.pop(user_id, None)
         await media_guard_open_page(user_id, chat_id, message_id, "scopes")
         return
 
@@ -10104,6 +10132,8 @@ PV یا گروه را در پیام بعدی ارسال کنید.
         return
 
     if data == "mg_exceptions":
+        if isinstance(bot_states.get(user_id), dict) and bot_states[user_id].get("state") == "media_guard_exception_add":
+            bot_states.pop(user_id, None)
         await media_guard_open_page(user_id, chat_id, message_id, "exceptions")
         return
 
@@ -10118,7 +10148,7 @@ PV یا گروه را در پیام بعدی ارسال کنید.
                     [("وضعیت", "ابتدا اکانت را متصل کنید.")],
                     "پس از اتصال دوباره تلاش کنید.",
                 ),
-                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "mg_exceptions"}]]},
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "mg_exceptions", "style": "primary"}]]},
             )
             return
         bot_states[user_id] = {
@@ -10147,10 +10177,12 @@ PV یا گروه را در پیام بعدی ارسال کنید.
         return
 
     if data == "mg_report":
+        bot_states.pop(user_id, None)
         await media_guard_open_page(user_id, chat_id, message_id, "report")
         return
 
     if data == "mg_help":
+        bot_states.pop(user_id, None)
         await media_guard_open_page(user_id, chat_id, message_id, "help")
         return
 
