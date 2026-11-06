@@ -6264,9 +6264,9 @@ async def _presence_apply_now_unlocked(user_id:int,force:bool=False):
                     online_verified=False
                 else:
                     refresh_delay = _presence_v2_status_refresh_delay(
-                    status_expiry_epoch,
-                    now_epoch,
-                    config.get("online_refresh_seconds", 45),
+                        status_expiry_epoch,
+                        now_epoch,
+                        config.get("online_refresh_seconds", 45),
                     )
                     presence_next_online[str(user_id)]=time.monotonic()+refresh_delay
                     presence_last_online_state[str(user_id)]=True
