@@ -52,6 +52,7 @@ namespace = {
     "datetime": datetime,
     "html": html,
     "re": re,
+    "timezone": timezone,
 }
 module = ast.Module(body=nodes, type_ignores=[])
 exec(compile(module, str(SOURCE), "exec"), namespace)
