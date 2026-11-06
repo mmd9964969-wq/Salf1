@@ -168,7 +168,7 @@ class PresenceScheduleTests(unittest.TestCase):
 
     def test_online_refresh_is_scheduled_before_telegram_expiry(self):
         self.assertEqual(status_refresh_delay(200, 100, 45), 45.0)
-        self.assertEqual(status_refresh_delay(125, 100, 45), 20.0)
+        self.assertEqual(status_refresh_delay(125, 100, 45), 15.0)
         self.assertEqual(status_refresh_delay(102, 100, 45), 5.0)
 
     def test_status_expiry_accepts_telethon_datetime_and_unix_values(self):
