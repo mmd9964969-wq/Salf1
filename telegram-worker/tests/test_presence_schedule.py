@@ -18,6 +18,7 @@ FUNCTIONS = {
     "_presence_v2_window_active",
     "_presence_v2_engine_active",
     "_presence_v2_parse_clock",
+    "_presence_v2_status_refresh_delay",
     "_presence_date_style_page",
 }
 CONSTANTS = {"RICH_DIVIDER", "RICH_NATIVE_WIDTH_PAD"}
@@ -62,6 +63,7 @@ rich_button = namespace["rich_button"]
 rich_button_row = namespace["rich_button_row"]
 rich_message_html = namespace["rich_message_html"]
 presence_date_style_page = namespace["_presence_date_style_page"]
+status_refresh_delay = namespace["_presence_v2_status_refresh_delay"]
 
 
 class PresenceScheduleTests(unittest.TestCase):
@@ -156,6 +158,71 @@ class PresenceScheduleTests(unittest.TestCase):
     def test_button_rows_reject_more_than_eight_buttons(self):
         with self.assertRaises(ValueError):
             rich_button_row(*(["x"] * 9))
+
+    def test_online_refresh_is_scheduled_before_telegram_expiry(self):
+        self.assertEqual(status_refresh_delay(200, 100, 45), 45.0)
+        self.assertEqual(status_refresh_delay(125, 100, 45), 20.0)
+        self.assertEqual(status_refresh_delay(102, 100, 45), 5.0)
+
+    def test_online_refresh_uses_safe_fallback_when_expiry_is_unavailable(self):
+        self.assertEqual(status_refresh_delay(None, 100, 45), 20.0)
+        self.assertEqual(status_refresh_delay("invalid", 100, 60), 20.0)
+
+    def test_presence_summary_values_stay_on_their_label_rows(self):
+        source = """<b>Sᴀʟғ1 · مرکز وضعیت حضور</b>
+
+<blockquote><b>برنامه هفتگی آنلاین</b>
+برنامه هفتگی انتخاب نشده است.
+<b>سلامت موتور</b>
+بدون خطای ثبت‌شده</blockquote>
+<tg-button-row><tg-button type="callback_data" data="self_features">‹ بازگشت</tg-button></tg-button-row>"""
+        result = presence_date_style_page(source)
+        rendered = result["html"]
+        self.assertIn(
+            '<td align="right"><b>برنامه هفتگی آنلاین</b></td>'
+            '<td align="left">برنامه هفتگی انتخاب نشده است.</td>',
+            rendered,
+        )
+        self.assertIn(
+            '<td align="right"><b>سلامت موتور</b></td>'
+            '<td align="left">بدون خطای ثبت‌شده</td>',
+            rendered,
+        )
+        self.assertNotIn(
+            '<td colspan="2" align="right"><b>سلامت موتور</b></td>',
+            rendered,
+        )
+
+    def test_main_presence_keyboard_is_filtered_and_prioritized(self):
+        source = """<b>Sᴀʟғ1 · مرکز وضعیت حضور</b>
+
+وضعیت : فعال
+<tg-button-row><tg-button type="callback_data" style="success" data="prs_online_always">› همیشه آنلاین</tg-button><tg-button type="callback_data" style="primary" data="prs_online_schedule">› تنظیم برنامه هفتگی</tg-button></tg-button-row>
+<tg-button-row><tg-button type="callback_data" style="danger" data="prs_online_stop">› توقف وضعیت آنلاین</tg-button></tg-button-row>
+<tg-button-row><tg-button type="callback_data" data="prs_activity">› فعالیت داخل چت</tg-button><tg-button type="callback_data" data="prs_schedule">› برنامه و استثناها</tg-button></tg-button-row>
+<tg-button-row><tg-button type="callback_data" data="prs_destinations">› مقصدها</tg-button><tg-button type="callback_data" data="prs_profiles">› پروفایل‌ها</tg-button></tg-button-row>
+<tg-button-row><tg-button type="callback_data" data="prs_timezone">› منطقه زمانی</tg-button><tg-button type="callback_data" data="prs_advanced">› تنظیمات پیشرفته</tg-button></tg-button-row>
+<tg-button-row><tg-button type="callback_data" data="prs_refresh">› بروزرسانی</tg-button><tg-button type="callback_data" data="unknown_external">دکمه نامرتبط</tg-button></tg-button-row>
+<tg-button-row><tg-button type="callback_data" data="self_features">‹ بازگشت</tg-button></tg-button-row>"""
+        result = presence_date_style_page(source)
+        keyboard = result["reply_markup"]["inline_keyboard"]
+        callbacks = [[button["callback_data"] for button in row] for row in keyboard]
+        self.assertEqual(callbacks, [
+            ["prs_online_always", "prs_online_schedule"],
+            ["prs_online_stop"],
+            ["prs_activity", "prs_schedule"],
+            ["prs_destinations", "prs_profiles"],
+            ["prs_timezone", "prs_advanced"],
+            ["prs_refresh"],
+            ["self_features"],
+        ])
+        self.assertNotIn(
+            "unknown_external",
+            [button["callback_data"] for row in keyboard for button in row],
+        )
+        self.assertEqual(keyboard[0][0]["text"], "› همیشه آنلاین")
+        self.assertEqual(keyboard[0][0]["style"], "success")
+        self.assertEqual(keyboard[1][0]["style"], "danger")
 
     def test_presence_page_uses_date_center_layout_and_separate_keyboard(self):
         source = """<b>Sᴀʟғ1 · مرکز وضعیت حضور</b>
