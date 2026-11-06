@@ -18,6 +18,7 @@ FUNCTIONS = {
     "_presence_v2_window_active",
     "_presence_v2_engine_active",
     "_presence_v2_parse_clock",
+    "_presence_date_style_page",
 }
 CONSTANTS = {"RICH_DIVIDER", "RICH_NATIVE_WIDTH_PAD"}
 
@@ -60,6 +61,7 @@ parse_clock = namespace["_presence_v2_parse_clock"]
 rich_button = namespace["rich_button"]
 rich_button_row = namespace["rich_button_row"]
 rich_message_html = namespace["rich_message_html"]
+presence_date_style_page = namespace["_presence_date_style_page"]
 
 
 class PresenceScheduleTests(unittest.TestCase):
@@ -154,6 +156,62 @@ class PresenceScheduleTests(unittest.TestCase):
     def test_button_rows_reject_more_than_eight_buttons(self):
         with self.assertRaises(ValueError):
             rich_button_row(*(["x"] * 9))
+
+    def test_presence_page_uses_date_center_layout_and_separate_keyboard(self):
+        source = """<b>Sᴀʟғ1 · مرکز وضعیت حضور</b>
+
+<blockquote><b>وضعیت حساب</b>
+اکانت : متصل
+سرویس سلف : فعال</blockquote>
+
+<blockquote><b>سلامت موتور</b>
+Heartbeat : سالم</blockquote>
+
+<tg-button-row align="center"><tg-button type="callback_data" style="success" data="prs_online_always">› همیشه آنلاین</tg-button><tg-button type="callback_data" style="primary" data="prs_online_schedule">› برنامه هفتگی</tg-button></tg-button-row>
+<tg-button-row align="center"><tg-button type="callback_data" style="primary" data="self_features">‹ بازگشت</tg-button></tg-button-row>"""
+        result = presence_date_style_page(source)
+        self.assertIsNotNone(result)
+        rendered = result["html"]
+        self.assertIn('<table compact>', rendered)
+        self.assertIn('<td align="center"><b>« مرکز وضعیت حضور »</b></td>', rendered)
+        self.assertIn("مدیریت وضعیت آنلاین، برنامه هفتگی و فعالیت اکانت", rendered)
+        self.assertIn('<th align="center"><b>مشخصات</b></th>', rendered)
+        self.assertIn('<td align="right"><b>اکانت</b></td>', rendered)
+        self.assertIn("<blockquote>برای ورود به بخش‌های بعدی", rendered)
+        self.assertNotIn("<tg-button-row", rendered)
+        self.assertEqual(
+            result["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+            "prs_online_always",
+        )
+        self.assertEqual(
+            result["reply_markup"]["inline_keyboard"][-1][0]["callback_data"],
+            "self_features",
+        )
+        parsed = rich_message_html(rendered)
+        self.assertIn('<table compact>', parsed)
+        self.assertIn("<hr/>", parsed)
+
+    def test_presence_subpages_share_the_same_centered_header_and_footer(self):
+        source = """<b>Sᴀʟғ1 · منطقه زمانی</b>
+
+<blockquote><b>منطقه فعلی</b>
+منطقه : <code>Asia/Tehran</code>
+تنظیم منطقه زمانی مرجع.</blockquote>
+<tg-button-row align="center"><tg-button type="callback_data" data="prs_timezone">› منطقه زمانی</tg-button></tg-button-row>"""
+        result = presence_date_style_page(source)
+        self.assertIsNotNone(result)
+        self.assertIn('« منطقه زمانی »', result["html"])
+        self.assertIn("تنظیم منطقه زمانی مرجع برای اجرای برنامه‌ها", result["html"])
+        self.assertIn("<blockquote>برای ورود به بخش‌های بعدی", result["html"])
+        self.assertEqual(
+            result["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+            "prs_timezone",
+        )
+
+    def test_non_presence_pages_are_not_reformatted(self):
+        self.assertIsNone(
+            presence_date_style_page("<b>Sᴀʟғ1 · تنظیمات سلف</b>\\n\\nمتن عادی")
+        )
 
     def test_multiline_blockquote_is_preserved_as_one_rich_element(self):
         source = """<b>Sᴀʟғ1 · وضعیت</b>
