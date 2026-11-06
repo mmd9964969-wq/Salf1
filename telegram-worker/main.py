@@ -232,7 +232,7 @@ def rich_message_html(text: str) -> str:
         # Keep explicit single-line HTML tables intact. The /start title
         # uses a borderless centered cell so its existing inline font styling
         # is preserved without turning the title into a pull quote.
-        if line.startswith("<table>") and line.endswith("</table>"):
+        if line.startswith("<table") and line.endswith("</table>"):
             flush_table()
             flush_list()
             parts.append(line)
@@ -4053,14 +4053,211 @@ async def bot_api(method: str, payload: dict | None = None, timeout: int = 35):
         return None
 
 
+def _presence_date_style_page(text: str):
+    """Convert every Presence Center page to the Date Center visual contract."""
+    source = str(text or "")
+    first_line, separator, body = source.partition("\n")
+    heading_match = re.fullmatch(r"\s*<b>(.*?)</b>\s*", first_line, flags=re.S)
+    if not heading_match:
+        return None
+
+    original_title = html.unescape(re.sub(r"<[^>]*>", "", heading_match.group(1))).strip()
+    if not original_title.startswith("Sᴀʟғ1 ·"):
+        return None
+
+    title = original_title.split("·", 1)[1].strip()
+    presence_titles = (
+        "وضعیت حضور", "مرکز وضعیت حضور", "برنامه هفتگی حضور",
+        "تأیید برنامه حضور", "فعالیت داخل چت", "منطقه زمانی",
+        "برنامه هفتگی فعالیت", "برنامه آنلاین", "استثناها",
+        "مقصدهای فعالیت", "سناریوها", "پروفایل‌های حضور",
+        "تنظیمات پیشرفته", "سلامت وضعیت حضور", "ساخت سناریو",
+    )
+    if not any(marker in title for marker in presence_titles):
+        return None
+
+    def safe_inline(value):
+        decoded = html.unescape(str(value or "")).strip()
+        allowed = re.compile(r"</?(?:b|strong|i|em|code|u|s)>", re.I)
+        tokens = re.split(r"(</?(?:b|strong|i|em|code|u|s)>)", decoded)
+        return "".join(
+            token if allowed.fullmatch(token) else html.escape(token, quote=False)
+            for token in tokens if token
+        )
+
+    button_rows = []
+
+    def extract_button_row(match):
+        rendered_row = []
+        inner = match.group(1) or ""
+        for button_match in re.finditer(r'<tg-button\b([^>]*)>(.*?)</tg-button>', inner, re.S):
+            attributes = button_match.group(1) or ""
+            data_match = re.search(r'\bdata="([^"]*)"', attributes)
+            if not data_match:
+                continue
+            callback_data = html.unescape(data_match.group(1)).strip()
+            label = html.unescape(re.sub(r"<[^>]*>", "", button_match.group(2) or "")).strip()
+            if not callback_data or not label:
+                continue
+            style_match = re.search(r'\bstyle="([^"]*)"', attributes)
+            source_style = html.unescape(style_match.group(1)).lower() if style_match else ""
+            button = {"text": label, "callback_data": callback_data}
+            is_back = label.startswith("‹") or bool(
+                re.search(r"(?:^|[:_])(?:back|home)(?:$|[:_])", callback_data, re.I)
+            )
+            if is_back:
+                button["style"] = "primary"
+            elif source_style in {"success", "danger"}:
+                button["style"] = source_style
+            rendered_row.append(button)
+        if rendered_row:
+            button_rows.append(rendered_row)
+        return ""
+
+    body_without_buttons = re.sub(
+        r"<tg-button-row\b[^>]*>(.*?)</tg-button-row>",
+        extract_button_row,
+        body,
+        flags=re.S,
+    )
+    fallback_text = first_line + ("\n" + body_without_buttons if separator else "")
+
+    # Match Date Center's two-column button layout without merging back/cancel
+    # actions into an unrelated action row.
+    keyboard = []
+    pending_single_buttons = []
+
+    def flush_single_buttons():
+        while pending_single_buttons:
+            keyboard.append(pending_single_buttons[:2])
+            del pending_single_buttons[:2]
+
+    for row in button_rows:
+        if len(row) == 1:
+            button = row[0]
+            if button.get("style") == "danger" or button.get("style") == "primary":
+                flush_single_buttons()
+                keyboard.append([button])
+            else:
+                pending_single_buttons.append(button)
+                if len(pending_single_buttons) == 2:
+                    flush_single_buttons()
+            continue
+        flush_single_buttons()
+        for offset in range(0, len(row), 2):
+            keyboard.append(row[offset:offset + 2])
+    flush_single_buttons()
+
+    intro_by_title = (
+        ("مرکز وضعیت حضور", "مدیریت وضعیت آنلاین، برنامه هفتگی و فعالیت اکانت"),
+        ("سلامت وضعیت حضور", "وضعیت فنی اجرا و آخرین سلامت موتور"),
+        ("تأیید برنامه حضور", "بازبینی نهایی برنامه پیش از ثبت"),
+        ("برنامه هفتگی حضور", "تنظیم روزها و ساعات مجاز حضور آنلاین"),
+        ("فعالیت داخل چت", "مدیریت فعالیت خودکار در گفتگوها و مقصدها"),
+        ("منطقه زمانی", "تنظیم منطقه زمانی مرجع برای اجرای برنامه‌ها"),
+        ("استثناها", "مدیریت استثناهای تاریخ‌محور برنامه حضور"),
+        ("مقصدهای فعالیت", "مدیریت گفتگوهای هدف برای فعالیت"),
+        ("سناریوها", "مدیریت سناریوهای فعالیت"),
+        ("پروفایل‌های حضور", "ذخیره و بازیابی تنظیمات وضعیت حضور"),
+        ("تنظیمات پیشرفته", "کنترل محدودیت‌ها و حفاظت موتور اجرا"),
+        ("ساخت سناریو", "تعریف و تنظیم سناریوی جدید فعالیت"),
+    )
+    intro = next((value for marker, value in intro_by_title if marker in title),
+                 "مدیریت تنظیمات و گزینه‌های این بخش")
+
+    detail_rows = []
+
+    def append_line(raw_line):
+        line = str(raw_line or "").strip()
+        if not line or line in {RICH_DIVIDER, "<hr/>"}:
+            return
+
+        if line.startswith("<b>") and line.endswith("</b>"):
+            heading_text = re.sub(r"</?b>", "", line).strip()
+            if heading_text:
+                detail_rows.append(
+                    '<tr><td colspan="2" align="right"><b>'
+                    + safe_inline(heading_text)
+                    + '</b></td></tr>'
+                )
+            return
+
+        if " : " in line:
+            label, value = line.split(" : ", 1)
+            label = label.strip()
+            value = value.strip() or "—"
+            detail_rows.append(
+                '<tr><td align="right"><b>' + safe_inline(label)
+                + '</b></td><td align="left"><b>' + safe_inline(value)
+                + '</b></td></tr>'
+            )
+            return
+
+        detail_rows.append(
+            '<tr><td colspan="2" align="right">'
+            + safe_inline(line)
+            + '</td></tr>'
+        )
+
+    def append_segment(segment):
+        for raw_line in str(segment or "").splitlines():
+            append_line(raw_line)
+
+    cursor = 0
+    for quote_match in re.finditer(r"<blockquote>(.*?)</blockquote>", body_without_buttons, re.S):
+        append_segment(body_without_buttons[cursor:quote_match.start()])
+        append_segment(quote_match.group(1))
+        cursor = quote_match.end()
+    append_segment(body_without_buttons[cursor:])
+
+    if not detail_rows:
+        detail_rows.append(
+            '<tr><td colspan="2" align="center">اطلاعاتی برای نمایش ثبت نشده است.</td></tr>'
+        )
+
+    header_table = (
+        '<table compact>'
+        '<tr><td align="center"><b>« ' + html.escape(title, quote=False) + ' »</b></td></tr>'
+        '<tr><td align="center">' + html.escape(intro, quote=False) + '</td></tr>'
+        '</table>'
+    )
+    details_table = (
+        '<table compact>'
+        '<tr><th align="center"><b>مشخصات</b></th>'
+        '<th align="center"><b>مقدار</b></th></tr>'
+        + "".join(detail_rows)
+        + '</table>'
+    )
+    guide = "برای ورود به بخش‌های بعدی از دکمه‌های زیر استفاده کنید."
+    rich_html = "\n".join((
+        header_table,
+        RICH_DIVIDER,
+        details_table,
+        RICH_DIVIDER,
+        "<blockquote>" + html.escape(guide, quote=False) + "</blockquote>",
+    ))
+
+    return {
+        "html": rich_html,
+        "reply_markup": {"inline_keyboard": keyboard},
+        "fallback_text": fallback_text,
+    }
+
+
 async def bot_send(chat_id: int, text: str, reply_markup: dict | None = None):
+    presence_layout = _presence_date_style_page(text)
+    if presence_layout is not None:
+        text = presence_layout["html"]
+        if reply_markup is None:
+            reply_markup = presence_layout["reply_markup"]
+
     payload = {
         "chat_id": chat_id,
         "rich_message": {
             "html": render_custom_emoji(rich_message_html(text)),
             "is_rtl": True,
         },
-        **({"reply_markup": reply_markup} if reply_markup else {}),
+        **({"reply_markup": reply_markup} if reply_markup is not None else {}),
     }
     return await bot_api("sendRichMessage", payload)
 
@@ -4525,6 +4722,12 @@ async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: 
 async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
     if not bot_callback_render_is_current():
         return {"ok": True, "salf1_stale_callback": True}
+    original_text = text
+    presence_layout = _presence_date_style_page(text)
+    if presence_layout is not None:
+        text = presence_layout["html"]
+        if reply_markup is None:
+            reply_markup = presence_layout["reply_markup"]
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
@@ -4532,7 +4735,7 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
             "html": render_custom_emoji(rich_message_html(text)),
             "is_rtl": True,
         },
-        **({"reply_markup": reply_markup} if reply_markup else {}),
+        **({"reply_markup": reply_markup} if reply_markup is not None else {}),
     }
     # Telegram Rich Message edits are handled by editMessageText. Calling the
     # unsupported editRichMessage method first added a guaranteed 404 round-trip
@@ -4554,7 +4757,7 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
         {
             "chat_id": chat_id,
             "message_id": message_id,
-            "text": str(text or ""),
+            "text": presence_layout["fallback_text"] if presence_layout is not None else str(original_text or ""),
             "parse_mode": "HTML",
             **({"reply_markup": reply_markup} if reply_markup else {}),
         },
