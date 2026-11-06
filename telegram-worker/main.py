@@ -20,7 +20,7 @@ import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events, functions
 from telethon.sessions import MemorySession, StringSession
-from telethon.tl.types import MessageEntityCustomEmoji, SendMessageTypingAction, SendMessageCancelAction
+from telethon.tl.types import MessageEntityCustomEmoji, SendMessageTypingAction, SendMessageCancelAction, InputUserSelf
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from telethon.errors import (
     ApiIdInvalidError,
@@ -4149,6 +4149,48 @@ def _presence_date_style_page(text: str):
             keyboard.append(row[offset:offset + 2])
     flush_single_buttons()
 
+    if title == "مرکز وضعیت حضور":
+        allowed_callbacks = {
+            "prs_online_always", "prs_online_schedule", "prs_online_stop",
+            "prs_activity", "prs_schedule", "prs_destinations", "prs_profiles",
+            "prs_timezone", "prs_advanced", "prs_refresh", "self_features",
+        }
+        buttons_by_callback = {}
+        back_button = None
+        for extracted_row in button_rows:
+            for button in extracted_row:
+                callback = str(button.get("callback_data") or "")
+                if callback not in allowed_callbacks:
+                    continue
+                if callback == "self_features" or str(button.get("text") or "").startswith("‹"):
+                    if back_button is None:
+                        back_button = button
+                    continue
+                buttons_by_callback.setdefault(callback, button)
+
+        keyboard = []
+        for left, right in (
+            ("prs_online_always", "prs_online_schedule"),
+            ("prs_activity", "prs_schedule"),
+            ("prs_destinations", "prs_profiles"),
+            ("prs_timezone", "prs_advanced"),
+        ):
+            row = [
+                buttons_by_callback[key]
+                for key in (left, right)
+                if key in buttons_by_callback
+            ]
+            if row:
+                keyboard.append(row)
+
+        if "prs_online_stop" in buttons_by_callback:
+            keyboard.insert(1, [buttons_by_callback["prs_online_stop"]])
+
+        if "prs_refresh" in buttons_by_callback:
+            keyboard.append([buttons_by_callback["prs_refresh"]])
+        if back_button is not None:
+            keyboard.append([back_button])
+
     intro_by_title = (
         ("مرکز وضعیت حضور", "مدیریت وضعیت آنلاین، برنامه هفتگی و فعالیت اکانت"),
         ("سلامت وضعیت حضور", "وضعیت فنی اجرا و آخرین سلامت موتور"),
@@ -4169,13 +4211,29 @@ def _presence_date_style_page(text: str):
 
     detail_rows = []
 
+    pending_pair_label = None
+    paired_labels = {"برنامه هفتگی آنلاین", "سلامت موتور"}
+
     def append_line(raw_line):
+        nonlocal pending_pair_label
         line = str(raw_line or "").strip()
         if not line or line in {RICH_DIVIDER, "<hr/>"}:
             return
 
+        if pending_pair_label:
+            detail_rows.append(
+                '<tr><td align="right"><b>' + safe_inline(pending_pair_label)
+                + '</b></td><td align="left">' + safe_inline(line)
+                + '</td></tr>'
+            )
+            pending_pair_label = None
+            return
+
         if line.startswith("<b>") and line.endswith("</b>"):
             heading_text = re.sub(r"</?b>", "", line).strip()
+            if heading_text in paired_labels:
+                pending_pair_label = heading_text
+                return
             if heading_text:
                 detail_rows.append(
                     '<tr><td colspan="2" align="right"><b>'
@@ -4211,6 +4269,11 @@ def _presence_date_style_page(text: str):
         append_segment(quote_match.group(1))
         cursor = quote_match.end()
     append_segment(body_without_buttons[cursor:])
+    if pending_pair_label:
+        detail_rows.append(
+            '<tr><td align="right"><b>' + safe_inline(pending_pair_label)
+            + '</b></td><td align="left">—</td></tr>'
+        )
 
     if not detail_rows:
         detail_rows.append(
@@ -5865,9 +5928,37 @@ def _presence_v2_error_text(code):
         "DESTINATION_FORBIDDEN":"دسترسی به مقصد مجاز نیست.",
         "TELEGRAM_FLOOD_WAIT":"تلگرام موقتاً نرخ درخواست را محدود کرده است.",
         "TELEGRAM_CONNECTION_ERROR":"اتصال به تلگرام ناپایدار است.",
+        "TELEGRAM_STATUS_NOT_CONFIRMED":"سرور تلگرام هنوز وضعیت آنلاین اکانت را تأیید نکرده است.",
         "HEARTBEAT_FAILED":"Heartbeat فعالیت از دست رفته است.",
         "ACTION_FAILED":"اجرای فعالیت ناموفق بود.",
     }.get(code or "","بدون خطا")
+
+def _presence_v2_status_refresh_delay(expires_at, now_epoch, configured_seconds=45):
+    try:
+        configured = int(configured_seconds or 45)
+    except (TypeError, ValueError):
+        configured = 45
+    configured = max(15, min(90, configured))
+
+    try:
+        remaining = int(expires_at) - int(now_epoch)
+    except (TypeError, ValueError, OverflowError):
+        remaining = 0
+
+    if remaining <= 0:
+        return float(min(configured, 20))
+    return float(max(5, min(configured, remaining - 5)))
+
+
+async def _presence_v2_read_self_status(client):
+    users = await client(
+        functions.users.GetUsersRequest(id=[InputUserSelf()])
+    )
+    if not users:
+        return "UserStatusUnknown", None
+    status = getattr(users[0], "status", None)
+    return type(status).__name__, getattr(status, "expires", None)
+
 
 async def _presence_v2_cancel_peer(client, peer):
     try:
@@ -6125,13 +6216,66 @@ async def _presence_apply_now_unlocked(user_id:int,force:bool=False):
             due=force or time.monotonic()>=float(presence_next_online.get(str(user_id),0) or 0)
             if due:
                 await client(functions.account.UpdateStatusRequest(offline=False))
-                presence_next_online[str(user_id)]=time.monotonic()+max(30,int(config.get("online_refresh_seconds") or 45))
+                status_name, status_expires = await _presence_v2_read_self_status(client)
+                now_epoch = int(time.time())
+                if status_name != "UserStatusOnline" or (
+                    status_expires is not None and int(status_expires) <= now_epoch
+                ):
+                    # One bounded retry handles the short propagation delay after updateStatus.
+                    await asyncio.sleep(1)
+                    await client(functions.account.UpdateStatusRequest(offline=False))
+                    status_name, status_expires = await _presence_v2_read_self_status(client)
+                    now_epoch = int(time.time())
+
+                if status_name != "UserStatusOnline" or (
+                    status_expires is not None and int(status_expires) <= now_epoch
+                ):
+                    presence_last_online_state[str(user_id)]=False
+                    presence_next_online[str(user_id)]=time.monotonic()+12
+                    r=presence_runtime_stats.setdefault(str(user_id),{})
+                    r.update({
+                        "online_state":"unknown",
+                        "last_update_at":datetime.now(timezone.utc),
+                        "last_error_code":"TELEGRAM_STATUS_NOT_CONFIRMED",
+                    })
+                    r["online_failed"]=int(r.get("online_failed") or 0)+1
+                    await _presence_v2_runtime_save(user_id)
+                    await presence_log(
+                        user_id,
+                        "presence.status_verification_failed",
+                        meta={"telegram_status":status_name},
+                    )
+                    print(
+                        f"Presence online status not confirmed for "
+                        f"{customer_key(str(user_id))}: telegram_status={status_name}"
+                    )
+                    return {
+                        "ok":False,
+                        "reason":"TELEGRAM_STATUS_NOT_CONFIRMED",
+                        "online":False,
+                        "activity":False,
+                    }
+
+                refresh_delay = _presence_v2_status_refresh_delay(
+                    status_expires,
+                    now_epoch,
+                    config.get("online_refresh_seconds", 45),
+                )
+                presence_next_online[str(user_id)]=time.monotonic()+refresh_delay
                 presence_last_online_state[str(user_id)]=True
                 r=presence_runtime_stats.setdefault(str(user_id),{})
-                r.update({"online_state":"online","last_update_at":datetime.now(timezone.utc),"last_error_code":""})
+                r.update({
+                    "online_state":"online",
+                    "last_update_at":datetime.now(timezone.utc),
+                    "last_error_code":"",
+                })
                 r["online_success"]=int(r.get("online_success") or 0)+1
                 await _presence_v2_runtime_save(user_id)
-                await presence_log(user_id,"presence.started")
+                await presence_log(
+                    user_id,
+                    "presence.started",
+                    meta={"telegram_status":"online","refresh_in_seconds":round(refresh_delay,1)},
+                )
         elif presence_last_online_state.get(str(user_id)):
             await presence_mark_offline(user_id)
 
