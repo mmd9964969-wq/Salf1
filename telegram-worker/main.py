@@ -437,6 +437,7 @@ presence_rate_next: dict[str, float] = {}
 presence_watchdog_last_check: dict[str, float] = {}
 presence_apply_locks: dict[str, asyncio.Lock] = {}
 presence_unavailable_until: dict[str, float] = {}
+presence_next_verify: dict[str, float] = {}
 bot_presence_cache: dict[str, dict] = {}
 bot_presence_check_locks: dict[str, asyncio.Lock] = {}
 account_health_cache: dict[str, dict] = {}
@@ -5945,18 +5946,53 @@ def _presence_v2_status_expiry_epoch(expires_at):
         return None
 
 
-def _presence_v2_status_refresh_delay(expires_at, now_epoch, configured_seconds=45):
+def _presence_v2_status_refresh_delay(expires_at, now_epoch, configured_seconds=30):
     try:
-        configured = int(configured_seconds or 45)
+        configured = int(configured_seconds or 30)
     except (TypeError, ValueError):
-        configured = 45
-    configured = max(15, min(90, configured))
+        configured = 30
+    configured = max(15, min(45, configured))
 
     expiry_epoch = _presence_v2_status_expiry_epoch(expires_at)
     remaining = expiry_epoch - int(now_epoch) if expiry_epoch is not None else 0
     if remaining <= 0:
         return float(min(configured, 20))
-    return float(max(5, min(configured, remaining - 5)))
+    # Leave a wider buffer than the previous five-second margin.
+    return float(max(5, min(configured, remaining - 10)))
+
+
+def _presence_v2_status_update_accepted(result):
+    """Telethon returns BoolTrue/BoolFalse TL objects for account.updateStatus."""
+    result_name = type(result).__name__
+    if result_name == "BoolFalse":
+        return False
+    if result_name == "BoolTrue":
+        return True
+    if isinstance(result, bool):
+        return result
+    return result is not None
+
+
+def _presence_v2_build_disconnect_ping_request(functions_module, ping_id):
+    """Build Telegram's ping_delay_disconnect request when Telethon exposes it."""
+    request_type = getattr(functions_module, "PingDelayDisconnectRequest", None)
+    if not callable(request_type):
+        return None
+    return request_type(
+        ping_id=int(ping_id),
+        disconnect_delay=75,
+    )
+
+
+async def _presence_v2_send_disconnect_ping(client):
+    """Ask Telegram to defer disconnect detection between recurring status updates."""
+    ping_id = int(time.time_ns() & ((1 << 63) - 1))
+    request = _presence_v2_build_disconnect_ping_request(functions, ping_id)
+    if request is None:
+        # Telethon 1.x still runs its own MTProto ping loop on the connected sender.
+        return "telethon_native_keepalive"
+    await client(request)
+    return "ping_delay_disconnect"
 
 
 async def _presence_v2_read_self_status(client):
@@ -6205,116 +6241,250 @@ async def _presence_v2_watchdog(user_id):
             await presence_log(user_id,"activity.telegram_error",peer=str(state.get("peer") or ""),action=str(state.get("action") or ""),meta={"code":"HEARTBEAT_FAILED"})
             await _presence_v2_stop_task(user_id,key)
 
-async def _presence_apply_now_unlocked(user_id:int,force:bool=False):
-    config=await presence_get_settings(user_id)
-    row=await db_user(str(user_id))
-    client=clients.get(str(user_id))
-    if not client or not client.is_connected() or not row or not row["account_connected"]:
-        await presence_stop_all(user_id,mark_offline=False)
-        return {"ok":False,"reason":"account_unavailable"}
+async def _presence_apply_now_unlocked(user_id: int, force: bool = False):
+    customer_id = str(int(user_id))
+    config = await presence_get_settings(user_id)
+    row = await db_user(customer_id)
+
+    if not row or not row["account_connected"]:
+        presence_last_online_state[customer_id] = False
+        presence_next_online[customer_id] = 0.0
+        presence_next_verify[customer_id] = 0.0
+        await presence_stop_all(user_id, mark_offline=False)
+        return {"ok": False, "reason": "account_unavailable"}
+
     if not row["salf_enabled"]:
-        await presence_stop_all(user_id,mark_offline=True)
-        return {"ok":False,"reason":"salf_disabled"}
+        presence_last_online_state[customer_id] = False
+        presence_next_online[customer_id] = 0.0
+        presence_next_verify[customer_id] = 0.0
+        await presence_stop_all(user_id, mark_offline=True)
+        return {"ok": False, "reason": "salf_disabled"}
+
     try:
+        client = clients.get(customer_id)
+        if client is None:
+            client = await restore_client(customer_id)
+
+        if not client.is_connected():
+            now_mono = time.monotonic()
+            unavailable_until = float(presence_unavailable_until.get(customer_id, 0.0) or 0.0)
+            if not force and now_mono < unavailable_until:
+                return {"ok": False, "reason": "account_reconnecting"}
+
+            if not await acquire_session_runtime_lock(customer_id):
+                presence_unavailable_until[customer_id] = now_mono + 5.0
+                return {"ok": False, "reason": "session_lock_busy"}
+
+            await client.connect()
+            if not client.is_connected():
+                raise ConnectionError("Telegram transport did not reconnect")
+
+            # A new MTProto transport must receive a fresh online request,
+            # regardless of the previous connection's monotonic deadline.
+            presence_last_online_state[customer_id] = False
+            presence_next_online[customer_id] = 0.0
+            presence_next_verify[customer_id] = 0.0
+            presence_unavailable_until.pop(customer_id, None)
+            print(f"Presence transport reconnected for {customer_key(customer_id)}")
+
         if not await client.is_user_authorized():
-            await presence_stop_all(user_id,mark_offline=False)
-            return {"ok":False,"reason":"ACCOUNT_NOT_AUTHORIZED"}
-        _,local=_presence_v2_now_local(config)
-        online_active=_presence_v2_engine_active(config,"online",local)
-        online_verified=bool(presence_last_online_state.get(str(user_id)))
+            presence_last_online_state[customer_id] = False
+            await presence_stop_all(user_id, mark_offline=False)
+            return {"ok": False, "reason": "ACCOUNT_NOT_AUTHORIZED"}
+
+        _, local = _presence_v2_now_local(config)
+        online_active = _presence_v2_engine_active(config, "online", local)
+        online_accepted = bool(presence_last_online_state.get(customer_id))
+        runtime = presence_runtime_stats.setdefault(customer_id, {})
+
         if online_active:
-            due=force or time.monotonic()>=float(presence_next_online.get(str(user_id),0) or 0)
+            now_mono = time.monotonic()
+            due = force or now_mono >= float(
+                presence_next_online.get(customer_id, 0.0) or 0.0
+            )
+
+            # When the server expiry is known, renew before it. When it is not
+            # known, use the conservative fallback configured below.
+            if not due and now_mono >= float(
+                presence_next_verify.get(customer_id, 0.0) or 0.0
+            ):
+                try:
+                    status_name, status_expires = await _presence_v2_read_self_status(client)
+                    status_expiry_epoch = _presence_v2_status_expiry_epoch(status_expires)
+                    now_epoch = int(time.time())
+                    if status_name == "UserStatusOnline" and (
+                        status_expiry_epoch is None or status_expiry_epoch > now_epoch
+                    ):
+                        runtime["telegram_status_verified"] = True
+                        runtime["telegram_status_name"] = status_name
+                        if status_expiry_epoch is not None:
+                            presence_next_online[customer_id] = min(
+                                float(presence_next_online.get(customer_id, now_mono)),
+                                now_mono + _presence_v2_status_refresh_delay(
+                                    status_expiry_epoch,
+                                    now_epoch,
+                                    config.get("online_refresh_seconds", 30),
+                                ),
+                            )
+                    elif status_name == "UserStatusOffline":
+                        # The persisted flag is stale: another client/session may
+                        # have changed status, so force the online update again.
+                        online_accepted = False
+                        presence_last_online_state[customer_id] = False
+                        presence_next_online[customer_id] = 0.0
+                        due = True
+                        runtime["telegram_status_verified"] = False
+                        runtime["telegram_status_name"] = status_name
+                    else:
+                        runtime["telegram_status_verified"] = False
+                        runtime["telegram_status_name"] = status_name
+                except Exception as status_exc:
+                    # Status-read failure must never cancel the independent
+                    # account.updateStatus keepalive loop.
+                    runtime["telegram_status_verified"] = False
+                    runtime["telegram_status_name"] = "unavailable"
+                    runtime["status_read_error"] = type(status_exc).__name__
+
+                presence_next_verify[customer_id] = time.monotonic() + 15.0
+                await _presence_v2_runtime_save(user_id)
+
             if due:
-                await client(functions.account.UpdateStatusRequest(offline=False))
-                status_name, status_expires = await _presence_v2_read_self_status(client)
+                update_result = await client(
+                    functions.account.UpdateStatusRequest(offline=False)
+                )
+                if not _presence_v2_status_update_accepted(update_result):
+                    raise RuntimeError("TELEGRAM_STATUS_UPDATE_REJECTED")
+
+                keepalive_mode = "telethon_native_keepalive"
+                try:
+                    keepalive_mode = await _presence_v2_send_disconnect_ping(client)
+                except Exception as ping_exc:
+                    # The account status request was already accepted. A ping
+                    # extension failure is logged separately and does not erase
+                    # the successful online update.
+                    print(
+                        f"Presence delayed-disconnect ping unavailable for "
+                        f"{customer_key(customer_id)}: {type(ping_exc).__name__}"
+                    )
+
+                status_name = "UserStatusUnknown"
+                status_expires = None
+                try:
+                    status_name, status_expires = await _presence_v2_read_self_status(client)
+                except Exception as status_exc:
+                    runtime["status_read_error"] = type(status_exc).__name__
+
                 now_epoch = int(time.time())
                 status_expiry_epoch = _presence_v2_status_expiry_epoch(status_expires)
-                if status_name != "UserStatusOnline" or (
-                    status_expiry_epoch is not None and status_expiry_epoch <= now_epoch
-                ):
-                    # One bounded retry handles the short propagation delay after updateStatus.
-                    await asyncio.sleep(1)
-                    await client(functions.account.UpdateStatusRequest(offline=False))
-                    status_name, status_expires = await _presence_v2_read_self_status(client)
+                verified = bool(
+                    status_name == "UserStatusOnline"
+                    and (status_expiry_epoch is None or status_expiry_epoch > now_epoch)
+                )
+
+                if not verified and status_name == "UserStatusOffline":
+                    # One propagation retry for an explicit offline response.
+                    await asyncio.sleep(0.5)
+                    retry_result = await client(
+                        functions.account.UpdateStatusRequest(offline=False)
+                    )
+                    if not _presence_v2_status_update_accepted(retry_result):
+                        raise RuntimeError("TELEGRAM_STATUS_UPDATE_REJECTED")
+                    try:
+                        status_name, status_expires = await _presence_v2_read_self_status(client)
+                    except Exception as status_exc:
+                        runtime["status_read_error"] = type(status_exc).__name__
                     now_epoch = int(time.time())
                     status_expiry_epoch = _presence_v2_status_expiry_epoch(status_expires)
+                    verified = bool(
+                        status_name == "UserStatusOnline"
+                        and (status_expiry_epoch is None or status_expiry_epoch > now_epoch)
+                    )
 
-                if status_name != "UserStatusOnline" or (
-                    status_expiry_epoch is not None and status_expiry_epoch <= now_epoch
-                ):
-                    presence_last_online_state[str(user_id)]=False
-                    presence_next_online[str(user_id)]=time.monotonic()+12
-                    r=presence_runtime_stats.setdefault(str(user_id),{})
-                    r.update({
-                        "online_state":"unknown",
-                        "last_update_at":datetime.now(timezone.utc),
-                        "last_error_code":"TELEGRAM_STATUS_NOT_CONFIRMED",
-                    })
-                    r["online_failed"]=int(r.get("online_failed") or 0)+1
-                    await _presence_v2_runtime_save(user_id)
-                    await presence_log(
-                        user_id,
-                        "presence.status_verification_failed",
-                        meta={"telegram_status":status_name},
-                    )
-                    print(
-                        f"Presence online status not confirmed for "
-                        f"{customer_key(str(user_id))}: telegram_status={status_name}"
-                    )
-                    online_verified=False
-                else:
-                    refresh_delay = _presence_v2_status_refresh_delay(
-                        status_expiry_epoch,
-                        now_epoch,
-                        config.get("online_refresh_seconds", 45),
-                    )
-                    presence_next_online[str(user_id)]=time.monotonic()+refresh_delay
-                    presence_last_online_state[str(user_id)]=True
-                    online_verified=True
-                    r=presence_runtime_stats.setdefault(str(user_id),{})
-                    r.update({
-                        "online_state":"online",
-                        "last_update_at":datetime.now(timezone.utc),
-                        "last_error_code":"",
-                    })
-                    r["online_success"]=int(r.get("online_success") or 0)+1
-                    await _presence_v2_runtime_save(user_id)
-                    await presence_log(
-                        user_id,
-                        "presence.started",
-                        meta={"telegram_status":"online","refresh_in_seconds":round(refresh_delay,1)},
-                    )
-        elif presence_last_online_state.get(str(user_id)):
+                refresh_delay = _presence_v2_status_refresh_delay(
+                    status_expiry_epoch,
+                    now_epoch,
+                    config.get("online_refresh_seconds", 30),
+                )
+                presence_next_online[customer_id] = time.monotonic() + refresh_delay
+                presence_next_verify[customer_id] = time.monotonic() + 15.0
+                presence_unavailable_until.pop(customer_id, None)
+                presence_last_online_state[customer_id] = True
+                online_accepted = True
+
+                runtime.update({
+                    "online_state": "online",
+                    "telegram_status_verified": verified,
+                    "telegram_status_name": status_name,
+                    "last_update_at": datetime.now(timezone.utc),
+                    "last_error_code": "",
+                    "status_read_error": "" if verified else str(runtime.get("status_read_error") or ""),
+                })
+                runtime["online_success"] = int(runtime.get("online_success") or 0) + 1
+                await _presence_v2_runtime_save(user_id)
+                await presence_log(
+                    user_id,
+                    "presence.update_accepted",
+                    meta={
+                        "telegram_status": status_name,
+                        "status_verified": verified,
+                        "refresh_in_seconds": round(refresh_delay, 1),
+                        "keepalive": keepalive_mode,
+                    },
+                )
+                print(
+                    f"Presence online update accepted for {customer_key(customer_id)}; "
+                    f"telegram_status={status_name}; verified={verified}; "
+                    f"refresh_in={round(refresh_delay, 1)}s; keepalive={keepalive_mode}"
+                )
+
+        elif presence_last_online_state.get(customer_id):
             await presence_mark_offline(user_id)
-            online_verified=False
+            online_accepted = False
+            presence_next_online[customer_id] = 0.0
+            presence_next_verify[customer_id] = 0.0
         else:
-            online_verified=False
+            online_accepted = False
 
-        activity_active=_presence_v2_engine_active(config,"activity",local)
-        await _presence_v2_sync_activity(user_id,config,activity_active)
+        activity_active = _presence_v2_engine_active(config, "activity", local)
+        await _presence_v2_sync_activity(user_id, config, activity_active)
         await _presence_v2_watchdog(user_id)
         return {
-            "ok": bool(not online_active or online_verified),
-            "online": bool(online_active and online_verified),
+            "ok": bool(not online_active or online_accepted),
+            "online": bool(online_active and online_accepted),
+            "verified": bool(runtime.get("telegram_status_verified")),
             "activity": bool(activity_active),
         }
+
     except FloodWaitError as exc:
-        r=presence_runtime_stats.setdefault(str(user_id),{})
-        r["last_error_code"]="TELEGRAM_FLOOD_WAIT"
+        runtime = presence_runtime_stats.setdefault(customer_id, {})
+        runtime["last_error_code"] = "TELEGRAM_FLOOD_WAIT"
         await _presence_v2_runtime_save(user_id)
-        presence_next_online[str(user_id)]=time.monotonic()+max(1,int(exc.seconds))
-        return {"ok":False,"reason":"TELEGRAM_FLOOD_WAIT"}
+        presence_next_online[customer_id] = time.monotonic() + max(1, int(exc.seconds))
+        return {"ok": False, "reason": "TELEGRAM_FLOOD_WAIT"}
     except Exception as exc:
-        code=_presence_v2_error_code(exc)
-        r=presence_runtime_stats.setdefault(str(user_id),{})
-        r["last_error_code"]=code
-        r["online_failed"]=int(r.get("online_failed") or 0)+1
+        code = _presence_v2_error_code(exc)
+        runtime = presence_runtime_stats.setdefault(customer_id, {})
+        runtime["last_error_code"] = code
+        runtime["online_failed"] = int(runtime.get("online_failed") or 0) + 1
+        presence_unavailable_until[customer_id] = time.monotonic() + 8.0
         await _presence_v2_runtime_save(user_id)
-        await presence_log(user_id,"activity.telegram_error",meta={"code":code})
-        if code=="SESSION_DISCONNECTED":
-            try: await invalidate_customer_session(str(user_id),exc)
-            except Exception: pass
-        return {"ok":False,"reason":code}
+        await presence_log(
+            user_id,
+            "activity.telegram_error",
+            meta={"code": code},
+        )
+        print(
+            f"Presence apply failed for {customer_key(customer_id)}: "
+            f"{type(exc).__name__}: {str(exc)[:160]}"
+        )
+        if code == "SESSION_DISCONNECTED":
+            presence_last_online_state[customer_id] = False
+            presence_next_online[customer_id] = 0.0
+            try:
+                await invalidate_customer_session(customer_id, exc)
+            except Exception:
+                pass
+        return {"ok": False, "reason": code}
 
 async def presence_apply_now(user_id: int, force: bool = False):
     customer_id = str(int(user_id))
@@ -7033,7 +7203,10 @@ async def presence_page(user_id):
     elif not enabled:
         live_text = "متوقف"
     elif active and runtime.get("online_state") == "online":
-        live_text = "آنلاین · تأییدشده"
+        if runtime.get("telegram_status_verified"):
+            live_text = "آنلاین · تأییدشده"
+        else:
+            live_text = "درخواست آنلاین پذیرفته شد · بررسی وضعیت تکمیلی"
     elif active:
         live_text = "فعال · در انتظار همگام‌سازی"
     else:
@@ -10065,6 +10238,7 @@ async def session_supervisor_loop():
                                 f"{type(exc).__name__}"
                             )
                             continue
+
                     if client.is_connected():
                         continue
                     if not await acquire_session_runtime_lock(customer_id):
@@ -10073,20 +10247,60 @@ async def session_supervisor_loop():
                             f"{customer_key(customer_id)}: session_lock_busy"
                         )
                         continue
+
                     try:
-                        await client.connect()
+                        apply_lock = presence_apply_locks.setdefault(
+                            customer_id, asyncio.Lock()
+                        )
+                        async with apply_lock:
+                            await client.connect()
+                            if not client.is_connected():
+                                raise ConnectionError("Telegram transport did not reconnect")
+
+                            presence_last_online_state[customer_id] = False
+                            presence_next_online[customer_id] = 0.0
+                            presence_next_verify[customer_id] = 0.0
+                            presence_unavailable_until.pop(customer_id, None)
+                            print(
+                                f"Session reconnected for {customer_key(customer_id)}; "
+                                "presence state scheduled for immediate refresh"
+                            )
+
+                            try:
+                                config = await presence_get_settings(int(customer_id))
+                                user_row = await db_user(customer_id)
+                                if (
+                                    config.get("online_enabled")
+                                    and user_row
+                                    and user_row["account_connected"]
+                                    and user_row["salf_enabled"]
+                                ):
+                                    result = await _presence_apply_now_unlocked(
+                                        int(customer_id), force=True
+                                    )
+                                    print(
+                                        f"Presence reconnect apply for {customer_key(customer_id)}: "
+                                        f"ok={result.get('ok')} "
+                                        f"online={result.get('online')} "
+                                        f"verified={result.get('verified')}"
+                                    )
+                            except Exception as apply_exc:
+                                print(
+                                    f"Presence reconnect apply deferred for "
+                                    f"{customer_key(customer_id)}: {type(apply_exc).__name__}"
+                                )
                     except Exception as exc:
                         if definitive_session_failure(exc):
                             await invalidate_customer_session(customer_id, exc)
                         else:
+                            presence_unavailable_until[customer_id] = time.monotonic() + 10.0
                             print(
                                 f"Session reconnect deferred for {customer_key(customer_id)}: "
                                 f"{type(exc).__name__}"
                             )
         except Exception as exc:
-            print(f"Session supervisor error: {type(exc).__name__}")
-        await asyncio.sleep(30)
-
+            print(f"Session supervisor error: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(10)
 
 async def main():
     global http_session, db_pool, webhook_db_pool
