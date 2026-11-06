@@ -18,7 +18,7 @@ import time
 
 import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
-from telethon import TelegramClient, events, functions
+from telethon import TelegramClient, events, functions, utils
 from telethon.sessions import MemorySession, StringSession
 from telethon.tl.types import MessageEntityCustomEmoji, SendMessageTypingAction, SendMessageCancelAction, InputUserSelf
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -3345,6 +3345,80 @@ async def handle_self_command(event, customer_id: str, text: str):
     if not is_self_author:
         return False
 
+    media_command = " ".join(normalized.replace("‌", " ").split())
+    if media_command in {"فعالسازی رسانه بان", "فعال سازی رسانه بان"}:
+        enabled = await media_guard_enable(user_id, True)
+        if not enabled:
+            await media_guard_command_reply(
+                event, customer_id,
+                media_guard_render_page(
+                    "رسانه‌بان",
+                    "برای فعال‌سازی آماده نیست.",
+                    [("وضعیت", "اکانت متصل و سلف فعال لازم است.")],
+                    "ابتدا اکانت را متصل کنید و سلف را فعال کنید.",
+                ),
+            )
+        else:
+            await media_guard_command_reply(
+                event, customer_id,
+                media_guard_render_page(
+                    "رسانه‌بان",
+                    "ذخیره رسانه‌های انتخاب‌شده فعال شد.",
+                    [("وضعیت", "فعال")],
+                    "برای تغییر تنظیمات از پنل رسانه‌بان استفاده کنید.",
+                ),
+            )
+        return True
+
+    if media_command in {"غیرفعالسازی رسانه بان", "غیر فعال سازی رسانه بان"}:
+        await media_guard_enable(user_id, False)
+        await media_guard_command_reply(
+            event, customer_id,
+            media_guard_render_page(
+                "رسانه‌بان",
+                "ذخیره‌سازی رسانه‌های جدید متوقف شد.",
+                [("وضعیت", "خاموش"), ("رسانه‌های قبلی", "در پیام‌های ذخیره‌شده باقی می‌مانند.")],
+                "برای فعال‌سازی دوباره از دستور فعالسازی رسانه‌بان استفاده کنید.",
+            ),
+        )
+        return True
+
+    if media_command == "استثنا رسانه بان":
+        client = clients.get(str(user_id))
+        try:
+            if client is None or not client.is_connected():
+                raise RuntimeError("ACCOUNT_NOT_CONNECTED")
+            entity = await client.get_entity(int(event.chat_id))
+            _, peer_type, title, _ = await media_guard_add_exception(user_id, entity)
+            await media_guard_command_reply(
+                event, customer_id,
+                media_guard_render_page(
+                    "مدیریت استثناها",
+                    "این گفتگو از ذخیره‌سازی خارج شد.",
+                    [("گفتگو", title), ("نوع گفتگو", MEDIA_GUARD_SCOPE_LABELS.get(peer_type, peer_type)), ("وضعیت", "ثبت شد")],
+                    "برای حذف استثنا از پنل رسانه‌بان استفاده کنید.",
+                ),
+            )
+        except Exception:
+            await media_guard_command_reply(
+                event, customer_id,
+                media_guard_render_page(
+                    "مدیریت استثناها",
+                    "ثبت استثنا انجام نشد.",
+                    [("وضعیت", "گفتگوی فعلی قابل شناسایی نیست.")],
+                    "برای افزودن گفتگو از پنل رسانه‌بان استفاده کنید.",
+                ),
+            )
+        return True
+
+    if media_command == "وضعیت رسانه بان":
+        await media_guard_command_reply(event, customer_id, await media_guard_main_page(user_id))
+        return True
+
+    if media_command == "راهنمای رسانه بان":
+        await media_guard_command_reply(event, customer_id, media_guard_help_page())
+        return True
+
     if await handle_presence_input_state(user_id, int(chat["id"]), text):
         return True
 
@@ -3728,12 +3802,872 @@ async def handle_self_command(event, customer_id: str, text: str):
     return True
 
 
+
+MEDIA_GUARD_MEDIA_LABELS = {
+    "photo": "عکس",
+    "video": "ویدئو",
+    "video_note": "ویدئو مسیج",
+    "voice": "ویس",
+    "audio": "موسیقی",
+    "document": "فایل و سند",
+    "gif": "GIF",
+    "sticker": "استیکر",
+}
+MEDIA_GUARD_SCOPE_LABELS = {
+    "private": "گفتگوی خصوصی",
+    "group": "گروه",
+    "channel": "کانال",
+}
+MEDIA_GUARD_VIEW_ONCE_TTL = 0x7FFFFFFF
+
+
+def media_guard_default_config():
+    return {
+        "enabled": False,
+        "media": {key: True for key in MEDIA_GUARD_MEDIA_LABELS},
+        "scopes": {"private": True, "group": False, "channel": False},
+    }
+
+
+def media_guard_normalize_config(raw):
+    defaults = media_guard_default_config()
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    media = raw.get("media") if isinstance(raw.get("media"), dict) else {}
+    scopes = raw.get("scopes") if isinstance(raw.get("scopes"), dict) else {}
+    defaults["enabled"] = bool(raw.get("enabled", defaults["enabled"]))
+    defaults["media"].update({
+        key: bool(media.get(key, value))
+        for key, value in defaults["media"].items()
+    })
+    defaults["scopes"].update({
+        key: bool(scopes.get(key, value))
+        for key, value in defaults["scopes"].items()
+    })
+    return defaults
+
+
+def media_guard_classify_message(message, chat=None):
+    media = getattr(message, "media", None)
+    if media is None:
+        return None
+
+    media_class = type(media).__name__.casefold()
+    file_info = getattr(message, "file", None)
+    document = getattr(media, "document", None)
+    mime_type = str(
+        getattr(file_info, "mime_type", None)
+        or getattr(document, "mime_type", None)
+        or ""
+    ).casefold()
+
+    media_type = None
+    if getattr(message, "photo", None) is not None or "mediaphoto" in media_class:
+        media_type = "photo"
+    elif getattr(message, "video_note", None) is not None:
+        media_type = "video_note"
+    elif getattr(message, "voice", None) is not None:
+        media_type = "voice"
+    elif getattr(message, "audio", None) is not None:
+        media_type = "audio"
+    elif getattr(message, "gif", None) is not None or mime_type == "image/gif":
+        media_type = "gif"
+    elif getattr(message, "sticker", None) is not None or "sticker" in media_class:
+        media_type = "sticker"
+    elif getattr(message, "video", None) is not None or mime_type.startswith("video/"):
+        media_type = "video"
+    elif getattr(message, "document", None) is not None or "mediadocument" in media_class:
+        media_type = "document"
+
+    ttl_value = getattr(media, "ttl_seconds", None)
+    if ttl_value is None:
+        ttl_value = getattr(message, "ttl_period", None)
+    try:
+        ttl_seconds = int(ttl_value) if ttl_value is not None else 0
+    except (TypeError, ValueError):
+        ttl_seconds = 0
+
+    if ttl_seconds == MEDIA_GUARD_VIEW_ONCE_TTL:
+        return {
+            "media_type": media_type or "other",
+            "reason": "view_once",
+            "ttl_seconds": ttl_seconds,
+        }
+    if ttl_seconds > 0:
+        return {
+            "media_type": media_type or "other",
+            "reason": "timed_media",
+            "ttl_seconds": ttl_seconds,
+        }
+
+    protected = bool(
+        getattr(message, "noforwards", False)
+        or getattr(chat, "noforwards", False)
+    )
+    if protected:
+        return {
+            "media_type": media_type or "other",
+            "reason": "protected",
+            "ttl_seconds": 0,
+        }
+
+    if not media_type:
+        return {
+            "media_type": "other",
+            "reason": "unsupported",
+            "ttl_seconds": 0,
+        }
+
+    return {
+        "media_type": media_type,
+        "reason": "",
+        "ttl_seconds": 0,
+    }
+
+
+def media_guard_render_page(title, intro, rows, guide):
+    safe_title = html.escape(str(title or ""), quote=False)
+    safe_intro = html.escape(str(intro or ""), quote=False)
+    header = (
+        '<table compact><tr><td align="center"><b>« '
+        + safe_title
+        + ' »</b></td></tr><tr><td align="center">'
+        + safe_intro
+        + '</td></tr></table>'
+    )
+    detail_rows = []
+    for label, value in rows:
+        detail_rows.append(
+            '<tr><td align="right"><b>'
+            + html.escape(str(label), quote=False)
+            + '</b></td><td align="left">'
+            + html.escape(str(value), quote=False)
+            + '</td></tr>'
+        )
+    details = (
+        '<table compact><tr><th align="center"><b>مشخصات</b></th>'
+        '<th align="center"><b>مقدار</b></th></tr>'
+        + "".join(detail_rows)
+        + '</table>'
+    )
+    safe_guide = html.escape(str(guide or ""), quote=False)
+    return "\n".join((
+        header,
+        RICH_DIVIDER,
+        details,
+        RICH_DIVIDER,
+        "<blockquote>" + safe_guide + "</blockquote>",
+    ))
+
+
+async def init_media_guard_tables():
+    if db_pool is None:
+        return
+    await db_pool.execute("""
+        create table if not exists salf1_media_guard_settings (
+            customer_id bigint primary key,
+            config jsonb not null default '{}'::jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        create table if not exists salf1_media_guard_exceptions (
+            customer_id bigint not null,
+            peer_id bigint not null,
+            peer_type text not null,
+            title text not null default '',
+            created_at timestamptz not null default now(),
+            primary key(customer_id, peer_id)
+        );
+        create table if not exists salf1_media_guard_queue (
+            id bigserial primary key,
+            customer_id bigint not null,
+            peer_id bigint not null,
+            message_id bigint not null,
+            media_type text not null,
+            chat_type text not null,
+            chat_title text not null default '',
+            status text not null default 'pending',
+            reason text not null default '',
+            attempts integer not null default 0,
+            available_at timestamptz not null default now(),
+            saved_message_id bigint null,
+            last_error text not null default '',
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            unique(customer_id, peer_id, message_id)
+        );
+        create index if not exists salf1_media_guard_queue_ready_idx
+        on salf1_media_guard_queue(status, available_at, created_at);
+        create index if not exists salf1_media_guard_queue_customer_idx
+        on salf1_media_guard_queue(customer_id, created_at desc);
+        update salf1_media_guard_queue
+        set status='pending', updated_at=now()
+        where status='processing';
+    """)
+
+
+async def media_guard_get_config(user_id):
+    if db_pool is None:
+        return media_guard_default_config()
+    row = await db_pool.fetchrow(
+        "select config from salf1_media_guard_settings where customer_id=$1",
+        int(user_id),
+    )
+    return media_guard_normalize_config(row["config"] if row else None)
+
+
+async def media_guard_save_config(user_id, config):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_UNAVAILABLE")
+    normalized = media_guard_normalize_config(config)
+    await db_pool.execute(
+        """
+        insert into salf1_media_guard_settings(customer_id, config)
+        values($1, $2::jsonb)
+        on conflict(customer_id) do update
+        set config=excluded.config, updated_at=now()
+        """,
+        int(user_id),
+        json.dumps(normalized, ensure_ascii=False),
+    )
+    return normalized
+
+
+async def media_guard_exception_rows(user_id, limit=30):
+    if db_pool is None:
+        return []
+    return await db_pool.fetch(
+        """
+        select peer_id, peer_type, title, created_at
+        from salf1_media_guard_exceptions
+        where customer_id=$1
+        order by created_at desc
+        limit $2
+        """,
+        int(user_id),
+        max(1, min(50, int(limit))),
+    )
+
+
+async def media_guard_add_exception(user_id, entity):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_UNAVAILABLE")
+    if getattr(entity, "bot", False):
+        raise ValueError("BOT_CHAT_NOT_SUPPORTED")
+
+    class_name = type(entity).__name__
+    if class_name == "User":
+        peer_type = "private"
+    elif class_name == "Chat":
+        peer_type = "group"
+    elif class_name == "Channel":
+        peer_type = "group" if bool(getattr(entity, "megagroup", False)) else "channel"
+    else:
+        raise ValueError("CHAT_TYPE_NOT_SUPPORTED")
+
+    peer_id = int(utils.get_peer_id(entity))
+    title = (
+        getattr(entity, "title", None)
+        or getattr(entity, "first_name", None)
+        or getattr(entity, "username", None)
+        or str(peer_id)
+    )
+    result = await db_pool.execute(
+        """
+        insert into salf1_media_guard_exceptions(customer_id, peer_id, peer_type, title)
+        values($1, $2, $3, $4)
+        on conflict(customer_id, peer_id) do nothing
+        """,
+        int(user_id),
+        peer_id,
+        peer_type,
+        str(title)[:120],
+    )
+    return peer_id, peer_type, str(title)[:120], result.endswith("1")
+
+
+async def media_guard_delete_exception(user_id, peer_id):
+    if db_pool is None:
+        return False
+    result = await db_pool.execute(
+        "delete from salf1_media_guard_exceptions where customer_id=$1 and peer_id=$2",
+        int(user_id),
+        int(peer_id),
+    )
+    return result.endswith("1")
+
+
+async def media_guard_insert_event(
+    customer_id, peer_id, message_id, media_type, chat_type,
+    chat_title, status, reason="",
+):
+    if db_pool is None:
+        return False
+    result = await db_pool.execute(
+        """
+        insert into salf1_media_guard_queue(
+            customer_id, peer_id, message_id, media_type, chat_type,
+            chat_title, status, reason
+        )
+        values($1, $2, $3, $4, $5, $6, $7, $8)
+        on conflict(customer_id, peer_id, message_id) do nothing
+        """,
+        int(customer_id),
+        int(peer_id),
+        int(message_id),
+        str(media_type)[:32],
+        str(chat_type)[:16],
+        str(chat_title or "")[:120],
+        str(status)[:20],
+        str(reason)[:64],
+    )
+    return result.endswith("1")
+
+
+def media_guard_event_scope(event):
+    if bool(getattr(event, "is_private", False)):
+        return "private"
+    if bool(getattr(event, "is_group", False)):
+        return "group"
+    if bool(getattr(event, "is_channel", False)):
+        return "channel"
+    return "other"
+
+
+async def media_guard_capture_event(event, customer_id):
+    message = getattr(event, "message", None)
+    if message is None or getattr(message, "media", None) is None:
+        return False
+
+    config = await media_guard_get_config(int(customer_id))
+    if not config.get("enabled"):
+        return False
+
+    chat_type = media_guard_event_scope(event)
+    if not config["scopes"].get(chat_type, False):
+        return False
+
+    peer_id = getattr(message, "chat_id", None) or getattr(event, "chat_id", None)
+    message_id = getattr(message, "id", None)
+    if peer_id is None or message_id is None or db_pool is None:
+        return False
+
+    exception = await db_pool.fetchval(
+        """
+        select exists(
+            select 1 from salf1_media_guard_exceptions
+            where customer_id=$1 and peer_id=$2
+        )
+        """,
+        int(customer_id),
+        int(peer_id),
+    )
+    if exception:
+        return False
+
+    classification = media_guard_classify_message(message, getattr(event, "chat", None))
+    if not classification:
+        return False
+    media_type = classification["media_type"]
+    if media_type not in MEDIA_GUARD_MEDIA_LABELS:
+        return await media_guard_insert_event(
+            customer_id, peer_id, message_id, media_type, chat_type,
+            getattr(getattr(event, "chat", None), "title", "") or "",
+            "skipped", classification.get("reason") or "unsupported",
+        )
+    if not config["media"].get(media_type, False):
+        return False
+
+    reason = str(classification.get("reason") or "")
+    chat_title = (
+        getattr(getattr(event, "chat", None), "title", None)
+        or getattr(getattr(event, "chat", None), "first_name", None)
+        or ""
+    )
+    return await media_guard_insert_event(
+        customer_id,
+        peer_id,
+        message_id,
+        media_type,
+        chat_type,
+        chat_title,
+        "skipped" if reason else "pending",
+        reason,
+    )
+
+
+async def media_guard_process_item(row):
+    customer_id = str(row["customer_id"])
+    client = clients.get(customer_id)
+    if client is None or not client.is_connected():
+        return False
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            claimed = await conn.fetchrow(
+                """
+                select id, customer_id, peer_id, message_id, media_type,
+                       chat_type, attempts
+                from salf1_media_guard_queue
+                where id=$1 and status='pending' and available_at<=now()
+                for update skip locked
+                """,
+                int(row["id"]),
+            )
+            if not claimed:
+                return False
+            await conn.execute(
+                "update salf1_media_guard_queue set status='processing', updated_at=now() where id=$1",
+                int(row["id"]),
+            )
+
+    item_id = int(claimed["id"])
+    attempts = int(claimed["attempts"] or 0)
+    try:
+        if not enabled_cache.get(customer_id, False):
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason='salf_disabled', updated_at=now() where id=$1",
+                item_id,
+            )
+            return True
+
+        config = await media_guard_get_config(int(customer_id))
+        if not config.get("enabled"):
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason='feature_disabled', updated_at=now() where id=$1",
+                item_id,
+            )
+            return True
+        if not config["scopes"].get(str(claimed["chat_type"]), False):
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason='scope_disabled', updated_at=now() where id=$1",
+                item_id,
+            )
+            return True
+        if not config["media"].get(str(claimed["media_type"]), False):
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason='media_disabled', updated_at=now() where id=$1",
+                item_id,
+            )
+            return True
+
+        excluded = await db_pool.fetchval(
+            """
+            select exists(
+                select 1 from salf1_media_guard_exceptions
+                where customer_id=$1 and peer_id=$2
+            )
+            """,
+            int(customer_id),
+            int(claimed["peer_id"]),
+        )
+        if excluded:
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason='chat_exception', updated_at=now() where id=$1",
+                item_id,
+            )
+            return True
+
+        peer_id = int(claimed["peer_id"])
+        message_id = int(claimed["message_id"])
+        message = await client.get_messages(peer_id, ids=message_id)
+        if message is None or getattr(message, "media", None) is None:
+            await db_pool.execute(
+                """
+                update salf1_media_guard_queue
+                set status='failed', reason='source_unavailable',
+                    last_error='MessageUnavailable', updated_at=now()
+                where id=$1
+                """,
+                item_id,
+            )
+            return True
+
+        source_chat = None
+        try:
+            source_chat = await client.get_entity(peer_id)
+        except Exception:
+            source_chat = None
+        classification = media_guard_classify_message(message, source_chat)
+        if not classification or classification.get("reason"):
+            reason = (classification or {}).get("reason") or "unsupported"
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason=$2, updated_at=now() where id=$1",
+                item_id,
+                reason,
+            )
+            return True
+        if classification["media_type"] != str(claimed["media_type"]):
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason='media_type_changed', updated_at=now() where id=$1",
+                item_id,
+            )
+            return True
+
+        saved = await client.forward_messages("me", message)
+        saved_message = saved[0] if isinstance(saved, list) and saved else saved
+        saved_message_id = getattr(saved_message, "id", None)
+        if not saved_message_id:
+            raise RuntimeError("SAVED_MESSAGE_NOT_CONFIRMED")
+
+        await db_pool.execute(
+            """
+            update salf1_media_guard_queue
+            set status='saved', saved_message_id=$2, reason='',
+                last_error='', updated_at=now()
+            where id=$1
+            """,
+            item_id,
+            int(saved_message_id),
+        )
+        return True
+    except FloodWaitError as exc:
+        delay = max(1, min(3600, int(getattr(exc, "seconds", 10) or 10)))
+        next_attempts = attempts + 1
+        status = "failed" if next_attempts >= 5 else "pending"
+        await db_pool.execute(
+            """
+            update salf1_media_guard_queue
+            set status=$2, attempts=$3,
+                available_at=now() + make_interval(secs=>$4::double precision),
+                last_error='FloodWaitError', updated_at=now()
+            where id=$1
+            """,
+            item_id, status, next_attempts, delay,
+        )
+        return True
+    except Exception as exc:
+        if type(exc).__name__ in {"ChatForwardsRestrictedError", "YouCannotForwardThisMessageError"}:
+            await db_pool.execute(
+                "update salf1_media_guard_queue set status='skipped', reason='protected', last_error=$2, updated_at=now() where id=$1",
+                item_id, type(exc).__name__[:100],
+            )
+            return True
+        next_attempts = attempts + 1
+        status = "failed" if next_attempts >= 4 else "pending"
+        delay = min(300, 5 * (2 ** min(next_attempts, 5)))
+        await db_pool.execute(
+            """
+            update salf1_media_guard_queue
+            set status=$2, attempts=$3,
+                available_at=now() + make_interval(secs=>$4::double precision),
+                last_error=$5, updated_at=now()
+            where id=$1
+            """,
+            item_id, status, next_attempts, delay, type(exc).__name__[:100],
+        )
+        return True
+
+
+async def media_guard_queue_loop():
+    while True:
+        try:
+            if db_pool is not None:
+                rows = await db_pool.fetch(
+                    """
+                    select id, customer_id
+                    from salf1_media_guard_queue
+                    where status='pending' and available_at<=now()
+                    order by created_at
+                    limit 20
+                    """
+                )
+                processed = False
+                for row in rows:
+                    if await media_guard_process_item(row):
+                        processed = True
+                await asyncio.sleep(0.25 if processed else 1.0)
+            else:
+                await asyncio.sleep(2.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Media Guard queue error: {type(exc).__name__}")
+            await asyncio.sleep(2.0)
+
+
+async def media_guard_enable(user_id, enabled):
+    config = await media_guard_get_config(user_id)
+    if enabled:
+        row = await db_user(str(user_id))
+        if not row or not row["account_connected"] or not row["salf_enabled"]:
+            return False
+    config["enabled"] = bool(enabled)
+    await media_guard_save_config(user_id, config)
+    return True
+
+
+async def media_guard_main_page(user_id):
+    config = await media_guard_get_config(user_id)
+    if db_pool is None:
+        saved_total = skipped_total = failed_total = today_total = exception_count = 0
+    else:
+        stats = await db_pool.fetchrow(
+            """
+            select
+                count(*) filter(where status='saved') as saved_total,
+                count(*) filter(where status='skipped') as skipped_total,
+                count(*) filter(where status='failed') as failed_total,
+                count(*) filter(where created_at>=date_trunc('day', now())) as today_total
+            from salf1_media_guard_queue where customer_id=$1
+            """,
+            int(user_id),
+        )
+        exception_count = int(await db_pool.fetchval(
+            "select count(*) from salf1_media_guard_exceptions where customer_id=$1",
+            int(user_id),
+        ) or 0)
+        saved_total = int(stats["saved_total"] or 0)
+        skipped_total = int(stats["skipped_total"] or 0)
+        failed_total = int(stats["failed_total"] or 0)
+        today_total = int(stats["today_total"] or 0)
+
+    selected_media = sum(1 for value in config["media"].values() if value)
+    selected_scopes = sum(1 for value in config["scopes"].values() if value)
+    rows = [
+        ("وضعیت", "فعال" if config["enabled"] else "خاموش"),
+        ("نوع رسانه فعال", f"{selected_media} از ۸"),
+        ("محدوده فعال", f"{selected_scopes} از ۳"),
+        ("گفتگوهای مستثنا", str(exception_count)),
+        ("ذخیره امروز", str(today_total)),
+        ("ذخیره موفق", str(saved_total)),
+        ("موارد ردشده", str(skipped_total)),
+        ("خطاها", str(failed_total)),
+    ]
+    return media_guard_render_page(
+        "رسانه‌بان",
+        "مدیریت ذخیره رسانه‌های دریافتی در پیام‌های ذخیره‌شده",
+        rows,
+        "برای تنظیم رسانه‌ها و گفتگوها از دکمه‌های زیر استفاده کنید.",
+    )
+
+
+def media_guard_main_markup(config):
+    enabled = bool(config.get("enabled"))
+    toggle = {
+        "text": "› غیرفعال‌سازی" if enabled else "› فعال‌سازی",
+        "callback_data": "mg_toggle_off" if enabled else "mg_toggle_on",
+        "style": "danger" if enabled else "success",
+    }
+    return {"inline_keyboard": [
+        [toggle],
+        [
+            {"text": "› تنظیم رسانه‌ها", "callback_data": "mg_media"},
+            {"text": "› محدوده گفتگوها", "callback_data": "mg_scopes"},
+        ],
+        [
+            {"text": "› مدیریت استثناها", "callback_data": "mg_exceptions"},
+            {"text": "› گزارش ذخیره‌ها", "callback_data": "mg_report"},
+        ],
+        [{"text": "› راهنمای رسانه‌بان", "callback_data": "mg_help"}],
+        [{"text": "‹ بازگشت", "callback_data": "self_features"}],
+    ]}
+
+
+async def media_guard_media_page(user_id):
+    config = await media_guard_get_config(user_id)
+    rows = [
+        (label, "روشن" if config["media"].get(key) else "خاموش")
+        for key, label in MEDIA_GUARD_MEDIA_LABELS.items()
+    ]
+    return media_guard_render_page(
+        "تنظیم رسانه‌ها",
+        "نوع رسانه‌هایی را که می‌خواهید ذخیره شوند انتخاب کنید.",
+        rows,
+        "با لمس هر گزینه وضعیت همان رسانه تغییر می‌کند.",
+    )
+
+
+def media_guard_media_markup(config):
+    rows = []
+    items = list(MEDIA_GUARD_MEDIA_LABELS.items())
+    for index in range(0, len(items), 2):
+        row = []
+        for key, label in items[index:index + 2]:
+            enabled = bool(config["media"].get(key))
+            row.append({
+                "text": ("› " + label + " روشن") if enabled else ("› " + label + " خاموش"),
+                "callback_data": "mg_type_" + key,
+                "style": "success" if enabled else "danger",
+            })
+        rows.append(row)
+    rows.append([{"text": "‹ بازگشت", "callback_data": "media_guard"}])
+    return {"inline_keyboard": rows}
+
+
+async def media_guard_scopes_page(user_id):
+    config = await media_guard_get_config(user_id)
+    rows = [
+        (label, "روشن" if config["scopes"].get(key) else "خاموش")
+        for key, label in MEDIA_GUARD_SCOPE_LABELS.items()
+    ]
+    return media_guard_render_page(
+        "محدوده گفتگوها",
+        "مشخص کنید رسانه‌های کدام گفتگوها بررسی شوند.",
+        rows,
+        "تنظیم هر محدوده مستقل از محدوده‌های دیگر است.",
+    )
+
+
+def media_guard_scopes_markup(config):
+    rows = []
+    for key, label in MEDIA_GUARD_SCOPE_LABELS.items():
+        enabled = bool(config["scopes"].get(key))
+        rows.append([{
+            "text": ("› " + label + " روشن") if enabled else ("› " + label + " خاموش"),
+            "callback_data": "mg_scope_" + key,
+            "style": "success" if enabled else "danger",
+        }])
+    rows.append([{"text": "‹ بازگشت", "callback_data": "media_guard"}])
+    return {"inline_keyboard": rows}
+
+
+async def media_guard_exceptions_page(user_id):
+    rows = await media_guard_exception_rows(user_id, 30)
+    details = [
+        ("تعداد استثناها", str(len(rows))),
+        ("نحوه اعمال", "برای تمام رسانه‌های همان گفتگو"),
+    ]
+    for index, row in enumerate(rows[:8], 1):
+        title = str(row["title"] or row["peer_id"])
+        details.append((f"گفتگوی {index}", title[:60]))
+    return media_guard_render_page(
+        "مدیریت استثناها",
+        "گفتگوهای این فهرست از ذخیره‌سازی خارج می‌شوند.",
+        details,
+        "برای افزودن گفتگو از دکمه افزودن استفاده کنید.",
+    )
+
+
+def media_guard_exceptions_markup(rows):
+    keyboard = [[{"text": "› افزودن گفتگو", "callback_data": "mg_exception_add"}]]
+    for row in rows[:8]:
+        peer_id = int(row["peer_id"])
+        title = str(row["title"] or peer_id).strip()[:24]
+        keyboard.append([{
+            "text": "› حذف " + title,
+            "callback_data": "mg_exception_del:" + str(peer_id),
+            "style": "danger",
+        }])
+    keyboard.append([{"text": "‹ بازگشت", "callback_data": "media_guard"}])
+    return {"inline_keyboard": keyboard}
+
+
+async def media_guard_report_page(user_id):
+    if db_pool is None:
+        stats = {"saved": 0, "skipped": 0, "failed": 0, "pending": 0}
+        recent = []
+    else:
+        raw = await db_pool.fetchrow(
+            """
+            select
+                count(*) filter(where status='saved') as saved,
+                count(*) filter(where status='skipped') as skipped,
+                count(*) filter(where status='failed') as failed,
+                count(*) filter(where status in ('pending','processing')) as pending
+            from salf1_media_guard_queue where customer_id=$1
+            """,
+            int(user_id),
+        )
+        stats = {key: int(raw[key] or 0) for key in ("saved", "skipped", "failed", "pending")}
+        recent = await db_pool.fetch(
+            """
+            select media_type, chat_title, status, reason, created_at
+            from salf1_media_guard_queue
+            where customer_id=$1
+            order by created_at desc
+            limit 5
+            """,
+            int(user_id),
+        )
+    rows = [
+        ("ذخیره موفق", str(stats["saved"])),
+        ("در انتظار", str(stats["pending"])),
+        ("ردشده", str(stats["skipped"])),
+        ("ناموفق", str(stats["failed"])),
+    ]
+    for index, item in enumerate(recent, 1):
+        state = {
+            "saved": "ذخیره شد",
+            "skipped": "ذخیره نشد",
+            "failed": "ناموفق",
+            "pending": "در صف",
+            "processing": "در حال پردازش",
+        }.get(str(item["status"]), str(item["status"]))
+        label = MEDIA_GUARD_MEDIA_LABELS.get(str(item["media_type"]), "رسانه")
+        rows.append((f"عملیات {index}", f"{label} · {item['chat_title'] or 'گفتگو'} · {state}"))
+    return media_guard_render_page(
+        "گزارش ذخیره‌ها",
+        "آخرین وضعیت عملیات رسانه‌بان",
+        rows,
+        "گزارش فقط وضعیت عملیات را نگه می‌دارد و متن پیام‌ها را ذخیره نمی‌کند.",
+    )
+
+
+def media_guard_report_markup():
+    return {"inline_keyboard": [
+        [{"text": "› بروزرسانی گزارش", "callback_data": "mg_report"}],
+        [{"text": "‹ بازگشت", "callback_data": "media_guard"}],
+    ]}
+
+
+def media_guard_help_page():
+    rows = [
+        ("ذخیره رسانه", "رسانه‌های معمولی و مجاز به پیام‌های ذخیره‌شده منتقل می‌شوند."),
+        ("گفتگوها", "پیوی و گروه و کانال جداگانه تنظیم می‌شوند."),
+        ("استثناها", "گفتگوی مستثنا هیچ رسانه‌ای ذخیره نمی‌کند."),
+        ("رسانه زمان‌دار", "به دلیل محدودیت تلگرام ذخیره نمی‌شود."),
+        ("یک‌بارمشاهده", "به دلیل محدودیت تلگرام ذخیره نمی‌شود."),
+        ("محتوای محافظت‌شده", "ذخیره یا بازنشر نمی‌شود."),
+        ("خطاها", "عملیات موقت در صف می‌ماند و دوباره بررسی می‌شود."),
+    ]
+    return media_guard_render_page(
+        "راهنمای رسانه‌بان",
+        "روش استفاده از مرکز ذخیره رسانه",
+        rows,
+        "ابتدا محدوده گفتگوها را انتخاب کنید و سپس رسانه‌بان را فعال کنید.",
+    )
+
+
+async def media_guard_open_page(user_id, chat_id, message_id, page="main"):
+    if page == "main":
+        config = await media_guard_get_config(user_id)
+        text = await media_guard_main_page(user_id)
+        markup = media_guard_main_markup(config)
+    elif page == "media":
+        config = await media_guard_get_config(user_id)
+        text = await media_guard_media_page(user_id)
+        markup = media_guard_media_markup(config)
+    elif page == "scopes":
+        config = await media_guard_get_config(user_id)
+        text = await media_guard_scopes_page(user_id)
+        markup = media_guard_scopes_markup(config)
+    elif page == "exceptions":
+        rows = await media_guard_exception_rows(user_id, 30)
+        text = await media_guard_exceptions_page(user_id)
+        markup = media_guard_exceptions_markup(rows)
+    elif page == "report":
+        text = await media_guard_report_page(user_id)
+        markup = media_guard_report_markup()
+    else:
+        text = media_guard_help_page()
+        markup = {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "media_guard"}]]}
+    await bot_edit(chat_id, message_id, text, markup)
+
+
+async def media_guard_command_reply(event, customer_id, text):
+    await self_respond(event, text)
+
+
+
 async def message_event(event, customer_id: str):
     text = (event.raw_text or "").strip()
-    if not text:
-        return
-
-    if await handle_self_command(event, customer_id, text):
+    if text and await handle_self_command(event, customer_id, text):
         return
 
     if event.out:
@@ -3744,12 +4678,18 @@ async def message_event(event, customer_id: str):
 
     if event.is_private:
         chat_type = "pm"
-    elif event.is_channel:
-        chat_type = "channel"
     elif event.is_group:
         chat_type = "group"
+    elif event.is_channel:
+        chat_type = "channel"
     else:
         chat_type = "other"
+
+    if getattr(getattr(event, "message", None), "media", None) is not None:
+        await media_guard_capture_event(event, customer_id)
+
+    if not text:
+        return
 
     payload = {
         "type": "telegram.message",
@@ -7334,19 +8274,22 @@ def self_features_markup():
     return {"inline_keyboard": [
         [custom_emoji_button("› ساعت", "clock", "automation")],
         [custom_emoji_button("› وضعیت حضور", "presence", "self")],
+        [{"text": "› رسانه‌بان", "callback_data": "media_guard"}],
         [custom_emoji_button("‹ بازگشت", "panel_self", "self")],
     ]}
 
 async def self_features_text(user_id: int):
-    clock_config, presence_config = await asyncio.gather(
+    clock_config, presence_config, media_guard_config = await asyncio.gather(
         clock_get_settings(user_id),
         presence_get_settings(user_id),
+        media_guard_get_config(user_id),
     )
     clock_enabled = bool(clock_config.get("enabled"))
     presence_enabled = bool(
         presence_config.get("online_enabled") or presence_config.get("activity_enabled")
     )
-    active_count = int(clock_enabled) + int(presence_enabled)
+    media_guard_enabled = bool(media_guard_config.get("enabled"))
+    active_count = int(clock_enabled) + int(presence_enabled) + int(media_guard_enabled)
     return f"""<b>Sᴀʟғ1 · قابلیت‌های سلف</b>
 
 {RICH_DIVIDER}
@@ -7377,7 +8320,11 @@ async def self_features_text(user_id: int):
 
 {RICH_DIVIDER}
 
-ساعت و وضعیت حضور مستقل از یکدیگر اجرا می‌شوند.
+◈ رسانه‌بان
+
+وضعیت : {"【 فعال 】" if media_guard_enabled else "【 خاموش 】"}
+
+ساعت و وضعیت حضور و رسانه‌بان مستقل از یکدیگر اجرا می‌شوند.
 
 {RICH_DIVIDER}
 """
@@ -8181,12 +9128,61 @@ async def process_bot_message(message: dict):
             bot_states.pop(user_id, None)
             if previous_state.startswith("presence_"):
                 await bot_send(chat["id"], await presence_page(user_id))
+            elif previous_state.startswith("media_guard_"):
+                await bot_send(
+                    chat["id"],
+                    await media_guard_exceptions_page(user_id),
+                    media_guard_exceptions_markup(await media_guard_exception_rows(user_id, 30)),
+                )
             else:
                 await bot_send(
                     chat["id"],
                     await clock_settings_text(user_id),
                     await clock_main_markup_async(user_id),
                 )
+            return
+
+        if state == "media_guard_exception_add":
+            reference = text.strip()
+            if not reference or len(reference) > 200:
+                return
+            client = clients.get(str(user_id))
+            try:
+                if client is None or not client.is_connected():
+                    raise RuntimeError("ACCOUNT_NOT_CONNECTED")
+                entity = await client.get_entity(reference)
+                await media_guard_add_exception(user_id, entity)
+                bot_states.pop(user_id, None)
+                rows = await media_guard_exception_rows(user_id, 30)
+                panel_chat_id = int(current_state.get("panel_chat_id") or chat["id"])
+                panel_message_id = int(current_state.get("panel_message_id") or 0)
+                if panel_message_id:
+                    await bot_edit(
+                        panel_chat_id, panel_message_id,
+                        await media_guard_exceptions_page(user_id),
+                        media_guard_exceptions_markup(rows),
+                    )
+                else:
+                    await bot_send(
+                        chat["id"], await media_guard_exceptions_page(user_id),
+                        media_guard_exceptions_markup(rows),
+                    )
+            except Exception:
+                panel_chat_id = int(current_state.get("panel_chat_id") or chat["id"])
+                panel_message_id = int(current_state.get("panel_message_id") or 0)
+                error_text = media_guard_render_page(
+                    "مدیریت استثناها",
+                    "گفتگو شناسایی نشد.",
+                    [("وضعیت", "نام کاربری یا شناسه را بررسی کنید.")],
+                    "نمونه ورودی. @username یا شناسه عددی گفتگو.",
+                )
+                if panel_message_id:
+                    await bot_edit(
+                        panel_chat_id, panel_message_id, error_text,
+                        {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "mg_exceptions"}]]},
+                    )
+                else:
+                    await bot_send(chat["id"], error_text)
             return
 
         if state == "clock_timezone_custom":
@@ -9056,6 +10052,106 @@ PV یا گروه را در پیام بعدی ارسال کنید.
         return
     if data in {"prs_stats","prs_stats_refresh"}:
         await bot_edit(chat_id,message_id,await presence_stats_page(user_id))
+        return
+
+    if data == "media_guard":
+        await media_guard_open_page(user_id, chat_id, message_id, "main")
+        return
+
+    if data in {"mg_toggle_on", "mg_toggle_off"}:
+        enabled = data == "mg_toggle_on"
+        if not await media_guard_enable(user_id, enabled):
+            await bot_edit(
+                chat_id, message_id,
+                media_guard_render_page(
+                    "رسانه‌بان",
+                    "فعال‌سازی انجام نشد.",
+                    [("وضعیت", "اکانت متصل و سلف فعال لازم است.")],
+                    "ابتدا اکانت را متصل کنید و سلف را فعال کنید.",
+                ),
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "media_guard"}]]},
+            )
+            return
+        await media_guard_open_page(user_id, chat_id, message_id, "main")
+        return
+
+    if data == "mg_media":
+        await media_guard_open_page(user_id, chat_id, message_id, "media")
+        return
+
+    if data.startswith("mg_type_"):
+        media_type = data.removeprefix("mg_type_")
+        if media_type not in MEDIA_GUARD_MEDIA_LABELS:
+            return
+        config = await media_guard_get_config(user_id)
+        config["media"][media_type] = not bool(config["media"].get(media_type))
+        await media_guard_save_config(user_id, config)
+        await media_guard_open_page(user_id, chat_id, message_id, "media")
+        return
+
+    if data == "mg_scopes":
+        await media_guard_open_page(user_id, chat_id, message_id, "scopes")
+        return
+
+    if data.startswith("mg_scope_"):
+        scope = data.removeprefix("mg_scope_")
+        if scope not in MEDIA_GUARD_SCOPE_LABELS:
+            return
+        config = await media_guard_get_config(user_id)
+        config["scopes"][scope] = not bool(config["scopes"].get(scope))
+        await media_guard_save_config(user_id, config)
+        await media_guard_open_page(user_id, chat_id, message_id, "scopes")
+        return
+
+    if data == "mg_exceptions":
+        await media_guard_open_page(user_id, chat_id, message_id, "exceptions")
+        return
+
+    if data == "mg_exception_add":
+        client = clients.get(str(user_id))
+        if client is None or not client.is_connected():
+            await bot_edit(
+                chat_id, message_id,
+                media_guard_render_page(
+                    "مدیریت استثناها",
+                    "اکانت متصل نیست.",
+                    [("وضعیت", "ابتدا اکانت را متصل کنید.")],
+                    "پس از اتصال دوباره تلاش کنید.",
+                ),
+                {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "mg_exceptions"}]]},
+            )
+            return
+        bot_states[user_id] = {
+            "state": "media_guard_exception_add",
+            "panel_chat_id": chat_id,
+            "panel_message_id": message_id,
+        }
+        await bot_edit(
+            chat_id, message_id,
+            media_guard_render_page(
+                "افزودن استثنا",
+                "شناسه یا نام کاربری گفتگو را بفرستید.",
+                [("نمونه", "@username"), ("نمونه", "-1001234567890")],
+                "برای لغو دستور لغو را ارسال کنید.",
+            ),
+            {"inline_keyboard": [[{"text": "‹ بازگشت", "callback_data": "mg_exceptions"}]]},
+        )
+        return
+
+    if data.startswith("mg_exception_del:"):
+        raw_peer_id = data.removeprefix("mg_exception_del:")
+        if not raw_peer_id.lstrip("-").isdigit() or len(raw_peer_id) > 21:
+            return
+        await media_guard_delete_exception(user_id, int(raw_peer_id))
+        await media_guard_open_page(user_id, chat_id, message_id, "exceptions")
+        return
+
+    if data == "mg_report":
+        await media_guard_open_page(user_id, chat_id, message_id, "report")
+        return
+
+    if data == "mg_help":
+        await media_guard_open_page(user_id, chat_id, message_id, "help")
         return
 
     if data == "clock":
@@ -10339,6 +11435,7 @@ async def main():
             await grant_owner_unlimited()
             await init_clock_settings_table()
             await init_presence_settings_table()
+            await init_media_guard_tables()
             await presence_restore_runtime_state()
             await ensure_admin_ledger_table()
             print("Farvahr Self web login token store ready.")
@@ -10380,6 +11477,7 @@ async def main():
             tasks.append(asyncio.create_task(clock_loop()))
             tasks.append(asyncio.create_task(presence_loop()))
             tasks.append(asyncio.create_task(session_supervisor_loop()))
+            tasks.append(asyncio.create_task(media_guard_queue_loop()))
             tasks.append(asyncio.create_task(bot_presence_loop()))
         if ROLE in {"billing", "all"}:
             tasks.append(asyncio.create_task(billing_loop()))
