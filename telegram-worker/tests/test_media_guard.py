@@ -16,6 +16,9 @@ FUNCTIONS = {
     "media_guard_media_markup",
     "media_guard_scopes_markup",
     "media_guard_exceptions_markup",
+    "_inline_panel_target",
+    "_parse_inline_panel_target",
+    "_inline_panel_callback_data",
 }
 CONSTANTS = {
     "RICH_DIVIDER",
@@ -84,6 +87,13 @@ class MediaGuardTests(unittest.TestCase):
         }
         base.update(values)
         return type("Message", (), base)()
+
+    def test_inline_panel_target_round_trip(self):
+        target = namespace["_inline_panel_target"]("Abcd1234", "AAAA1234.inline")
+        self.assertEqual(target, "inline:Abcd1234:AAAA1234.inline")
+        self.assertEqual(namespace["_parse_inline_panel_target"](target), ("Abcd1234", "AAAA1234.inline"))
+        self.assertIsNone(namespace["_parse_inline_panel_target"](12345))
+        self.assertEqual(namespace["_inline_panel_callback_data"]("Abcd1234", "7"), "ip:Abcd1234:7")
 
     def test_default_config_starts_disabled_and_private_only(self):
         config = defaults()

@@ -20,7 +20,7 @@ import asyncpg
 from aiohttp import ClientSession, ClientTimeout, web
 from telethon import TelegramClient, events, functions, utils
 from telethon.sessions import MemorySession, StringSession
-from telethon.tl.types import MessageEntityCustomEmoji, SendMessageTypingAction, SendMessageCancelAction, InputUserSelf
+from telethon.tl.types import MessageEntityCustomEmoji, SendMessageTypingAction, SendMessageCancelAction, InputUserSelf, InputPeerSelf
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from telethon.errors import (
     ApiIdInvalidError,
@@ -422,6 +422,7 @@ http_session: ClientSession | None = None
 db_pool: asyncpg.Pool | None = None
 webhook_db_pool: asyncpg.Pool | None = None
 bot_username = ""
+bot_inline_enabled = False
 web_login_tokens: dict[str, dict] = {}
 clock_last_outputs: dict[str, dict] = {}
 clock_next_allowed: dict[str, float] = {}
@@ -3140,20 +3141,216 @@ def _forwarded_message_id(forwarded) -> int | None:
     return None
 
 
+def _inline_panel_target(token: str, inline_message_id: str) -> str:
+    token_value = str(token or "").strip()
+    message_value = str(inline_message_id or "").strip()
+    if not token_value or not message_value:
+        raise ValueError("INLINE_PANEL_TARGET_INVALID")
+    return f"inline:{token_value}:{message_value}"
+
+
+def _parse_inline_panel_target(value):
+    raw = str(value or "")
+    if not raw.startswith("inline:"):
+        return None
+    parts = raw.split(":", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+
+
+def _inline_panel_callback_data(token: str, callback_key: str) -> str:
+    value = f"ip:{str(token)}:{str(callback_key)}"
+    if len(value.encode("utf-8")) > 64:
+        raise ValueError("INLINE_PANEL_CALLBACK_TOO_LONG")
+    return value
+
+
+async def init_inline_panel_tables():
+    if db_pool is None:
+        return
+    await db_pool.execute("""
+        create table if not exists salf1_inline_panel_tokens (
+            token text primary key,
+            customer_id bigint not null,
+            created_at timestamptz not null default now(),
+            expires_at timestamptz not null default now() + interval '30 days'
+        )
+    """)
+    await db_pool.execute("""
+        create table if not exists salf1_inline_panel_callbacks (
+            token text not null,
+            callback_key text not null,
+            callback_data text not null,
+            created_at timestamptz not null default now(),
+            primary key(token, callback_key)
+        )
+    """)
+    await db_pool.execute("""
+        create index if not exists idx_salf1_inline_panel_expiry
+        on salf1_inline_panel_tokens(expires_at)
+    """)
+
+
+async def create_inline_panel_token(customer_id: int) -> str:
+    if db_pool is None:
+        raise RuntimeError("DATABASE_UNAVAILABLE")
+    for _ in range(5):
+        token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
+        try:
+            await db_pool.execute(
+                "insert into salf1_inline_panel_tokens(token,customer_id) values($1,$2)",
+                token,
+                int(customer_id),
+            )
+            return token
+        except asyncpg.UniqueViolationError:
+            continue
+    raise RuntimeError("INLINE_PANEL_TOKEN_COLLISION")
+
+
+async def inline_panel_bind_controls(token: str, text: str, reply_markup: dict | None):
+    if db_pool is None:
+        raise RuntimeError("DATABASE_UNAVAILABLE")
+    callback_rows = []
+    next_key = 0
+
+    def bind_callback(value):
+        nonlocal next_key
+        raw = str(value or "")
+        if not raw:
+            return raw
+        key = str(next_key)
+        next_key += 1
+        callback_rows.append((str(token), key, raw))
+        return _inline_panel_callback_data(token, key)
+
+    output_markup = copy.deepcopy(reply_markup) if reply_markup is not None else None
+    if isinstance(output_markup, dict):
+        for row in output_markup.get("inline_keyboard") or []:
+            for button in row:
+                if isinstance(button, dict) and button.get("callback_data"):
+                    button["callback_data"] = bind_callback(button["callback_data"])
+
+    output_text = str(text or "")
+    button_pattern = re.compile(r'(<tg-button\b[^>]*?\bdata=["\'])([^"\']+)(["\'])')
+    output_text = button_pattern.sub(
+        lambda match: match.group(1) + bind_callback(html.unescape(match.group(2))) + match.group(3),
+        output_text,
+    )
+
+    await db_pool.execute("delete from salf1_inline_panel_callbacks where token=$1", str(token))
+    if callback_rows:
+        await db_pool.executemany(
+            "insert into salf1_inline_panel_callbacks(token,callback_key,callback_data) values($1,$2,$3)",
+            callback_rows,
+        )
+    return output_text, output_markup
+
+
+async def resolve_inline_panel_callback(token: str, callback_key: str):
+    if db_pool is None:
+        return None
+    return await db_pool.fetchrow(
+        """
+        select token.customer_id, action.callback_data
+        from salf1_inline_panel_tokens as token
+        join salf1_inline_panel_callbacks as action on action.token=token.token
+        where token.token=$1 and action.callback_key=$2 and token.expires_at>now()
+        """,
+        str(token),
+        str(callback_key),
+    )
+
+
+async def inline_panel_answer_markup(customer_id: int, token: str):
+    text = str(await salf_panel_text(int(customer_id))).replace(RICH_DIVIDER, "\n\n").strip()
+    markup = _strip_invalid_button_emojis(salf_panel_markup())
+    return await inline_panel_bind_controls(token, text, markup)
+
+
+async def send_inline_panel_to_destination(event, customer_id: str, owner_id: int):
+    if not bot_inline_enabled or not bot_username:
+        raise RuntimeError("BOT_INLINE_MODE_DISABLED")
+    client = client_for(customer_id)
+    if client is None or not client.is_connected():
+        raise RuntimeError("SELF_ACCOUNT_NOT_CONNECTED")
+
+    bot_entity = await client.get_entity("@" + bot_username.lstrip("@"))
+    bot_input = utils.get_input_user(bot_entity)
+    peer = getattr(event, "input_chat", None)
+    if peer is None:
+        if _panel_chat_type(event, owner_id) == "saved_messages":
+            peer = InputPeerSelf()
+        else:
+            peer = await client.get_input_entity(int(event.chat_id))
+
+    results = await client(functions.messages.GetInlineBotResultsRequest(
+        bot=bot_input,
+        peer=peer,
+        query="salf_panel",
+        offset="",
+    ))
+    available = list(getattr(results, "results", None) or [])
+    if not available:
+        raise RuntimeError("BOT_INLINE_PANEL_RESULT_EMPTY")
+
+    return await client(functions.messages.SendInlineBotResultRequest(
+        peer=peer,
+        query_id=int(results.query_id),
+        id=str(available[0].id),
+        random_id=utils.generate_random_long(),
+    ))
+
+
+async def process_bot_inline_query(inline_query: dict):
+    query_id = str(inline_query.get("id") or "")
+    from_user = inline_query.get("from") or {}
+    user_id = int(from_user.get("id") or 0)
+    query = str(inline_query.get("query") or "").strip().lower()
+    if not query_id:
+        return
+
+    results = []
+    if query in {"salf_panel", "salf panel", "پنل"} and user_id > 0 and db_pool is not None:
+        client = clients.get(str(user_id))
+        account = await db_user(str(user_id))
+        if account and client is not None and client.is_connected():
+            token = await create_inline_panel_token(user_id)
+            panel_text, markup = await inline_panel_answer_markup(user_id, token)
+            results = [{
+                "type": "article",
+                "id": "salf-panel-main",
+                "title": "باز کردن پنل SALF1",
+                "description": "پنل در همین گفت‌وگو باز می‌شود",
+                "input_message_content": {
+                    "message_text": panel_text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                "reply_markup": markup,
+            }]
+
+    response = await bot_api(
+        "answerInlineQuery",
+        {
+            "inline_query_id": query_id,
+            "results": results,
+            "cache_time": 0,
+            "is_personal": True,
+        },
+        timeout=8,
+    )
+    if not isinstance(response, dict) or not response.get("ok"):
+        print(f"Inline panel answer failed: {response}")
+
+
 async def send_owner_panel(event, customer_id: str, is_owner: bool):
     """
-    Execute پنل in the exact Telegram location where the connected
-    self-account issued it.
-
-    Delivery order:
-      1) Bot API -> destination directly. This is the preferred path because
-         the bot owns the message and its callbacks remain editable.
-      2) If the bot cannot write to that location, Bot API creates the
-         canonical panel in the owner's bot PV and the self account forwards
-         it to the exact original destination.
-
-    The fallback source is intentionally retained. There is no automatic
-    deletion anymore.
+    Open the bot-owned SALF1 panel in the exact chat where the self account
+    issued the command. Use Bot API for the bot-private chat and destinations
+    where the bot has write access. Use an inline result for Saved Messages,
+    user-to-user private chats, other bots, and inaccessible groups/channels.
     """
     if not is_owner:
         return False
@@ -3162,42 +3359,26 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
     message_id = getattr(getattr(event, "message", None), "id", None)
     if destination_id is None:
         await command_audit(
-            customer_id,
-            PANEL_COMMAND_NAME,
-            "ignored",
-            reason="destination_missing",
-            source="self",
-            scope="ANYWHERE",
+            customer_id, PANEL_COMMAND_NAME, "ignored",
+            reason="destination_missing", source="self", scope="ANYWHERE",
         )
         return False
 
     destination_id = int(destination_id)
     message_id = int(message_id) if message_id else None
-
     if not claim_command(PANEL_COMMAND_NAME, customer_id, destination_id, message_id):
         await command_audit(
-            customer_id,
-            PANEL_COMMAND_NAME,
-            "duplicate",
-            reason="message_already_claimed",
-            source="self",
-            scope="ANYWHERE",
-            chat_id=destination_id,
-            chat_type="unknown",
-            message_id=message_id,
+            customer_id, PANEL_COMMAND_NAME, "duplicate",
+            reason="message_already_claimed", source="self", scope="ANYWHERE",
+            chat_id=destination_id, chat_type="unknown", message_id=message_id,
         )
         return True
 
     if not await acquire_session_runtime_lock(customer_id):
         await command_audit(
-            customer_id,
-            PANEL_COMMAND_NAME,
-            "error",
-            reason="session_lock_busy",
-            source="self",
-            scope="ANYWHERE",
-            chat_id=destination_id,
-            message_id=message_id,
+            customer_id, PANEL_COMMAND_NAME, "error",
+            reason="session_lock_busy", source="self", scope="ANYWHERE",
+            chat_id=destination_id, message_id=message_id,
         )
         return False
 
@@ -3210,40 +3391,28 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
             me_cache[customer_id] = owner_id
         except Exception as exc:
             await command_audit(
-                customer_id,
-                PANEL_COMMAND_NAME,
-                "error",
-                reason=f"owner_lookup:{type(exc).__name__}",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                message_id=message_id,
+                customer_id, PANEL_COMMAND_NAME, "error",
+                reason=f"owner_lookup:{type(exc).__name__}", source="self",
+                scope="ANYWHERE", chat_id=destination_id, message_id=message_id,
             )
             return False
 
     chat_type = _panel_chat_type(event, owner_id)
-    # In the private chat with @Pers3anSelfBot, Telegram represents the
-    # destination from the self account's perspective as the bot's user ID.
-    # Bot API cannot send to another bot, so route the panel to the owner ID;
-    # that is the actual user recipient of this bot conversation.
-    delivery_chat_id = owner_id if chat_type == "bot_private" else destination_id
     lock = command_locks.setdefault(
         f"self:{customer_id}:{destination_id}",
         asyncio.Lock(),
     )
 
     async with lock:
-        panel_text = await salf_panel_text(owner_id)
-        panel_markup = salf_panel_markup()
-
-        # Direct route. Saved Messages is deliberately excluded because a bot
-        # cannot post to the user's Saved Messages.
-        if chat_type != "saved_messages" and BOT_TOKEN and http_session is not None:
+        # Direct Bot API delivery remains the fastest path where the bot is
+        # actually a participant in the destination.
+        if chat_type in {"bot_private", "group", "channel"} and BOT_TOKEN and http_session is not None:
+            delivery_chat_id = owner_id if chat_type == "bot_private" else destination_id
             try:
                 direct_result = await bot_send(
                     delivery_chat_id,
-                    panel_text,
-                    panel_markup,
+                    await salf_panel_text(owner_id),
+                    salf_panel_markup(),
                 )
                 if isinstance(direct_result, dict) and direct_result.get("ok"):
                     sent = direct_result.get("result") or {}
@@ -3256,60 +3425,64 @@ async def send_owner_panel(event, customer_id: str, is_owner: bool):
                         delivery="bot_api_direct",
                     )
                     await command_audit(
-                        customer_id,
-                        PANEL_COMMAND_NAME,
-                        "executed",
-                        source="self",
-                        scope="ANYWHERE",
-                        chat_id=destination_id,
-                        chat_type=chat_type,
-                        message_id=message_id,
-                        delivery="bot_api_direct",
+                        customer_id, PANEL_COMMAND_NAME, "executed",
+                        source="self", scope="ANYWHERE",
+                        chat_id=destination_id, chat_type=chat_type,
+                        message_id=message_id, delivery="bot_api_direct",
                     )
                     return True
-
-                print(
-                    f"Panel direct Bot API delivery rejected for "
-                    f"{customer_key(customer_id)} destination={destination_id}: "
-                    f"{direct_result}"
-                )
+                print(f"Panel direct Bot API rejected for {customer_key(customer_id)}: {direct_result}")
             except Exception as exc:
                 print(
-                    f"Panel direct Bot API delivery failed for "
-                    f"{customer_key(customer_id)} destination={destination_id}: "
-                    f"{type(exc).__name__}: {exc}"
+                    f"Panel direct Bot API failed for {customer_key(customer_id)} "
+                    f"destination={destination_id}: {type(exc).__name__}: {exc}"
                 )
 
-        if not BOT_TOKEN or http_session is None:
-            await command_audit(
+        try:
+            if not BOT_TOKEN or http_session is None:
+                raise RuntimeError("BOT_API_UNAVAILABLE")
+            if not bot_inline_enabled:
+                raise RuntimeError("BOT_INLINE_MODE_DISABLED")
+
+            inline_result = await send_inline_panel_to_destination(event, customer_id, owner_id)
+            sent_message_id = _forwarded_message_id(inline_result)
+            await panel_session_upsert(
                 customer_id,
-                PANEL_COMMAND_NAME,
-                "error",
-                reason="bot_api_unavailable",
-                source="self",
-                scope="ANYWHERE",
-                chat_id=destination_id,
-                chat_type=chat_type,
-                message_id=message_id,
+                destination_id,
+                sent_message_id,
+                section="main",
+                delivery="bot_inline_same_destination",
             )
+            await command_audit(
+                customer_id, PANEL_COMMAND_NAME, "executed",
+                source="self", scope="ANYWHERE",
+                chat_id=destination_id, chat_type=chat_type,
+                message_id=message_id, delivery="bot_inline_same_destination",
+            )
+            return True
+        except Exception as exc:
+            reason = type(exc).__name__ + ":" + str(exc)[:160]
+            print(
+                f"Panel inline delivery failed for {customer_key(customer_id)} "
+                f"destination={destination_id} chat_type={chat_type}: {reason}"
+            )
+            await command_audit(
+                customer_id, PANEL_COMMAND_NAME, "error",
+                reason=reason, source="self", scope="ANYWHERE",
+                chat_id=destination_id, chat_type=chat_type,
+                message_id=message_id, delivery="not_delivered",
+            )
+            try:
+                await self_respond(
+                    event,
+                    "<b>پنل در این مقصد باز نشد.</b>\n\n"
+                    "حالت درون‌خطی بات باید در BotFather فعال باشد.\n"
+                    "برای فعال‌سازی از دستور /setinline استفاده کنید.",
+                )
+            except Exception:
+                pass
             return False
 
-        # No cross-chat fallback: if the bot cannot send the panel to the
-        # original destination, that destination is unsupported for this
-        # command. Never open or stage the panel in the main bot chat.
-        await command_audit(
-            customer_id,
-            PANEL_COMMAND_NAME,
-            "ignored",
-            reason="destination_not_supported_or_bot_no_access",
-            source="self",
-            scope="SUPPORTED_DESTINATIONS",
-            chat_id=destination_id,
-            chat_type=chat_type,
-            message_id=message_id,
-            delivery="not_delivered",
-        )
-        return False
 
 async def self_respond(event, text: str, **kwargs):
     return await event.respond(rich_message_html(text), **kwargs)
@@ -5841,27 +6014,33 @@ async def schedule_message_delete(chat_id: int, message_id: int, delay_seconds: 
         )
 
 
-async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict | None = None):
+async def bot_edit(chat_id: int, message_id: int | str, text: str, reply_markup: dict | None = None):
     if not bot_callback_render_is_current():
         return {"ok": True, "salf1_stale_callback": True}
+
     original_text = text
     presence_layout = _presence_date_style_page(text)
     if presence_layout is not None:
         text = presence_layout["html"]
         if reply_markup is None:
             reply_markup = presence_layout["reply_markup"]
+
+    inline_target = _parse_inline_panel_target(message_id)
+    if inline_target is not None:
+        token, inline_message_id = inline_target
+        text, reply_markup = await inline_panel_bind_controls(token, text, reply_markup)
+        target = {"inline_message_id": inline_message_id}
+    else:
+        target = {"chat_id": int(chat_id), "message_id": int(message_id)}
+
     payload = {
-        "chat_id": chat_id,
-        "message_id": message_id,
+        **target,
         "rich_message": {
             "html": render_custom_emoji(rich_message_html(text)),
             "is_rtl": True,
         },
         **({"reply_markup": reply_markup} if reply_markup is not None else {}),
     }
-    # Telegram Rich Message edits are handled by editMessageText. Calling the
-    # unsupported editRichMessage method first added a guaranteed 404 round-trip
-    # to every panel button before the working edit was attempted.
     result = await bot_api("editMessageText", payload)
     if isinstance(result, dict) and result.get("ok"):
         return result
@@ -5874,28 +6053,25 @@ async def bot_edit(chat_id: int, message_id: int, text: str, reply_markup: dict 
     if not bot_callback_render_is_current():
         return {"ok": True, "salf1_stale_callback": True}
 
-    fallback = await bot_api(
-        "editMessageText",
-        {
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "text": presence_layout["fallback_text"] if presence_layout is not None else str(original_text or ""),
-            "parse_mode": "HTML",
-            **({"reply_markup": reply_markup} if reply_markup else {}),
-        },
-    )
+    fallback_payload = {
+        **target,
+        "text": presence_layout["fallback_text"] if presence_layout is not None else str(original_text or ""),
+        "parse_mode": "HTML",
+        **({"reply_markup": reply_markup} if reply_markup else {}),
+    }
+    fallback = await bot_api("editMessageText", fallback_payload)
     if isinstance(fallback, dict) and fallback.get("ok"):
         return fallback
 
     print(f"Rich Message edit failed: chat={chat_id} message={message_id}")
     return fallback or result
 
-async def bot_answer_callback(callback_id: str):
-    return await bot_api(
-        "answerCallbackQuery",
-        {"callback_query_id": callback_id},
-        timeout=10,
-    )
+async def bot_answer_callback(callback_id: str, text: str | None = None, show_alert: bool = False):
+    payload = {"callback_query_id": callback_id}
+    if text:
+        payload["text"] = str(text)[:200]
+        payload["show_alert"] = bool(show_alert)
+    return await bot_api("answerCallbackQuery", payload, timeout=10)
 
 
 def trial_remaining_text(row) -> str:
@@ -8081,7 +8257,8 @@ async def _presence_wizard_edit(user_id, text, fallback_chat_id=None):
         chat_id = state.get("panel_chat_id") or fallback_chat_id
         message_id = state.get("panel_message_id")
         if chat_id and message_id:
-            result = await bot_edit(int(chat_id), int(message_id), text)
+            target_message_id = message_id if _parse_inline_panel_target(message_id) else int(message_id)
+            result = await bot_edit(int(chat_id), target_message_id, text)
             if isinstance(result, dict) and result.get("ok"):
                 return result
         if chat_id:
@@ -9271,7 +9448,7 @@ async def process_bot_message(message: dict):
                 bot_states.pop(user_id, None)
                 rows = await media_guard_exception_rows(user_id, 30)
                 panel_chat_id = int(current_state.get("panel_chat_id") or chat["id"])
-                panel_message_id = int(current_state.get("panel_message_id") or 0)
+                panel_message_id = current_state.get("panel_message_id") or 0
                 if panel_message_id:
                     await bot_edit(
                         panel_chat_id, panel_message_id,
@@ -9285,7 +9462,7 @@ async def process_bot_message(message: dict):
                     )
             except Exception:
                 panel_chat_id = int(current_state.get("panel_chat_id") or chat["id"])
-                panel_message_id = int(current_state.get("panel_message_id") or 0)
+                panel_message_id = current_state.get("panel_message_id") or 0
                 error_text = media_guard_render_page(
                     "مدیریت استثناها",
                     "گفتگو شناسایی نشد.",
@@ -9503,21 +9680,45 @@ async def _process_callback_impl(callback_query: dict):
     from_user = callback_query.get("from") or {}
     data = str(callback_query.get("data") or "")
     chat = message.get("chat") or {}
-    if not callback_id or not from_user.get("id") or not chat.get("id"):
+    if not callback_id or not from_user.get("id"):
         return
 
-    user_id = int(from_user["id"])
-    chat_id = int(chat["id"])
-    message_id = int(message.get("message_id", 0))
+    inline_message_id = str(callback_query.get("inline_message_id") or "").strip()
+    if inline_message_id:
+        parts = data.split(":", 2)
+        if len(parts) != 3 or parts[0] != "ip":
+            return
+        token, callback_key = parts[1], parts[2]
+        mapped = await resolve_inline_panel_callback(token, callback_key)
+        if mapped is None or int(mapped["customer_id"]) != int(from_user["id"]):
+            if not callback_query.get("_salf1_callback_acknowledged"):
+                await bot_answer_callback(callback_id, "این پنل فقط برای مالک اکانت قابل استفاده است.", True)
+            return
+        user_id = int(mapped["customer_id"])
+        data = str(mapped["callback_data"])
+        callback_query["data"] = data
+        chat_id = user_id
+        message_id = _inline_panel_target(token, inline_message_id)
+    else:
+        if not chat.get("id"):
+            return
+        user_id = int(from_user["id"])
+        chat_id = int(chat["id"])
+        message_id = int(message.get("message_id", 0))
+
     if not callback_query.get("_salf1_callback_acknowledged"):
         await bot_answer_callback(callback_id)
 
     if data.startswith("salf_ping:"):
-        await process_ping_callback(callback_query)
+        process_ping_query = dict(callback_query)
+        process_ping_query["data"] = data
+        await process_ping_callback(process_ping_query)
         return
 
-    # Session tracking is bookkeeping; it must not delay the visible page transition.
-    asyncio.create_task(panel_session_touch_callback(user_id, chat_id, message_id, data))
+    # Inline panels have their own message identity and do not update the
+    # normal private-chat panel session row.
+    if not inline_message_id:
+        asyncio.create_task(panel_session_touch_callback(user_id, chat_id, message_id, data))
 
     if data in {"admin_charge", "admin_balance", "admin_close", "admin_charge_confirm", "admin_charge_cancel"}:
         if not await is_admin_user(user_id, from_user.get("username")):
@@ -11414,7 +11615,7 @@ async def process_callback(callback_query: dict):
 
 
 async def mini_bot_loop():
-    global bot_username, bot_user_id
+    global bot_username, bot_user_id, bot_inline_enabled
     if not bot_configured():
         print("Mini bot is disabled: SALF1_BOT_TOKEN and DATABASE_URL are required.")
         return
@@ -11434,6 +11635,12 @@ async def mini_bot_loop():
 
     bot_username = str(identity["result"].get("username") or "").strip()
     bot_user_id = int(identity["result"].get("id") or 0)
+    bot_inline_enabled = bool(identity["result"].get("supports_inline_queries"))
+    if bot_inline_enabled:
+        print(f"Inline panel delivery enabled for @{bot_username}.")
+    else:
+        print(f"Inline panel delivery disabled for @{bot_username}; enable /setinline in BotFather.")
+    await init_inline_panel_tables()
     await validate_custom_emoji_config()
     webhook_url = f"{LOGIN_BASE_URL}/bot/webhook"
     webhook_result = await bot_api(
@@ -11441,7 +11648,7 @@ async def mini_bot_loop():
         {
             "url": webhook_url,
             "secret_token": WEBHOOK_SECRET,
-            "allowed_updates": ["message", "callback_query"],
+            "allowed_updates": ["message", "callback_query", "inline_query"],
             "drop_pending_updates": False,
         },
         timeout=15,
@@ -12097,8 +12304,16 @@ async def init_bot_update_queue_table():
 
 
 def bot_update_lane_key(update: dict, update_id: int) -> str:
+    inline_query = update.get("inline_query")
+    if isinstance(inline_query, dict):
+        from_user = inline_query.get("from") or {}
+        return f"inline-query:{from_user.get('id') or update_id}"
+
     callback = update.get("callback_query")
     if isinstance(callback, dict):
+        inline_message_id = callback.get("inline_message_id")
+        if inline_message_id:
+            return f"inline-message:{inline_message_id}"
         message = callback.get("message") or {}
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
@@ -12323,6 +12538,8 @@ async def bot_update_queue_loop(worker_id: int = 0):
 
             if update.get("callback_query"):
                 await process_callback(update["callback_query"])
+            elif update.get("inline_query"):
+                await process_bot_inline_query(update["inline_query"])
             elif update.get("message"):
                 await process_bot_message(update["message"])
 
@@ -12409,6 +12626,34 @@ async def process_callback_immediate(update_id: int, callback_query: dict):
                 f"Telegram navigation processed: id={update_id} "
                 f"elapsed_ms={int(elapsed_ms)} queue_wait_ms=0 path=unqueued"
             )
+
+
+async def process_bot_inline_query_immediate(update_id: int, inline_query: dict):
+    started_at = time.monotonic()
+    try:
+        await process_bot_inline_query(inline_query)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(
+            f"Telegram inline query failed: id={update_id} "
+            f"error={type(exc).__name__}: {str(exc)[:180]}"
+        )
+        query_id = str(inline_query.get("id") or "")
+        if query_id:
+            try:
+                await bot_api(
+                    "answerInlineQuery",
+                    {"inline_query_id": query_id, "results": [], "cache_time": 0, "is_personal": True},
+                    timeout=5,
+                )
+            except Exception:
+                pass
+    finally:
+        elapsed_ms = (time.monotonic() - started_at) * 1000
+        webhook_enqueue_samples.append(round(elapsed_ms, 1))
+        if elapsed_ms >= 700:
+            print(f"Telegram inline query processed: id={update_id} elapsed_ms={int(elapsed_ms)}")
 
 
 async def process_bot_message_immediate(update_id: int, message: dict):
@@ -12599,7 +12844,7 @@ async def bot_webhook(request: web.Request):
         if update_id < 0:
             return web.Response(status=400, text="invalid update id")
 
-        if not update.get("callback_query") and not update.get("message"):
+        if not update.get("callback_query") and not update.get("message") and not update.get("inline_query"):
             return web.json_response({"ok": True})
 
         lane_key = bot_update_lane_key(update, update_id)
@@ -12628,6 +12873,16 @@ async def bot_webhook(request: web.Request):
                     process_callback_fast(update_id, update, lane_key)
                 )
             )
+            elapsed_ms = (time.monotonic() - request_start) * 1000
+            webhook_enqueue_samples.append(round(elapsed_ms, 1))
+            return web.json_response({"ok": True})
+
+        inline_query = update.get("inline_query")
+        if isinstance(inline_query, dict):
+            if claim_bot_fast_update(update_id):
+                _track_bot_callback_task(
+                    asyncio.create_task(process_bot_inline_query_immediate(update_id, inline_query))
+                )
             elapsed_ms = (time.monotonic() - request_start) * 1000
             webhook_enqueue_samples.append(round(elapsed_ms, 1))
             return web.json_response({"ok": True})
